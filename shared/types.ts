@@ -123,6 +123,7 @@ export interface Task {
   review?: ReviewResult;
   blocker?: { reason: string; askedAt: string } | null;
   history?: HistoryEntry[];
+  jiraKey?: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -276,6 +277,27 @@ export interface BoardMeta {
   version: number;
 }
 
+// ---------------------------------------------------------------------------
+// Integrations
+// ---------------------------------------------------------------------------
+
+/** Jira integration config — stored in board.integrations.jira */
+export interface JiraConfig {
+  enabled: boolean;
+  projectKey: string;
+  statusMapping: Record<string, TaskStatus>;
+  reverseMapping: Record<string, string>;
+  triggerStatus?: string;
+  humanGate: {
+    enabled: boolean;
+    mergeRequiresHuman: boolean;
+  };
+}
+
+export interface Integrations {
+  jira?: JiraConfig;
+}
+
 /** Board — accessed via GET/POST /api/board */
 export interface Board {
   taskPlan: TaskPlan;
@@ -286,6 +308,7 @@ export interface Board {
   lessons: Lesson[];
   lessons_archive?: Lesson[];
   controls: Controls;
+  integrations?: Integrations;
   meta: BoardMeta;
 }
 

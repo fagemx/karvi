@@ -17,6 +17,9 @@ const RUNTIMES = {
   ...(runtimeClaude ? { claude: runtimeClaude } : {}),
 };
 
+let jiraIntegration = null;
+try { jiraIntegration = require('./integration-jira'); } catch { /* jira integration not available, skip */ }
+
 function getRuntime(hint) {
   return RUNTIMES[hint] || runtime;
 }
@@ -1001,6 +1004,12 @@ const server = bb.createServer(ctx, (req, res, helpers) => {
         writeBoard(board);
         appendLog({ ts: nowIso(), event: 'task_updated', taskId, status: task.status });
 
+        // Jira integration: fire-and-forget notification
+        if (jiraIntegration?.isEnabled(board)) {
+          jiraIntegration.notifyJira(board, task, { type: 'status_change', newStatus: task.status })
+            .catch(err => console.error('[jira] notify failed:', err.message));
+        }
+
         if (payload.status === 'completed') {
           const ctrl = mgmt.getControls(board);
           if (ctrl.auto_review) setImmediate(() => runtime.spawnReview(taskId, {
@@ -1172,6 +1181,12 @@ const server = bb.createServer(ctx, (req, res, helpers) => {
 
         writeBoard(board);
         appendLog({ ts: nowIso(), event: 'task_status_manual', taskId, from: oldStatus, to: newStatus });
+
+        // Jira integration: fire-and-forget notification
+        if (jiraIntegration?.isEnabled(board)) {
+          jiraIntegration.notifyJira(board, task, { type: 'status_change', newStatus })
+            .catch(err => console.error('[jira] notify failed:', err.message));
+        }
 
         if (newStatus === 'completed') {
           const ctrl = mgmt.getControls(board);
@@ -2050,6 +2065,96 @@ const server = bb.createServer(ctx, (req, res, helpers) => {
       } catch (error) {
         json(res, 400, { error: error.message });
       }
+    });
+    return;
+  }
+
+  // --- Jira Integration Routes ---
+
+  // POST /api/webhooks/jira — receive Jira webhook
+  if (req.method === 'POST' && req.url.startsWith('/api/webhooks/jira')) {
+    if (!jiraIntegration) { json(res, 404, { error: 'Jira integration not available' }); return; }
+    let body = '';
+    req.on('data', c => (body += c));
+    req.on('end', () => {
+      try {
+        const payload = JSON.parse(body || '{}');
+        const board = readBoard();
+        const result = jiraIntegration.handleWebhook(board, payload, req.url);
+
+        if (result.action === 'rejected') {
+          json(res, 401, { error: result.error });
+          return;
+        }
+        if (result.action === 'skipped') {
+          json(res, 200, { ok: true, skipped: true, reason: result.error });
+          return;
+        }
+        if (result.action === 'dispatch' && result.task) {
+          result.task.status = 'dispatched';
+          result.task.history = result.task.history || [];
+          result.task.history.push({ ts: nowIso(), status: 'dispatched', by: 'jira-webhook' });
+          writeBoard(board);
+          json(res, 200, { ok: true, action: 'dispatch', taskId: result.task.id });
+          return;
+        }
+        if (result.action === 'status_change' && result.task && result.karviStatus) {
+          const oldStatus = result.task.status;
+          try {
+            mgmt.ensureTaskTransition(oldStatus, result.karviStatus);
+          } catch (err) {
+            json(res, 409, { error: err.message });
+            return;
+          }
+          result.task.status = result.karviStatus;
+          result.task.history = result.task.history || [];
+          result.task.history.push({ ts: nowIso(), status: result.karviStatus, by: 'jira-webhook', from: oldStatus });
+          writeBoard(board);
+          json(res, 200, { ok: true, action: 'status_change', taskId: result.task.id, newStatus: result.karviStatus });
+          return;
+        }
+        json(res, 200, { ok: true, action: result.action });
+      } catch (err) {
+        json(res, 400, { error: err.message });
+      }
+    });
+    return;
+  }
+
+  // GET /api/integrations/jira — read Jira config
+  if (req.method === 'GET' && req.url === '/api/integrations/jira') {
+    const board = readBoard();
+    const config = board.integrations?.jira || { enabled: false };
+    json(res, 200, config);
+    return;
+  }
+
+  // POST /api/integrations/jira — update Jira config
+  if (req.method === 'POST' && req.url === '/api/integrations/jira') {
+    let body = '';
+    req.on('data', c => (body += c));
+    req.on('end', () => {
+      try {
+        const payload = JSON.parse(body || '{}');
+        const board = readBoard();
+        board.integrations = board.integrations || {};
+        board.integrations.jira = { ...(board.integrations.jira || {}), ...payload };
+        writeBoard(board);
+        json(res, 200, board.integrations.jira);
+      } catch (err) {
+        json(res, 400, { error: err.message });
+      }
+    });
+    return;
+  }
+
+  // POST /api/integrations/jira/test — test Jira connection
+  if (req.method === 'POST' && req.url === '/api/integrations/jira/test') {
+    if (!jiraIntegration) { json(res, 404, { error: 'Jira integration not available' }); return; }
+    jiraIntegration.testConnection().then(result => {
+      json(res, result.ok ? 200 : 502, result);
+    }).catch(err => {
+      json(res, 500, { ok: false, error: err.message });
     });
     return;
   }
