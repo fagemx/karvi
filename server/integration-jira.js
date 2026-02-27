@@ -199,8 +199,13 @@ async function notifyJira(board, task, event) {
     if (event.type === 'status_change' && event.newStatus) {
       const jiraStatus = mapKarviToJira(event.newStatus, config);
 
-      // Transition the Jira issue
-      if (jiraStatus) {
+      // Human gate: block auto-transition when merge requires human review
+      const gated = config.humanGate?.enabled
+        && config.humanGate?.mergeRequiresHuman
+        && event.newStatus === 'approved';
+
+      // Transition the Jira issue (unless gated)
+      if (jiraStatus && !gated) {
         const transitionId = await findTransitionId(issueKey, jiraStatus);
         if (transitionId) {
           await jiraRequest('POST', `/rest/api/3/issue/${issueKey}/transitions`, {
@@ -210,7 +215,7 @@ async function notifyJira(board, task, event) {
       }
 
       // Add comment for notable events
-      const comment = buildComment(task, event);
+      const comment = buildComment(task, event, config);
       if (comment) {
         await jiraRequest('POST', `/rest/api/3/issue/${issueKey}/comment`, {
           body: { type: 'doc', version: 1, content: [
@@ -251,7 +256,7 @@ async function findTransitionId(issueKey, targetStatusName) {
 /**
  * Build a human-readable comment for notable status changes.
  */
-function buildComment(task, event) {
+function buildComment(task, event, config) {
   const status = event.newStatus;
   if (status === 'completed') {
     return `[Karvi] Task "${task.title}" completed.${task.result?.summary ? ' ' + task.result.summary : ''}`;
@@ -260,6 +265,10 @@ function buildComment(task, event) {
     return `[Karvi] Task "${task.title}" is blocked.${task.blocker?.reason ? ' Reason: ' + task.blocker.reason : ''}`;
   }
   if (status === 'approved') {
+    const gated = config?.humanGate?.enabled && config?.humanGate?.mergeRequiresHuman;
+    if (gated) {
+      return `[Karvi] Task "${task.title}" approved. Human merge review required — auto-merge disabled by human gate policy.`;
+    }
     return `[Karvi] Task "${task.title}" approved and ready for merge.`;
   }
   return null; // no comment for other statuses

@@ -2095,6 +2095,21 @@ const server = bb.createServer(ctx, (req, res, helpers) => {
           result.task.history = result.task.history || [];
           result.task.history.push({ ts: nowIso(), status: 'dispatched', by: 'jira-webhook' });
           writeBoard(board);
+
+          // Auto-trigger dispatch via internal HTTP call to reuse existing dispatch logic
+          const taskId = result.task.id;
+          setImmediate(() => {
+            const http = require('http');
+            const dreq = http.request({
+              hostname: 'localhost',
+              port: ctx.port,
+              path: `/api/tasks/${encodeURIComponent(taskId)}/dispatch`,
+              method: 'POST',
+            });
+            dreq.on('error', err => console.error(`[jira-webhook] auto-dispatch failed for ${taskId}:`, err.message));
+            dreq.end();
+          });
+
           json(res, 200, { ok: true, action: 'dispatch', taskId: result.task.id });
           return;
         }
