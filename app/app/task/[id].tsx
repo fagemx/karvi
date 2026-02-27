@@ -2,11 +2,12 @@ import { useState } from 'react';
 import { View, Text, ScrollView, Pressable, TextInput, StyleSheet, Alert } from 'react-native';
 import { useLocalSearchParams, Stack } from 'expo-router';
 import { useBoardStore } from '../../hooks/useBoardStore';
+import { useTheme, type Theme } from '../../hooks/useTheme';
 import { StatusBadge } from '../../components/StatusBadge';
 import { updateTaskStatus, dispatchTask, unblockTask } from '../../lib/api';
 import type { Task, TaskStatus } from '../../../shared/types';
 
-function ActionButtons({ task }: { task: Task }) {
+function ActionButtons({ task, theme: t }: { task: Task; theme: Theme }) {
   const [feedback, setFeedback] = useState('');
   const [showFeedback, setShowFeedback] = useState(false);
 
@@ -25,18 +26,15 @@ function ActionButtons({ task }: { task: Task }) {
       {(s === 'dispatched' || s === 'pending') && (
         <ActionBtn label="Dispatch" color="#42a5f5" onPress={() => act(() => dispatchTask(task.id), 'Dispatch')} />
       )}
-
       {(s === 'completed' || s === 'reviewing') && (
         <ActionBtn label="Approve" color="#66bb6a" onPress={() => act(() => updateTaskStatus(task.id, 'approved'), 'Approve')} />
       )}
-
       {s === 'needs_revision' && (
         <>
           <ActionBtn label="Approve Override" color="#66bb6a" onPress={() => act(() => updateTaskStatus(task.id, 'approved'), 'Approve')} />
           <ActionBtn label="Redispatch" color="#42a5f5" onPress={() => act(() => dispatchTask(task.id), 'Redispatch')} />
         </>
       )}
-
       {s === 'blocked' && (
         <>
           {!showFeedback ? (
@@ -44,11 +42,11 @@ function ActionButtons({ task }: { task: Task }) {
           ) : (
             <View style={styles.feedbackBox}>
               <TextInput
-                style={styles.feedbackInput}
+                style={[styles.feedbackInput, { backgroundColor: t.inputBg, borderColor: t.border, color: t.text }]}
                 value={feedback}
                 onChangeText={setFeedback}
                 placeholder="Unblock message..."
-                placeholderTextColor="#666"
+                placeholderTextColor={t.textSecondary}
                 multiline
               />
               <ActionBtn
@@ -79,21 +77,21 @@ function ActionBtn({ label, color, onPress }: { label: string; color: string; on
   );
 }
 
-function Section({ title, children }: { title: string; children: React.ReactNode }) {
+function Section({ title, theme: t, children }: { title: string; theme: Theme; children: React.ReactNode }) {
   return (
     <View style={styles.section}>
-      <Text style={styles.sectionTitle}>{title}</Text>
+      <Text style={[styles.sectionTitle, { color: t.accent }]}>{title}</Text>
       {children}
     </View>
   );
 }
 
-function InfoRow({ label, value }: { label: string; value: string | undefined | null }) {
+function InfoRow({ label, value, theme: t }: { label: string; value: string | undefined | null; theme: Theme }) {
   if (!value) return null;
   return (
     <View style={styles.infoRow}>
-      <Text style={styles.infoLabel}>{label}</Text>
-      <Text style={styles.infoValue}>{value}</Text>
+      <Text style={[styles.infoLabel, { color: t.textSecondary }]}>{label}</Text>
+      <Text style={[styles.infoValue, { color: t.text }]}>{value}</Text>
     </View>
   );
 }
@@ -101,129 +99,119 @@ function InfoRow({ label, value }: { label: string; value: string | undefined | 
 export default function TaskDetailScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const board = useBoardStore((s) => s.board);
-  const task = board?.taskPlan?.tasks?.find((t) => t.id === id);
+  const task = board?.taskPlan?.tasks?.find((item) => item.id === id);
+  const t = useTheme();
 
   if (!task) {
     return (
-      <View style={styles.container}>
+      <View style={[styles.container, { backgroundColor: t.bg }]}>
         <Stack.Screen options={{ title: id ?? 'Task' }} />
         <View style={styles.empty}>
-          <Text style={styles.emptyText}>Task {id} not found</Text>
+          <Text style={[styles.emptyText, { color: t.textSecondary }]}>Task {id} not found</Text>
         </View>
       </View>
     );
   }
 
   return (
-    <View style={styles.container}>
+    <View style={[styles.container, { backgroundColor: t.bg }]}>
       <Stack.Screen options={{ title: `${task.id} — ${task.title}` }} />
       <ScrollView contentContainerStyle={styles.scroll}>
-        {/* Status + Title */}
         <View style={styles.titleRow}>
           <StatusBadge status={task.status} />
-          <Text style={styles.taskTitle}>{task.title}</Text>
+          <Text style={[styles.taskTitle, { color: t.text }]}>{task.title}</Text>
         </View>
 
-        {/* Info */}
-        <Section title="Details">
-          <InfoRow label="Assignee" value={task.assignee} />
-          <InfoRow label="Dependencies" value={task.depends?.join(', ')} />
-          <InfoRow label="Skill" value={task.skill} />
-          <InfoRow label="Started" value={task.startedAt?.toString()} />
-          <InfoRow label="Completed" value={task.completedAt} />
+        <Section title="Details" theme={t}>
+          <InfoRow label="Assignee" value={task.assignee} theme={t} />
+          <InfoRow label="Dependencies" value={task.depends?.join(', ')} theme={t} />
+          <InfoRow label="Skill" value={task.skill} theme={t} />
+          <InfoRow label="Started" value={task.startedAt?.toString()} theme={t} />
+          <InfoRow label="Completed" value={task.completedAt} theme={t} />
         </Section>
 
-        {/* Dispatch */}
         {task.dispatch && (
-          <Section title="Dispatch">
-            <InfoRow label="State" value={task.dispatch.state} />
-            <InfoRow label="Runtime" value={task.dispatch.runtime} />
-            <InfoRow label="Agent" value={task.dispatch.agentId} />
-            <InfoRow label="Model" value={task.dispatch.model ?? task.lastDispatchModel} />
-            <InfoRow label="Plan ID" value={task.dispatch.planId} />
+          <Section title="Dispatch" theme={t}>
+            <InfoRow label="State" value={task.dispatch.state} theme={t} />
+            <InfoRow label="Runtime" value={task.dispatch.runtime} theme={t} />
+            <InfoRow label="Agent" value={task.dispatch.agentId} theme={t} />
+            <InfoRow label="Model" value={task.dispatch.model ?? task.lastDispatchModel} theme={t} />
+            <InfoRow label="Plan ID" value={task.dispatch.planId} theme={t} />
           </Section>
         )}
 
-        {/* Review */}
         {task.review && (
-          <Section title="Review">
-            <InfoRow label="Score" value={String(task.review.score)} />
-            <InfoRow label="Verdict" value={task.review.verdict} />
-            <InfoRow label="Summary" value={task.review.summary} />
+          <Section title="Review" theme={t}>
+            <InfoRow label="Score" value={String(task.review.score)} theme={t} />
+            <InfoRow label="Verdict" value={task.review.verdict} theme={t} />
+            <InfoRow label="Summary" value={task.review.summary} theme={t} />
             {task.review.issues?.map((issue, i) => (
               <Text key={i} style={styles.issue}>• {issue}</Text>
             ))}
           </Section>
         )}
 
-        {/* Last Reply */}
         {task.lastReply && (
-          <Section title="Last Reply">
-            <Text style={styles.reply} numberOfLines={20}>{task.lastReply}</Text>
+          <Section title="Last Reply" theme={t}>
+            <Text style={[styles.reply, { color: t.textSecondary }]} numberOfLines={20}>{task.lastReply}</Text>
           </Section>
         )}
 
-        {/* Blocker */}
         {task.blocker && (
-          <Section title="Blocker">
+          <Section title="Blocker" theme={t}>
             <Text style={styles.blockerText}>{task.blocker.reason}</Text>
           </Section>
         )}
 
-        {/* History */}
         {task.history && task.history.length > 0 && (
-          <Section title="History">
+          <Section title="History" theme={t}>
             {task.history.slice(-10).reverse().map((h, i) => (
-              <View key={i} style={styles.historyItem}>
-                <Text style={styles.historyStatus}>{h.status}</Text>
-                <Text style={styles.historyMeta}>
+              <View key={i} style={[styles.historyItem, { borderBottomColor: t.bgCard }]}>
+                <Text style={[styles.historyStatus, { color: t.text }]}>{h.status}</Text>
+                <Text style={[styles.historyMeta, { color: t.textSecondary }]}>
                   {h.by} — {new Date(h.ts).toLocaleTimeString()}
                 </Text>
-                {h.reason ? <Text style={styles.historyReason}>{h.reason}</Text> : null}
+                {h.reason ? <Text style={[styles.historyReason, { color: t.textSecondary }]}>{h.reason}</Text> : null}
               </View>
             ))}
           </Section>
         )}
 
-        {/* Actions */}
-        <ActionButtons task={task} />
+        <ActionButtons task={task} theme={t} />
       </ScrollView>
     </View>
   );
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#1a1a2e' },
+  container: { flex: 1 },
   scroll: { padding: 16, paddingBottom: 40 },
   empty: { flex: 1, justifyContent: 'center', alignItems: 'center' },
-  emptyText: { color: '#888', fontSize: 16 },
+  emptyText: { fontSize: 16 },
   titleRow: { flexDirection: 'row', alignItems: 'center', gap: 12, marginBottom: 16 },
-  taskTitle: { color: '#e0e0e0', fontSize: 18, fontWeight: '600', flex: 1 },
+  taskTitle: { fontSize: 18, fontWeight: '600', flex: 1 },
   section: { marginBottom: 20 },
-  sectionTitle: { color: '#4fc3f7', fontSize: 13, fontWeight: '700', marginBottom: 8, textTransform: 'uppercase' },
+  sectionTitle: { fontSize: 13, fontWeight: '700', marginBottom: 8, textTransform: 'uppercase' },
   infoRow: { flexDirection: 'row', justifyContent: 'space-between', paddingVertical: 4 },
-  infoLabel: { color: '#888', fontSize: 13 },
-  infoValue: { color: '#e0e0e0', fontSize: 13, flex: 1, textAlign: 'right' },
+  infoLabel: { fontSize: 13 },
+  infoValue: { fontSize: 13, flex: 1, textAlign: 'right' },
   issue: { color: '#ef5350', fontSize: 13, marginTop: 2 },
-  reply: { color: '#ccc', fontSize: 13, fontFamily: 'monospace', lineHeight: 18 },
+  reply: { fontSize: 13, fontFamily: 'monospace', lineHeight: 18 },
   blockerText: { color: '#ef5350', fontSize: 14 },
-  historyItem: { paddingVertical: 6, borderBottomWidth: 1, borderBottomColor: '#252540' },
-  historyStatus: { color: '#e0e0e0', fontSize: 13, fontWeight: '600' },
-  historyMeta: { color: '#888', fontSize: 11, marginTop: 2 },
-  historyReason: { color: '#aaa', fontSize: 12, marginTop: 2 },
+  historyItem: { paddingVertical: 6, borderBottomWidth: 1 },
+  historyStatus: { fontSize: 13, fontWeight: '600' },
+  historyMeta: { fontSize: 11, marginTop: 2 },
+  historyReason: { fontSize: 12, marginTop: 2 },
   actions: { marginTop: 16, gap: 10 },
   actionBtn: { borderRadius: 8, paddingVertical: 14, alignItems: 'center' },
   actionBtnText: { color: '#fff', fontSize: 15, fontWeight: '700' },
   feedbackBox: { gap: 10 },
   feedbackInput: {
-    backgroundColor: '#252540',
     borderRadius: 8,
     padding: 12,
-    color: '#e0e0e0',
     fontSize: 14,
     minHeight: 80,
     textAlignVertical: 'top',
     borderWidth: 1,
-    borderColor: '#333',
   },
 });

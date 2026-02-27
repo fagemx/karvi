@@ -2,15 +2,17 @@ import { useState } from 'react';
 import { View, Text, TextInput, Pressable, StyleSheet, Alert } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useBoardStore } from '../../hooks/useBoardStore';
+import { useTheme } from '../../hooks/useTheme';
 import { ConnectionIndicator } from '../../components/ConnectionIndicator';
 
 export default function SettingsScreen() {
   const serverUrl = useBoardStore((s) => s.serverUrl);
   const setServerUrl = useBoardStore((s) => s.setServerUrl);
   const [draft, setDraft] = useState(serverUrl);
+  const t = useTheme();
 
   const handleSave = () => {
-    const url = draft.replace(/\/+$/, ''); // trim trailing slashes
+    const url = draft.replace(/\/+$/, '');
     setServerUrl(url);
     Alert.alert('Saved', url ? `Server: ${url}` : 'Server URL cleared');
   };
@@ -36,74 +38,79 @@ export default function SettingsScreen() {
   };
 
   return (
-    <SafeAreaView style={styles.container}>
+    <SafeAreaView style={[styles.container, { backgroundColor: t.bg }]}>
       <View style={styles.section}>
-        <Text style={styles.label}>Server URL</Text>
+        <Text style={[styles.label, { color: t.textSecondary }]}>Server URL</Text>
         <TextInput
-          style={styles.input}
+          style={[styles.input, { backgroundColor: t.inputBg, borderColor: t.border, color: t.text }]}
           value={draft}
           onChangeText={setDraft}
           placeholder="http://192.168.1.100:3461"
-          placeholderTextColor="#666"
+          placeholderTextColor={t.textSecondary}
           autoCapitalize="none"
           autoCorrect={false}
           keyboardType="url"
         />
         <View style={styles.row}>
           <Pressable
-            style={({ pressed }) => [styles.btn, pressed && styles.btnPressed]}
+            style={({ pressed }) => [styles.btn, { backgroundColor: t.accent }, pressed && styles.btnPressed]}
             onPress={handleSave}
           >
             <Text style={styles.btnText}>Save</Text>
           </Pressable>
           <Pressable
-            style={({ pressed }) => [styles.btn, styles.btnSecondary, pressed && styles.btnPressed]}
+            style={({ pressed }) => [
+              styles.btn,
+              styles.btnSecondary,
+              { borderColor: t.accent },
+              pressed && styles.btnPressed,
+            ]}
             onPress={handleTest}
           >
-            <Text style={styles.btnTextSecondary}>Test Connection</Text>
+            <Text style={[styles.btnTextSecondary, { color: t.accent }]}>Test Connection</Text>
           </Pressable>
         </View>
       </View>
 
       <View style={styles.section}>
-        <Text style={styles.label}>Connection Status</Text>
+        <Text style={[styles.label, { color: t.textSecondary }]}>Connection Status</Text>
         <ConnectionIndicator />
       </View>
 
       <View style={styles.section}>
-        <Text style={styles.label}>Current Server</Text>
-        <Text style={styles.value}>{serverUrl || '(not configured)'}</Text>
+        <Text style={[styles.label, { color: t.textSecondary }]}>Current Server</Text>
+        <Text style={[styles.value, { color: t.text }]}>{serverUrl || '(not configured)'}</Text>
+      </View>
+
+      <View style={styles.section}>
+        <Text style={[styles.label, { color: t.textSecondary }]}>Swipe Gestures</Text>
+        <Text style={[styles.hint, { color: t.textSecondary }]}>
+          Swipe right on a task card to dispatch{'\n'}
+          Swipe left to approve
+        </Text>
       </View>
     </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#1a1a2e', padding: 16 },
+  container: { flex: 1, padding: 16 },
   section: { marginBottom: 24 },
-  label: { color: '#aaa', fontSize: 13, fontWeight: '600', marginBottom: 8, textTransform: 'uppercase' },
+  label: { fontSize: 13, fontWeight: '600', marginBottom: 8, textTransform: 'uppercase' },
   input: {
-    backgroundColor: '#252540',
     borderRadius: 8,
     paddingHorizontal: 14,
     paddingVertical: 12,
-    color: '#e0e0e0',
     fontSize: 15,
     borderWidth: 1,
-    borderColor: '#333',
     marginBottom: 12,
   },
   row: { flexDirection: 'row', gap: 12 },
-  btn: {
-    flex: 1,
-    backgroundColor: '#4fc3f7',
-    borderRadius: 8,
-    paddingVertical: 12,
-    alignItems: 'center',
-  },
-  btnSecondary: { backgroundColor: 'transparent', borderWidth: 1, borderColor: '#4fc3f7' },
+  btn: { flex: 1, borderRadius: 8, paddingVertical: 12, alignItems: 'center' },
+  btnSecondary: { backgroundColor: 'transparent', borderWidth: 1 },
   btnPressed: { opacity: 0.7 },
-  btnText: { color: '#1a1a2e', fontSize: 15, fontWeight: '600' },
-  btnTextSecondary: { color: '#4fc3f7', fontSize: 15, fontWeight: '600' },
-  value: { color: '#e0e0e0', fontSize: 14, fontFamily: 'monospace' },
+  btnText: { color: '#fff', fontSize: 15, fontWeight: '600' },
+  btnTextSecondary: { fontSize: 15, fontWeight: '600' },
+  value: { fontSize: 14, fontFamily: 'monospace' },
+  hint: { fontSize: 13, lineHeight: 20 },
 });
