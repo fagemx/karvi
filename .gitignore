@@ -1,0 +1,12 @@
+node_modules/
+
+# Runtime data (per-instance)
+board.json
+board.json.bak
+briefs/*.json
+task-log.jsonl
+
+# Brief panel runtime
+brief-panel/brief.json
+brief-panel/brief-log.jsonl
+brief-panel/output/

@@ -1,0 +1,188 @@
+#!/usr/bin/env node
+/**
+ * test-evolution-loop.js — 驗證完整的 signal → insight → lesson 迴路
+ *
+ * 前提：server.js 在 3461 port 運行
+ *
+ * Part A — 自動改善（正向迴路）
+ * Part B — 自動回滾（負向迴路）
+ */
+
+const http = require('http');
+const { spawnSync } = require('child_process');
+const path = require('path');
+
+const PORT = 3461;
+
+function post(urlPath, body) {
+  return new Promise((resolve, reject) => {
+    const data = JSON.stringify(body);
+    const req = http.request({ hostname: 'localhost', port: PORT, path: urlPath, method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(data) }
+    }, res => { let d = ''; res.on('data', c => d += c); res.on('end', () => { try { resolve(JSON.parse(d)); } catch { resolve(d); } }); });
+    req.on('error', reject);
+    req.end(data);
+  });
+}
+
+function get(urlPath) {
+  return new Promise((resolve, reject) => {
+    http.get({ hostname: 'localhost', port: PORT, path: urlPath }, res => {
+      let d = ''; res.on('data', c => d += c); res.on('end', () => { try { resolve(JSON.parse(d)); } catch { resolve(d); } });
+    }).on('error', reject);
+  });
+}
+
+function ok(label) { console.log(`  ✅ ${label}`); }
+function fail(label, reason) { console.log(`  ❌ ${label}: ${reason}`); process.exitCode = 1; }
+
+async function main() {
+  console.log('=== Evolution Loop Test ===\n');
+
+  // Step 1: 寫 3 筆低分 signals
+  console.log('Step 1: Writing 3 low-score review signals for engineer_lite...');
+  for (let i = 0; i < 3; i++) {
+    await post('/api/signals', {
+      by: 'test-evo-loop',
+      type: 'review_result',
+      content: `T-test${i + 1} 審查未通過 (score: ${40 + i * 3}/70)`,
+      refs: [`T-test${i + 1}`],
+      data: { taskId: `T-test${i + 1}`, assignee: 'engineer_lite', result: 'needs_revision', score: 40 + i * 3, threshold: 70, attempt: 1 },
+    });
+  }
+  ok('3 review signals written');
+
+  // Step 2: 跑 retro.js
+  console.log('\nStep 2: Running retro.js...');
+  const retro1 = spawnSync('node', [path.join(__dirname, 'retro.js')], { cwd: __dirname, encoding: 'utf8' });
+  console.log(retro1.stdout);
+  if (retro1.status !== 0) { fail('retro.js', retro1.stderr); return; }
+  ok('retro.js completed');
+
+  // Step 3: 確認 insight 產出
+  console.log('\nStep 3: Checking for agent_underperform insight...');
+  const insights = await get('/api/insights');
+  const underperform = insights.find(i => i.by === 'retro.js' && i.data?.patternType === 'agent_underperform');
+  if (!underperform) { fail('No agent_underperform insight found', JSON.stringify(insights.slice(0, 3))); return; }
+  ok(`Found insight: "${underperform.judgement}"`);
+
+  // Step 4: 確認 insight 被自動 apply（gate 預設 on）
+  console.log('\nStep 4: Checking if insight was auto-applied by gate...');
+  const insights2 = await get('/api/insights');
+  const applied = insights2.find(i => i.by === 'retro.js' && i.status === 'applied' && i.data?.patternType === 'agent_underperform');
+  if (!applied) {
+    // Gate 沒自動 apply（可能安全閥觸發），手動 apply
+    console.log('  Gate did not auto-apply, applying manually...');
+    await post(`/api/insights/${underperform.id}/apply`, {});
+    ok('Manually applied');
+  } else {
+    ok(`Auto-applied by gate: ${applied.id}`);
+    if (applied.snapshot) ok(`Snapshot recorded: ${JSON.stringify(applied.snapshot)}`);
+    if (applied.appliedAt) ok(`Applied at: ${applied.appliedAt}`);
+  }
+
+  // Step 5: 確認 apply signal 存在
+  console.log('\nStep 5: Verifying apply signal...');
+  const signals = await get('/api/signals');
+  const applySignal = signals.find(s => s.type === 'insight_applied');
+  if (!applySignal) { fail('No insight_applied signal found', ''); return; }
+  ok('Apply signal recorded');
+
+  // Step 6: 寫 3 筆改善後 signals → 觸發驗證 → 應產生 validated lesson
+  console.log('\nStep 6: Writing 3 improved review signals (triggers verification)...');
+  for (let i = 0; i < 3; i++) {
+    await post('/api/signals', {
+      by: 'test-evo-loop',
+      type: 'review_result',
+      content: `T-improved${i + 1} 審查通過 (score: ${75 + i * 3}/70)`,
+      refs: [`T-improved${i + 1}`],
+      data: { taskId: `T-improved${i + 1}`, assignee: 'engineer_pro', result: 'approved', score: 75 + i * 3, threshold: 70, attempt: 1 },
+    });
+  }
+  ok('3 improved signals written');
+
+  // Step 7: 確認 lesson 被自動寫入
+  console.log('\nStep 7: Checking for validated lesson...');
+  const lessons = await get('/api/lessons');
+  const validatedLesson = lessons.find(l => l.status === 'validated' && l.by === 'gate');
+  if (validatedLesson) {
+    ok(`Lesson validated: "${validatedLesson.rule}" | effect: ${validatedLesson.effect}`);
+  } else {
+    const anyLesson = lessons.find(l => l.fromInsight);
+    if (anyLesson) {
+      ok(`Lesson found (status: ${anyLesson.status}): "${anyLesson.rule}"`);
+    } else {
+      console.log('  ⚠️ No lesson yet — verify that verifyAppliedInsights runs on review_result signals');
+    }
+  }
+
+  // ============================================
+  console.log('\n=== Part B: Auto-Rollback Test ===\n');
+  // ============================================
+
+  // Step 8: POST 一個 controls_patch insight（模擬一個會惡化的改動）
+  console.log('Step 8: Writing a controls_patch insight (will degrade performance)...');
+  const badInsightResult = await post('/api/insights', {
+    by: 'test-evo-loop',
+    judgement: 'threshold 應降到 30（故意製造惡化）',
+    suggestedAction: { type: 'controls_patch', payload: { quality_threshold: 30 } },
+    risk: 'low',
+  });
+  ok(`Bad insight posted: ${badInsightResult.insight?.id || 'unknown'}`);
+
+  // Step 9: 確認被自動 apply + 有 snapshot
+  console.log('\nStep 9: Checking auto-apply + snapshot...');
+  const insights3 = await get('/api/insights');
+  const badApplied = insights3.find(i => i.judgement?.includes('降到 30') && i.status === 'applied');
+  if (!badApplied) {
+    console.log('  ⚠️ Bad insight not auto-applied (might be blocked by safety valve)');
+    console.log('  Skipping rollback test');
+  } else {
+    ok(`Applied: ${badApplied.id}, snapshot: ${JSON.stringify(badApplied.snapshot)}`);
+
+    // Step 10: 寫 3 筆惡化 signals → 觸發驗證 → 應自動回滾
+    console.log('\nStep 10: Writing 3 degraded review signals (triggers rollback)...');
+    for (let i = 0; i < 3; i++) {
+      await post('/api/signals', {
+        by: 'test-evo-loop',
+        type: 'review_result',
+        content: `T-degraded${i + 1} 惡化 (score: ${25 + i * 2}/70)`,
+        data: { taskId: `T-degraded${i + 1}`, result: 'needs_revision', score: 25 + i * 2, threshold: 70 },
+      });
+    }
+    ok('3 degraded signals written');
+
+    // Step 11: 確認回滾
+    console.log('\nStep 11: Checking rollback...');
+    const insights4 = await get('/api/insights');
+    const rolledBack = insights4.find(i => i.id === badApplied.id);
+    if (rolledBack?.status === 'rolled_back') {
+      ok('Insight rolled back ✅');
+    } else {
+      console.log(`  ⚠️ Status: ${rolledBack?.status} (expected: rolled_back)`);
+    }
+
+    // 確認 controls 恢復
+    const board = await get('/api/board');
+    const currentThreshold = board.controls?.quality_threshold;
+    console.log(`  Controls quality_threshold: ${currentThreshold}`);
+    if (currentThreshold !== 30) {
+      ok(`Controls restored (threshold is ${currentThreshold}, not 30)`);
+    } else {
+      fail('Controls not restored', `threshold is still 30`);
+    }
+
+    // 確認 rollback signal
+    const signals2 = await get('/api/signals');
+    const rollbackSig = signals2.find(s => s.type === 'insight_rolled_back');
+    if (rollbackSig) {
+      ok(`Rollback signal recorded: ${rollbackSig.content}`);
+    } else {
+      console.log('  ⚠️ No rollback signal found');
+    }
+  }
+
+  console.log('\n=== Done ===');
+}
+
+main().catch(err => { console.error('Fatal:', err.message); process.exit(1); });

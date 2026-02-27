@@ -1,0 +1,1491 @@
+<!doctype html>
+<html lang="zh-Hant">
+
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Task Engine Blackboard</title>
+  <style>
+    :root {
+      --bg: #0b1020;
+      --panel: #121a30;
+      --panel-2: #18223f;
+      --text: #e6ebff;
+      --muted: #9caad8;
+      --accent: #6ca0ff;
+      --ok: #36c98c;
+      --warn: #f7b955;
+      --err: #ff6b6b;
+      --border: #24304f;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Noto Sans TC, Arial;
+      background: radial-gradient(1000px 600px at top right, #1c2850, var(--bg));
+      color: var(--text);
+    }
+
+    .wrap {
+      max-width: 1200px;
+      margin: 20px auto;
+      padding: 0 16px 24px;
+      display: grid;
+      grid-template-columns: 320px 1fr;
+      gap: 16px;
+      transition: grid-template-columns 0.3s ease;
+    }
+
+    .wrap.collapsed {
+      grid-template-columns: 48px 1fr;
+    }
+
+    .panel {
+      background: color-mix(in oklab, var(--panel) 92%, black);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      padding: 14px;
+      box-shadow: 0 8px 30px rgba(0, 0, 0, .25);
+      overflow: hidden;
+    }
+
+    .sidebar { position: relative; }
+
+    .sidebar-toggle {
+      position: absolute;
+      top: 10px;
+      right: 10px;
+      background: var(--panel-2);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      color: var(--muted);
+      width: 28px;
+      height: 28px;
+      font-size: 14px;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      z-index: 10;
+      padding: 0;
+      transition: transform 0.3s ease;
+    }
+
+    .sidebar-toggle:hover { color: var(--text); background: #263a75; }
+
+    .wrap.collapsed .sidebar-toggle {
+      right: auto;
+      left: 10px;
+      transform: rotate(180deg);
+    }
+
+    .sidebar-body { transition: opacity 0.2s ease; }
+
+    .wrap.collapsed .sidebar-body {
+      opacity: 0;
+      pointer-events: none;
+      height: 0;
+      overflow: hidden;
+    }
+
+    h1 {
+      margin: 0 0 4px;
+      font-size: 20px;
+    }
+
+    h2 {
+      margin: 4px 0 10px;
+      font-size: 15px;
+      color: var(--muted);
+      font-weight: 600;
+    }
+
+    .meta {
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    .stats {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 8px;
+      margin: 10px 0;
+    }
+
+    .stat {
+      background: var(--panel-2);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 8px;
+      font-size: 12px;
+    }
+
+    .stat b {
+      display: block;
+      font-size: 16px;
+      margin-top: 2px;
+    }
+
+    label {
+      display: block;
+      font-size: 12px;
+      color: var(--muted);
+      margin: 8px 0 4px;
+    }
+
+    select,
+    textarea,
+    input {
+      width: 100%;
+      background: #0f1630;
+      color: var(--text);
+      border: 1px solid #2c3a63;
+      border-radius: 10px;
+      padding: 9px 10px;
+      outline: none;
+    }
+
+    textarea {
+      min-height: 96px;
+      resize: vertical;
+    }
+
+    input[type="checkbox"] {
+      width: auto;
+      margin-right: 8px;
+    }
+
+    .row {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 8px;
+    }
+
+    button {
+      border: 1px solid #36539f;
+      border-radius: 10px;
+      padding: 9px 12px;
+      background: linear-gradient(180deg, #4d79ec, #3d62bf);
+      color: white;
+      cursor: pointer;
+      font-weight: 600;
+    }
+
+    button.secondary {
+      background: #1b2748;
+      border-color: #304275;
+    }
+
+    button.warn {
+      background: #5f3f11;
+      border-color: #946014;
+    }
+
+    .btns {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 8px;
+      margin-top: 10px;
+    }
+
+    .timeline {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      max-height: 70vh;
+      overflow: auto;
+      padding-right: 4px;
+    }
+
+    .msg {
+      background: #101a36;
+      border: 1px solid #2a3964;
+      border-radius: 12px;
+      padding: 10px;
+      font-size: 14px;
+    }
+
+    .msg.system {
+      border-color: #5f6b95;
+      background: #1a2546;
+    }
+
+    .msg.error {
+      border-color: #b44;
+      background: #31191b;
+    }
+
+    .msg-head {
+      display: flex;
+      gap: 8px;
+      align-items: center;
+      margin-bottom: 6px;
+      color: var(--muted);
+      font-size: 12px;
+      flex-wrap: wrap;
+    }
+
+    .pill {
+      border: 1px solid #4a5e99;
+      border-radius: 999px;
+      padding: 2px 8px;
+      font-size: 11px;
+      color: #cfe0ff;
+      background: #162447;
+    }
+
+    .small {
+      font-size: 12px;
+      color: var(--muted);
+      margin-top: 8px;
+    }
+
+    .participants li {
+      margin: 6px 0;
+      list-style: none;
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 8px;
+      background: #111a33;
+      font-size: 13px;
+    }
+
+    .participants {
+      padding: 0;
+      margin: 8px 0 0;
+    }
+
+    .status-running {
+      color: var(--ok);
+    }
+
+    .status-stop {
+      color: var(--warn);
+    }
+
+    .status-idle {
+      color: var(--muted);
+    }
+
+    .grid3 {
+      display: grid;
+      grid-template-columns: 1fr 1fr 1fr;
+      gap: 8px;
+    }
+
+    .tabs {
+      display: flex;
+      gap: 8px;
+      margin-bottom: 16px;
+      border-bottom: 1px solid var(--border);
+      padding-bottom: 8px;
+    }
+
+    .tab {
+      background: transparent;
+      border: none;
+      color: var(--muted);
+      cursor: pointer;
+      padding: 6px 12px;
+      font-size: 15px;
+      font-weight: 600;
+      border-radius: 6px;
+    }
+
+    .tab:hover {
+      background: #1a2546;
+    }
+
+    .tab.active {
+      background: #263a75;
+      color: white;
+    }
+
+    .task-board {
+      display: none;
+    }
+
+    .task-board.active {
+      display: block;
+    }
+
+    .timeline-view {
+      display: none;
+    }
+
+    .timeline-view.active {
+      display: block;
+    }
+
+    .task-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+      gap: 12px;
+      margin-top: 16px;
+    }
+
+    .task-card {
+      background: #111a33;
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 12px;
+      position: relative;
+      overflow: hidden;
+    }
+
+    .task-card::before {
+      content: '';
+      position: absolute;
+      left: 0;
+      top: 0;
+      bottom: 0;
+      width: 4px;
+      background: #444;
+    }
+
+    .task-card.pending::before {
+      background: #555;
+    }
+
+    .task-card.dispatched::before {
+      background: #4d79ec;
+    }
+
+    .task-card.in_progress::before {
+      background: #36c98c;
+      box-shadow: 0 0 8px #36c98c;
+    }
+
+    .task-card.blocked::before {
+      background: #ff6b6b;
+      box-shadow: 0 0 8px #ff6b6b;
+    }
+
+    .task-card.completed::before {
+      background: #f7b955;
+    }
+
+    .task-card.reviewing::before {
+      background: #a855f7;
+      box-shadow: 0 0 8px #a855f7;
+      animation: pulse 1.5s infinite;
+    }
+
+    .task-card.approved::before {
+      background: #36c98c;
+    }
+
+    .task-card.needs_revision::before {
+      background: #ff6b6b;
+      box-shadow: 0 0 8px #ff6b6b;
+    }
+
+    @keyframes pulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.4; }
+    }
+
+    .t-title {
+      font-weight: 600;
+      font-size: 15px;
+      margin-bottom: 4px;
+      line-height: 1.4;
+    }
+
+    .t-meta {
+      font-size: 12px;
+      color: var(--muted);
+      display: flex;
+      justify-content: space-between;
+      margin-bottom: 8px;
+    }
+
+    .t-status {
+      font-size: 11px;
+      padding: 2px 6px;
+      border-radius: 4px;
+      background: #1a2546;
+      border: 1px solid #304275;
+      text-transform: uppercase;
+      font-weight: 600;
+    }
+
+    .t-status.blocked {
+      background: #31191b;
+      border-color: #b44;
+      color: #ff9999;
+    }
+
+    .t-status.completed {
+      background: #2a2510;
+      border-color: #946014;
+      color: #f7b955;
+    }
+
+    .t-status.reviewing {
+      background: #1f1530;
+      border-color: #6d28d9;
+      color: #c084fc;
+    }
+
+    .t-status.approved {
+      background: #0e2a1d;
+      border-color: #1e5c40;
+      color: #7af0b5;
+    }
+
+    .t-status.needs_revision {
+      background: #31191b;
+      border-color: #b44;
+      color: #ff9999;
+    }
+
+    .t-depends {
+      font-size: 11px;
+      color: var(--warn);
+      margin-bottom: 6px;
+    }
+
+    .blocker-box {
+      margin-top: 10px;
+      background: #2a1114;
+      border: 1px solid #5a2227;
+      padding: 8px;
+      border-radius: 8px;
+      font-size: 13px;
+    }
+
+    .blocker-box input {
+      margin-top: 6px;
+      padding: 6px;
+      font-size: 12px;
+      width: 100%;
+      box-sizing: border-box;
+    }
+
+    .blocker-box button {
+      margin-top: 6px;
+      width: 100%;
+      padding: 6px;
+      font-size: 12px;
+    }
+
+    .plan-header {
+      background: #162243;
+      padding: 16px;
+      border-radius: 12px;
+      margin-bottom: 16px;
+      border: 1px solid #2a3a64;
+    }
+
+    .plan-header h2 {
+      margin: 0 0 8px;
+      color: white;
+    }
+
+    progress {
+      width: 100%;
+      height: 8px;
+      border-radius: 4px;
+      border: none;
+      background: #0f1630;
+    }
+
+    progress::-webkit-progress-bar {
+      background: #0f1630;
+      border-radius: 4px;
+    }
+
+    progress::-webkit-progress-value {
+      background: var(--ok);
+      border-radius: 4px;
+    }
+
+    .task-actions {
+      display: flex;
+      gap: 6px;
+      margin-top: 10px;
+      flex-wrap: wrap;
+    }
+
+    .t-btn {
+      border: none;
+      border-radius: 6px;
+      padding: 5px 10px;
+      font-size: 12px;
+      font-weight: 600;
+      cursor: pointer;
+      color: white;
+    }
+
+    .t-btn.dispatch {
+      background: #4d79ec;
+    }
+
+    .t-btn.complete {
+      background: #1f9463;
+    }
+
+    .t-btn.block {
+      background: #8b3a3a;
+    }
+
+    .t-btn-disabled {
+      font-size: 11px;
+      color: var(--muted);
+      padding: 5px 0;
+    }
+
+    .t-btn-done {
+      font-size: 12px;
+      color: var(--ok);
+      padding: 5px 0;
+    }
+
+    .t-reply {
+      margin-top: 8px;
+      background: #0d1528;
+      border: 1px solid #1e2e52;
+      border-radius: 8px;
+      padding: 8px;
+      font-size: 12px;
+    }
+
+    .t-reply-label {
+      color: var(--muted);
+      font-size: 11px;
+      margin-bottom: 4px;
+    }
+
+    .t-reply-text {
+      color: #c0ccf0;
+      white-space: pre-wrap;
+      max-height: 100px;
+      overflow: auto;
+    }
+
+    .spec-modal {
+      display: none;
+      position: fixed;
+      top: 0; left: 0; right: 0; bottom: 0;
+      background: rgba(0,0,0,0.8);
+      z-index: 1000;
+      padding: 40px;
+      overflow: auto;
+    }
+    .spec-modal.open { display: block; }
+    .spec-content {
+      max-width: 900px;
+      margin: 0 auto;
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      padding: 24px;
+      position: relative;
+    }
+    .spec-content pre {
+      white-space: pre-wrap;
+      font-size: 13px;
+      line-height: 1.6;
+      color: var(--text);
+    }
+    .spec-close {
+      position: absolute;
+      top: 12px; right: 16px;
+      background: none;
+      border: none;
+      color: var(--muted);
+      font-size: 24px;
+      cursor: pointer;
+    }
+    .spec-btn {
+      background: linear-gradient(180deg, #a855f7, #7c3aed);
+      border-color: #6d28d9;
+      margin-left: 8px;
+      padding: 4px 12px;
+      font-size: 12px;
+      display: inline-block;
+      vertical-align: middle;
+    }
+
+    /* Evolution Panel */
+    #evo-panel { margin-top: 18px; background: #181c20; border-radius: 10px; border: 1px solid #23272e; }
+    #evo-panel .panel-header { padding: 10px 16px; cursor: pointer; font-weight: bold; font-size: 15px; display: flex; align-items: center; gap: 8px; user-select: none; }
+    #evo-panel .panel-header:hover { background: #23272e; border-radius: 10px; }
+    .evo-tabs { display: flex; gap: 0; border-bottom: 1px solid #23272e; padding: 0 12px; }
+    .evo-tab { background: none; border: none; color: #888; padding: 8px 16px; cursor: pointer; font-size: 13px; border-bottom: 2px solid transparent; }
+    .evo-tab:hover { color: #ccc; }
+    .evo-tab.active { color: #4a9eff; border-bottom-color: #4a9eff; }
+    .evo-tab-content { padding: 12px 16px; max-height: 400px; overflow-y: auto; }
+    .evo-signal-item { display: flex; gap: 10px; align-items: flex-start; padding: 6px 0; border-bottom: 1px solid #1a1e24; font-size: 13px; }
+    .evo-signal-time { color: #666; min-width: 44px; font-size: 12px; }
+    .evo-signal-type { font-size: 11px; padding: 1px 6px; border-radius: 3px; color: #fff; white-space: nowrap; }
+    .evo-signal-by { color: #888; min-width: 100px; font-size: 12px; }
+    .evo-signal-content { color: #ccc; flex: 1; }
+    .evo-insight-card { background: #1e2228; border-radius: 8px; padding: 12px; margin-bottom: 10px; border-left: 3px solid #888; }
+    .evo-insight-card[data-risk="low"] { border-left-color: #2ecc71; }
+    .evo-insight-card[data-risk="medium"] { border-left-color: #f39c12; }
+    .evo-insight-card[data-risk="high"] { border-left-color: #e74c3c; }
+    .evo-insight-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px; }
+    .evo-risk-badge { font-size: 11px; padding: 1px 8px; border-radius: 3px; color: #fff; text-transform: uppercase; }
+    .evo-risk-badge.low { background: #2ecc71; }
+    .evo-risk-badge.medium { background: #f39c12; }
+    .evo-risk-badge.high { background: #e74c3c; }
+    .evo-status-badge { font-size: 11px; padding: 1px 8px; border-radius: 3px; color: #fff; margin-left: 6px; }
+    .evo-insight-judgement { color: #ddd; margin-bottom: 6px; font-size: 13px; }
+    .evo-insight-action { color: #888; font-size: 12px; margin-bottom: 8px; }
+    .evo-insight-buttons { display: flex; gap: 8px; }
+    .evo-insight-buttons button { padding: 4px 14px; border-radius: 4px; border: none; cursor: pointer; font-size: 12px; }
+    .evo-btn-apply { background: #2ecc71; color: #fff; }
+    .evo-btn-apply:hover { background: #27ae60; }
+    .evo-btn-reject { background: #555; color: #fff; }
+    .evo-btn-reject:hover { background: #777; }
+    .evo-lesson-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+    .evo-lesson-table th { text-align: left; color: #888; padding: 6px 8px; border-bottom: 1px solid #23272e; font-weight: normal; }
+    .evo-lesson-table td { padding: 6px 8px; color: #ccc; border-bottom: 1px solid #1a1e24; }
+    .evo-lesson-status { font-size: 11px; padding: 1px 8px; border-radius: 3px; color: #fff; }
+    .evo-badge { background: #e74c3c; color: #fff; padding: 1px 8px; border-radius: 10px; font-size: 11px; }
+  </style>
+</head>
+
+<body>
+  <div class="wrap">
+    <aside class="panel sidebar">
+      <button class="sidebar-toggle" id="sidebar-toggle" title="收合側邊欄">◀</button>
+      <div class="sidebar-body" id="sidebar-body">
+      <h1>Agent Room</h1>
+      <h2 id="conv-title">Loading...</h2>
+      <div class="meta" id="meta"></div>
+
+      <label>房間</label>
+      <select id="room-select"></select>
+      <div class="row" style="margin-top:8px;">
+        <input id="new-room-id" placeholder="room id (ex: strategy-room)" />
+        <input id="new-room-title" placeholder="房間名稱" />
+      </div>
+      <div style="margin-top:8px;"><button class="secondary" id="create-room-btn">新增房間</button></div>
+
+      <div class="stats">
+        <div class="stat">訊息數<b id="msg-count">0</b></div>
+        <div class="stat">佇列中<b id="queue-count">0</b></div>
+        <div class="stat">狀態<b id="runtime-status">idle</b></div>
+        <div class="stat">最後執行<b id="last-run">-</b></div>
+      </div>
+
+      <label>From</label>
+      <select id="from"></select>
+
+      <label>To</label>
+      <select id="to"></select>
+
+      <label>Message</label>
+      <textarea id="text" placeholder="輸入訊息，例如：請你針對這個產品定位提出三個反論點"></textarea>
+
+      <label><input type="checkbox" id="auto-loop" /> 自動接力 (Nox ↔ Nier)</label>
+      <div class="row">
+        <div>
+          <label>Pair A</label>
+          <select id="loop-a"></select>
+        </div>
+        <div>
+          <label>Pair B</label>
+          <select id="loop-b"></select>
+        </div>
+      </div>
+      <label>最大接力輪數</label>
+      <input id="max-turns" type="number" min="1" max="50" value="6" />
+
+      <div class="btns">
+        <button id="send-btn">送出</button>
+        <button class="secondary" id="run-btn">手動跑佇列</button>
+        <button class="warn" id="stop-btn">停止</button>
+        <button class="secondary" id="resume-btn">恢復</button>
+      </div>
+
+      <div class="btns" style="margin-top:20px; border-top:1px solid #2a3862; padding-top:14px;">
+        <button id="dispatch-task-btn"
+          style="grid-column: 1 / -1; background: linear-gradient(180deg, #36c98c, #1f9463); border-color:#1e5c40;">正式派發
+          Task Plan</button>
+      </div>
+
+      <hr style="border-color:#2a3862; opacity:.5; margin:14px 0;" />
+
+      <h2>Review Controls</h2>
+      <div id="controls-panel" style="margin-bottom:14px;">
+        <label><input type="checkbox" id="ctrl-auto-review" checked /> 自動審查</label>
+        <label style="margin-left:12px;"><input type="checkbox" id="ctrl-auto-redispatch" /> 審查失敗自動修正</label>
+        <label style="margin-left:12px;"><input type="checkbox" id="ctrl-auto-apply-insights" checked /> 低風險 insight 自動改善</label>
+        <div class="row" style="margin-top:6px;">
+          <div>
+            <label>品質閾值</label>
+            <input type="number" id="ctrl-threshold" min="0" max="100" value="70" style="width:100%;" />
+          </div>
+          <div>
+            <label>最大重試</label>
+            <input type="number" id="ctrl-max-attempts" min="1" max="10" value="3" style="width:100%;" />
+          </div>
+        </div>
+        <div class="row" style="margin-top:6px;">
+          <div>
+            <label>Timeout (sec)</label>
+            <input type="number" id="ctrl-timeout" min="30" max="600" value="180" style="width:100%;" />
+          </div>
+          <div>
+            <label>Review Agent</label>
+            <input type="text" id="ctrl-agent" value="engineer_lite" style="width:100%;" />
+          </div>
+        </div>
+        <button class="secondary" id="save-controls-btn" style="margin-top:8px; width:100%;">儲存 Controls</button>
+      </div>
+
+      <hr style="border-color:#2a3862; opacity:.5; margin:14px 0;" />
+
+      <h2>新增 Agent 參與者</h2>
+      <div class="grid3">
+        <input id="new-id" placeholder="id (ex: recon)" />
+        <input id="new-name" placeholder="顯示名稱" />
+        <input id="new-agent" placeholder="agentId" />
+      </div>
+      <div style="margin-top:8px;"><button class="secondary" id="add-agent-btn">加入</button></div>
+
+      <h2 style="margin-top:14px;">Participants</h2>
+      <ul class="participants" id="participants"></ul>
+      </div>
+    </aside>
+
+    <main class="panel">
+      <div class="tabs">
+        <button class="tab" id="tab-tasks">Task Board</button>
+        <button class="tab active" id="tab-timeline">Timeline</button>
+      </div>
+
+      <div id="view-timeline" class="timeline-view active">
+        <h1>Conversation Timeline</h1>
+        <div class="small">每 2 秒自動刷新。你可以直接在這裡看 Nox 與 Engineers 的對話過程。</div>
+        <div class="timeline" id="timeline"></div>
+      </div>
+
+      <div id="view-tasks" class="task-board">
+        <div class="plan-header" id="plan-header">
+          <h2>No Task Plan</h2>
+          <div class="meta">等待建立</div>
+        </div>
+        <div class="task-grid" id="task-grid"></div>
+
+        <div class="spec-modal" id="spec-modal">
+          <div class="spec-content">
+            <button class="spec-close" onclick="el('spec-modal').classList.remove('open')">&times;</button>
+            <h2 style="margin:0 0 16px;">📄 Spec</h2>
+            <pre id="spec-text">Loading...</pre>
+          </div>
+        </div>
+
+        <div style="margin-top:24px; border-top:1px solid #2a3862; padding-top:16px;">
+          <h3 style="margin:0 0 8px; font-size:14px;">建立 Demo 任務計畫</h3>
+          <textarea id="demo-plan-json" style="font-family:monospace; min-height:160px; font-size:11px;">
+{
+  "goal": "搭建辯證研究室（Dialectic Arena）黑板應用",
+  "phase": "idle",
+  "tasks": [
+    { "id": "T1", "title": "設計 schema (board-dialectic.json)", "assignee": "nier", "status": "pending", "depends": [] },
+    { "id": "T2", "title": "寫 server 擴充 (dialectic endpoints)", "assignee": "cashcow", "status": "pending", "depends": [] },
+    { "id": "T3", "title": "做 UI (dialectic view in index.html)", "assignee": "nier", "status": "pending", "depends": ["T1"] },
+    { "id": "T4", "title": "整合測試", "assignee": "main", "status": "pending", "depends": ["T2", "T3"] }
+  ]
+}
+           </textarea>
+          <button class="secondary" id="apply-plan-btn" style="margin-top:8px;">覆蓋套用計畫</button>
+        </div>
+      </div>
+    </main>
+  </div>
+
+  <!-- Evolution Panel -->
+  <div id="evo-panel" style="max-width:1200px;margin:0 auto;padding:0 16px;">
+    <div class="panel-header" onclick="toggleEvoPanel()">
+      <span id="evo-toggle">&#9654;</span> 進化面板
+      <span id="evo-badge" class="evo-badge" style="margin-left:8px;display:none"></span>
+    </div>
+    <div id="evo-content" style="display:none">
+      <div class="evo-tabs">
+        <button class="evo-tab active" onclick="switchEvoTab('signals')">Signals</button>
+        <button class="evo-tab" onclick="switchEvoTab('insights')">Insights</button>
+        <button class="evo-tab" onclick="switchEvoTab('lessons')">Lessons</button>
+      </div>
+      <div id="evo-tab-signals" class="evo-tab-content"></div>
+      <div id="evo-tab-insights" class="evo-tab-content" style="display:none"></div>
+      <div id="evo-tab-lessons" class="evo-tab-content" style="display:none"></div>
+    </div>
+  </div>
+
+  <script>
+    const state = {
+      board: null,
+      convId: 'task-room',
+      refreshTimer: null,
+    };
+
+    const el = id => document.getElementById(id);
+
+    function fmtTime(ts) {
+      if (!ts) return '-';
+      const d = new Date(ts);
+      if (Number.isNaN(d.getTime())) return ts;
+      return d.toLocaleString();
+    }
+
+    function participantName(id) {
+      const p = state.board?.participants?.find(x => x.id === id);
+      return p ? `${p.displayName} (${p.id})` : id;
+    }
+
+    function conversation() {
+      return state.board?.conversations?.find(c => c.id === state.convId) || null;
+    }
+
+    function renderParticipants() {
+      const participants = state.board?.participants || [];
+      const conv = conversation();
+      const memberIds = new Set(conv?.members || []);
+      const roomParticipants = participants.filter(p => memberIds.has(p.id));
+
+      const roomSelect = el('room-select');
+      const roomOptions = (state.board?.conversations || []).map(c => `<option value="${c.id}">${c.title} (${c.id})</option>`).join('');
+      const roomCurrent = roomSelect.value;
+      roomSelect.innerHTML = roomOptions;
+      if ((state.board?.conversations || []).some(c => c.id === roomCurrent)) {
+        roomSelect.value = roomCurrent;
+      } else {
+        roomSelect.value = state.convId;
+      }
+
+      const opts = roomParticipants.map(p => `<option value="${p.id}">${p.displayName} (${p.id})</option>`).join('');
+      ['from', 'to', 'loop-a', 'loop-b'].forEach(id => {
+        const current = el(id).value;
+        el(id).innerHTML = opts;
+        if (roomParticipants.some(p => p.id === current)) el(id).value = current;
+      });
+
+      if (!el('from').value && roomParticipants.length) el('from').value = roomParticipants.find(p => p.id === 'human') ? 'human' : roomParticipants[0].id;
+      if (!el('to').value && roomParticipants.length) el('to').value = roomParticipants.find(p => p.id === 'main') ? 'main' : roomParticipants[0].id;
+      if (!el('loop-a').value) el('loop-a').value = roomParticipants.find(p => p.id === 'main') ? 'main' : (roomParticipants[0]?.id || '');
+      if (!el('loop-b').value) el('loop-b').value = roomParticipants.find(p => p.id === 'nier') ? 'nier' : (roomParticipants[1]?.id || roomParticipants[0]?.id || '');
+
+      el('participants').innerHTML = roomParticipants.map(p => `
+        <li>
+          <b>${p.displayName}</b> <span class="meta">(${p.id})</span><br/>
+          <span class="meta">type=${p.type}${p.agentId ? ` · agentId=${p.agentId}` : ''}</span>
+        </li>
+      `).join('');
+    }
+
+    function renderTimeline() {
+      const conv = conversation();
+      if (!conv) return;
+
+      el('conv-title').textContent = conv.title;
+      el('meta').textContent = `conversationId: ${conv.id}`;
+
+      const qCount = (conv.queue || []).filter(t => t.status === 'queued' || t.status === 'running').length;
+      el('msg-count').textContent = String((conv.messages || []).length);
+      el('queue-count').textContent = String(qCount);
+
+      const rt = conv.runtime || {};
+      const statusEl = el('runtime-status');
+      if (rt.stopRequested) {
+        statusEl.innerHTML = '<span class="status-stop">stop requested</span>';
+      } else if (rt.running) {
+        statusEl.innerHTML = '<span class="status-running">running</span>';
+      } else {
+        statusEl.innerHTML = '<span class="status-idle">idle</span>';
+      }
+      el('last-run').textContent = rt.lastRunAt ? fmtTime(rt.lastRunAt) : '-';
+
+      const timeline = el('timeline');
+      timeline.innerHTML = (conv.messages || []).slice(-300).map(m => {
+        const cls = m.type === 'error' ? 'msg error' : m.type === 'system' ? 'msg system' : 'msg';
+        return `
+          <div class="${cls}">
+            <div class="msg-head">
+              <span class="pill">${m.type}</span>
+              <span><b>${participantName(m.from)}</b> → <b>${participantName(m.to)}</b></span>
+              <span>${fmtTime(m.ts)}</span>
+              ${m.sessionId ? `<span class="pill">session: ${m.sessionId.slice(0, 8)}...</span>` : ''}
+            </div>
+            <div style="white-space: pre-wrap;">${escapeHtml(m.text || '')}</div>
+          </div>
+        `;
+      }).join('');
+
+      timeline.scrollTop = timeline.scrollHeight;
+    }
+
+    function escapeHtml(str) {
+      return str
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+    }
+
+    async function loadBoard() {
+      const res = await fetch('/api/board');
+      if (!res.ok) throw new Error(await res.text());
+      state.board = await res.json();
+
+      const conversations = state.board?.conversations || [];
+      if (!conversations.some(c => c.id === state.convId) && conversations.length > 0) {
+        state.convId = conversations[0].id;
+      }
+
+      renderParticipants();
+      renderTimeline();
+      renderTaskBoard();
+      renderControls();
+      renderEvolution(state.board);
+    }
+
+    async function loadControls() {
+      try {
+        const res = await fetch('/api/controls');
+        if (res.ok) {
+          const ctrl = await res.json();
+          el('ctrl-auto-review').checked = ctrl.auto_review !== false;
+          el('ctrl-auto-redispatch').checked = !!ctrl.auto_redispatch;
+          el('ctrl-auto-apply-insights').checked = ctrl.auto_apply_insights !== false;
+          el('ctrl-threshold').value = ctrl.quality_threshold || 70;
+          el('ctrl-max-attempts').value = ctrl.max_review_attempts || 3;
+          el('ctrl-timeout').value = ctrl.review_timeout_sec || 180;
+          el('ctrl-agent').value = ctrl.review_agent || 'engineer_lite';
+        }
+      } catch {}
+    }
+
+    function renderControls() {
+      const ctrl = state.board?.controls || {};
+      el('ctrl-auto-review').checked = ctrl.auto_review !== false;
+      el('ctrl-auto-redispatch').checked = !!ctrl.auto_redispatch;
+      el('ctrl-auto-apply-insights').checked = ctrl.auto_apply_insights !== false;
+      if (ctrl.quality_threshold !== undefined) el('ctrl-threshold').value = ctrl.quality_threshold;
+      if (ctrl.max_review_attempts !== undefined) el('ctrl-max-attempts').value = ctrl.max_review_attempts;
+      if (ctrl.review_timeout_sec !== undefined) el('ctrl-timeout').value = ctrl.review_timeout_sec;
+      if (ctrl.review_agent) el('ctrl-agent').value = ctrl.review_agent;
+    }
+
+    async function saveControls() {
+      const payload = {
+        auto_review: el('ctrl-auto-review').checked,
+        auto_redispatch: el('ctrl-auto-redispatch').checked,
+        auto_apply_insights: el('ctrl-auto-apply-insights').checked,
+        quality_threshold: Number(el('ctrl-threshold').value),
+        max_review_attempts: Number(el('ctrl-max-attempts').value),
+        review_timeout_sec: Number(el('ctrl-timeout').value),
+        review_agent: el('ctrl-agent').value.trim(),
+      };
+      await post('/api/controls', payload);
+      await loadBoard();
+    }
+
+    // Task Board rendering logic
+    function renderTaskBoard() {
+      const plan = state.board?.taskPlan;
+      if (!plan || !plan.tasks || plan.tasks.length === 0) {
+        el('plan-header').innerHTML = '<h2>No Task Plan</h2><div class="meta">等待建立</div>';
+        el('task-grid').innerHTML = '';
+        return;
+      }
+
+      const completed = plan.tasks.filter(t => t.status === 'approved').length;
+      const total = plan.tasks.length;
+
+      el('plan-header').innerHTML = `
+        <h2>🎯 Goal: ${escapeHtml(plan.goal)}
+          ${plan.spec ? `<button class="spec-btn" onclick="viewSpec('${escapeHtml(plan.spec)}')">📄 查看 Spec</button>` : ''}
+        </h2>
+        <div class="meta" style="margin-bottom:8px;">Phase: <b style="color:var(--text);">${plan.phase}</b> | Progress: ${completed}/${total}${plan.spec ? ` | Spec: <code>${escapeHtml(plan.spec)}</code>` : ''}</div>
+        <progress value="${completed}" max="${total}"></progress>
+      `;
+
+      el('task-grid').innerHTML = plan.tasks.map(t => {
+        let dependsHtml = '';
+        if (t.depends && t.depends.length > 0) {
+          dependsHtml = `<div class="t-depends">Wait: ${t.depends.join(', ')}</div>`;
+        }
+
+        let blockerHtml = '';
+        if (t.status === 'blocked' && t.blocker) {
+          blockerHtml = `
+             <div class="blocker-box">
+               <div>🛑 <b>Blocked:</b> ${escapeHtml(t.blocker.reason || 'Unknown')}</div>
+               <input type="text" id="unblock-msg-${t.id}" placeholder="輸入你要回覆的解決方法..." />
+               <button onclick="unblockTask('${t.id}')">回覆並恢復執行</button>
+             </div>
+           `;
+        }
+
+        // Per-task action buttons based on status
+        let actionsHtml = '<div class="task-actions">';
+        if (t.status === 'pending' || t.status === 'dispatched') {
+          const depsOk = !t.depends?.length || t.depends.every(depId => {
+            const dep = plan.tasks.find(d => d.id === depId);
+            return dep && dep.status === 'approved';
+          });
+          if (depsOk) {
+            actionsHtml += `<button class="t-btn dispatch" onclick="dispatchSingleTask('${t.id}')">▶ 派發</button>`;
+          } else {
+            actionsHtml += `<span class="t-btn-disabled">⏳ 等待依賴</span>`;
+          }
+        }
+        if (t.status === 'in_progress') {
+          actionsHtml += `<button class="t-btn complete" onclick="setTaskStatus('${t.id}','completed')">✅ 完成</button>`;
+          actionsHtml += `<button class="t-btn block" onclick="promptBlock('${t.id}')">🛑 Blocked</button>`;
+        }
+        if (t.status === 'reviewing') {
+          actionsHtml += `<span style="color:#c084fc; font-size:12px;">🔍 審查中...</span>`;
+          actionsHtml += `<button class="t-btn complete" onclick="setTaskStatus('${t.id}','approved')" style="background:#1f5c40;">⏭ 手動通過</button>`;
+        }
+        if (t.status === 'needs_revision') {
+          actionsHtml += `<button class="t-btn dispatch" onclick="setTaskStatus('${t.id}','in_progress')">🔄 重新執行</button>`;
+          actionsHtml += `<button class="t-btn complete" onclick="triggerReview('${t.id}')" style="background:#6d28d9;">🔍 重新審查</button>`;
+          actionsHtml += `<button class="t-btn complete" onclick="setTaskStatus('${t.id}','approved')" style="background:#1f5c40;">⏭ 手動通過</button>`;
+        }
+        if (t.status === 'completed') {
+          actionsHtml += `<span style="color:#f7b955; font-size:12px;">⏳ 等待審查</span>`;
+          actionsHtml += `<button class="t-btn complete" onclick="triggerReview('${t.id}')" style="background:#6d28d9;">🔍 手動審查</button>`;
+          actionsHtml += `<button class="t-btn complete" onclick="setTaskStatus('${t.id}','approved')" style="background:#1f5c40;">⏭ 手動通過</button>`;
+        }
+        if (t.status === 'approved') {
+          actionsHtml += `<span class="t-btn-done">✅ Approved</span>`;
+        }
+        actionsHtml += '</div>';
+
+        // Review result display (score-based)
+        let reviewHtml = '';
+        if (t.review) {
+          const score = t.review.score;
+          const hasScore = typeof score === 'number';
+          const passed = t.status === 'approved';
+          const icon = passed ? '✅' : '❌';
+          const issues = t.review.issues || t.review.result?.issues || [];
+          const source = t.review.source || t.review.parser?.source || '';
+          const scoreColor = hasScore ? (score >= 70 ? '#7af0b5' : score >= 50 ? '#f7b955' : '#ff9999') : '#ccc';
+          reviewHtml = `<div class="t-reply" style="border-color:${passed ? '#1e5c40' : '#b44'};">`;
+          reviewHtml += `<div class="t-reply-label">${icon} 審查結果 `;
+          if (hasScore) reviewHtml += `<span style="color:${scoreColor}; font-weight:700; font-size:14px;">${score}</span>/100 `;
+          if (t.review.threshold) reviewHtml += `(閾值: ${t.review.threshold}) `;
+          reviewHtml += `<span style="opacity:.6;">[${source}]</span> `;
+          reviewHtml += `${fmtTime(t.review.reviewedAt)}</div>`;
+          if (issues.length > 0) {
+            reviewHtml += `<div class="t-reply-text">${issues.map(i => '• ' + escapeHtml(i)).join('\n')}</div>`;
+          } else if (t.review.summary) {
+            reviewHtml += `<div class="t-reply-text" style="color:#7af0b5;">${escapeHtml(t.review.summary)}</div>`;
+          } else {
+            reviewHtml += `<div class="t-reply-text" style="color:#7af0b5;">通過所有檢查</div>`;
+          }
+          reviewHtml += `</div>`;
+        }
+
+        // Last reply preview
+        let replyHtml = '';
+        if (t.lastReply) {
+          const preview = t.lastReply.length > 200 ? t.lastReply.slice(0, 200) + '...' : t.lastReply;
+          replyHtml = `<div class="t-reply"><div class="t-reply-label">Last reply (${fmtTime(t.lastReplyAt)}):</div><div class="t-reply-text">${escapeHtml(preview)}</div></div>`;
+        }
+
+        return `
+           <div class="task-card ${t.status}">
+              <div class="t-meta">
+                <span>#${t.id} · ${participantName(t.assignee)}</span>
+                <span class="t-status ${t.status}">${t.status}</span>
+              </div>
+              <div class="t-title">${escapeHtml(t.title)}</div>
+              ${dependsHtml}
+              ${blockerHtml}
+              ${reviewHtml}
+              ${replyHtml}
+              ${actionsHtml}
+           </div>
+         `;
+      }).join('');
+    }
+
+    window.unblockTask = async function (id) {
+      const msg = el('unblock-msg-' + id)?.value?.trim();
+      if (!msg) return alert('請輸入回覆訊息');
+      try {
+        await post(`/api/tasks/${id}/unblock`, { message: msg });
+        await loadBoard();
+      } catch (e) { alert(e.message); }
+    };
+
+    window.dispatchSingleTask = async function (id) {
+      try {
+        await post(`/api/tasks/${id}/dispatch`);
+        await loadBoard();
+      } catch (e) { alert(e.message); }
+    };
+
+    window.setTaskStatus = async function (id, status) {
+      try {
+        await post(`/api/tasks/${id}/status`, { status });
+        await loadBoard();
+      } catch (e) { alert(e.message); }
+    };
+
+    window.triggerReview = async function (id) {
+      try {
+        await post(`/api/tasks/${id}/review`);
+        await loadBoard();
+      } catch (e) { alert(e.message); }
+    };
+
+    window.promptBlock = async function (id) {
+      const reason = prompt('Blocked 原因？');
+      if (!reason) return;
+      try {
+        await post(`/api/tasks/${id}/status`, { status: 'blocked', reason });
+        await loadBoard();
+      } catch (e) { alert(e.message); }
+    };
+
+    window.viewSpec = async function (specPath) {
+      const filename = specPath.replace(/^specs\//, '');
+      el('spec-text').textContent = 'Loading...';
+      el('spec-modal').classList.add('open');
+      try {
+        const res = await fetch(`/api/spec/${encodeURIComponent(filename)}`);
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        el('spec-text').textContent = await res.text();
+      } catch (e) {
+        el('spec-text').textContent = `Failed to load spec: ${e.message}`;
+      }
+    };
+
+    async function post(url, payload = {}) {
+      const res = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+      return data;
+    }
+
+    async function sendMessage() {
+      const from = el('from').value;
+      const to = el('to').value;
+      const text = el('text').value.trim();
+      if (!text) return;
+
+      await post(`/api/conversations/${state.convId}/send`, {
+        from,
+        to,
+        text,
+        autoLoop: el('auto-loop').checked,
+        loopPair: [el('loop-a').value, el('loop-b').value],
+        maxAutoTurns: Number(el('max-turns').value || 6),
+      });
+
+      el('text').value = '';
+      await loadBoard();
+    }
+
+    async function addAgent() {
+      const id = el('new-id').value.trim();
+      const displayName = el('new-name').value.trim();
+      const agentId = el('new-agent').value.trim();
+
+      await post('/api/participants', {
+        id,
+        type: 'agent',
+        displayName,
+        agentId,
+        conversationId: state.convId,
+      });
+
+      el('new-id').value = '';
+      el('new-name').value = '';
+      el('new-agent').value = '';
+      await loadBoard();
+    }
+
+    async function createRoom() {
+      const id = el('new-room-id').value.trim();
+      const title = el('new-room-title').value.trim();
+      if (!id || !title) throw new Error('請填 room id 與房間名稱');
+
+      await post('/api/conversations', {
+        id,
+        title,
+        members: ['human', 'main', 'nier'],
+        defaultAutoTurns: Number(el('max-turns').value || 6),
+      });
+
+      el('new-room-id').value = '';
+      el('new-room-title').value = '';
+      state.convId = id;
+      await loadBoard();
+    }
+
+    function bind() {
+      // Sidebar toggle
+      el('sidebar-toggle').addEventListener('click', () => {
+        document.querySelector('.wrap').classList.toggle('collapsed');
+      });
+      el('send-btn').addEventListener('click', async () => {
+        try { await sendMessage(); }
+        catch (err) { alert(err.message); }
+      });
+
+      el('run-btn').addEventListener('click', async () => {
+        try {
+          await post(`/api/conversations/${state.convId}/run`);
+          await loadBoard();
+        } catch (err) { alert(err.message); }
+      });
+
+      el('stop-btn').addEventListener('click', async () => {
+        try {
+          await post(`/api/conversations/${state.convId}/stop`);
+          await loadBoard();
+        } catch (err) { alert(err.message); }
+      });
+
+      el('resume-btn').addEventListener('click', async () => {
+        try {
+          await post(`/api/conversations/${state.convId}/resume`);
+          await loadBoard();
+        } catch (err) { alert(err.message); }
+      });
+
+      el('add-agent-btn').addEventListener('click', async () => {
+        try { await addAgent(); }
+        catch (err) { alert(err.message); }
+      });
+
+      el('create-room-btn').addEventListener('click', async () => {
+        try { await createRoom(); }
+        catch (err) { alert(err.message); }
+      });
+
+      el('room-select').addEventListener('change', async (e) => {
+        state.convId = e.target.value;
+        await loadBoard();
+      });
+
+      el('text').addEventListener('keydown', async (e) => {
+        if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
+          e.preventDefault();
+          try { await sendMessage(); }
+          catch (err) { alert(err.message); }
+        }
+      });
+
+      // Task View Event Listeners
+      el('tab-timeline').addEventListener('click', () => {
+        el('tab-timeline').classList.add('active');
+        el('tab-tasks').classList.remove('active');
+        el('view-timeline').classList.add('active');
+        el('view-tasks').classList.remove('active');
+      });
+      el('tab-tasks').addEventListener('click', () => {
+        el('tab-tasks').classList.add('active');
+        el('tab-timeline').classList.remove('active');
+        el('view-tasks').classList.add('active');
+        el('view-timeline').classList.remove('active');
+      });
+
+      el('apply-plan-btn').addEventListener('click', async () => {
+        try {
+          const planJson = el('demo-plan-json').value;
+          const payload = JSON.parse(planJson);
+          await post('/api/tasks', payload);
+          await loadBoard();
+        } catch (e) { alert('Failed to parse or apply plan: ' + e.message); }
+      });
+
+      el('save-controls-btn').addEventListener('click', async () => {
+        try { await saveControls(); }
+        catch (err) { alert(err.message); }
+      });
+
+      el('dispatch-task-btn').addEventListener('click', async () => {
+        if (!confirm('確定要派發這個任務計畫給 Agent 嗎？')) return;
+        try {
+          await post('/api/tasks/dispatch');
+          await loadBoard();
+        } catch (e) { alert(e.message); }
+      });
+    }
+
+    async function boot() {
+      bind();
+      await loadBoard();
+      await loadControls();
+
+      // SSE real-time updates (replace polling)
+      const evtSource = new EventSource('/api/events');
+      evtSource.addEventListener('board', (e) => {
+        try {
+          state.board = JSON.parse(e.data);
+          const conversations = state.board?.conversations || [];
+          if (!conversations.some(c => c.id === state.convId) && conversations.length > 0) {
+            state.convId = conversations[0].id;
+          }
+          renderParticipants();
+          renderTimeline();
+          renderTaskBoard();
+          renderEvolution(state.board);
+        } catch (err) {
+          console.error('SSE parse error:', err);
+        }
+      });
+      evtSource.addEventListener('connected', () => {
+        console.log('SSE connected');
+      });
+      evtSource.onerror = () => {
+        console.warn('SSE disconnected, falling back to polling');
+        // Fallback to polling if SSE drops
+        if (!state.refreshTimer) {
+          state.refreshTimer = setInterval(() => {
+            loadBoard().catch(err => console.error(err));
+          }, 3000);
+        }
+      };
+    }
+
+    // --- Evolution Panel ---
+    function toggleEvoPanel() {
+      const content = document.getElementById('evo-content');
+      const toggle = document.getElementById('evo-toggle');
+      const visible = content.style.display !== 'none';
+      content.style.display = visible ? 'none' : 'block';
+      toggle.innerHTML = visible ? '&#9660;' : '&#9654;';
+    }
+
+    function switchEvoTab(tab) {
+      ['signals', 'insights', 'lessons'].forEach(t => {
+        document.getElementById('evo-tab-' + t).style.display = t === tab ? 'block' : 'none';
+      });
+      document.querySelectorAll('.evo-tab').forEach(btn => {
+        btn.classList.toggle('active', btn.textContent.toLowerCase() === tab);
+      });
+    }
+
+    const SIGNAL_TYPE_COLORS = {
+      review_result: '#4a9eff',
+      status_change: '#888',
+      error: '#e74c3c',
+      insight_applied: '#2ecc71',
+      pattern: '#f39c12',
+    };
+
+    function renderSignals(signals) {
+      const container = document.getElementById('evo-tab-signals');
+      if (!signals.length) { container.innerHTML = '<div style="color:#666;padding:20px;text-align:center">No signals yet</div>'; return; }
+      container.innerHTML = signals.map(s => {
+        const time = s.ts ? new Date(s.ts).toLocaleTimeString('en', {hour:'2-digit',minute:'2-digit'}) : '';
+        const color = SIGNAL_TYPE_COLORS[s.type] || '#888';
+        return '<div class="evo-signal-item">'
+          + '<span class="evo-signal-time">' + escapeHtml(time) + '</span>'
+          + '<span class="evo-signal-type" style="background:' + color + '">' + escapeHtml(s.type || '') + '</span>'
+          + '<span class="evo-signal-by">' + escapeHtml(s.by || '') + '</span>'
+          + '<span class="evo-signal-content">' + escapeHtml(s.content || '') + (s.refs && s.refs.length ? ' <span style="color:#666">[' + s.refs.join(', ') + ']</span>' : '') + '</span>'
+          + '</div>';
+      }).join('');
+    }
+
+    function renderInsights(insights) {
+      const container = document.getElementById('evo-tab-insights');
+      if (!insights.length) { container.innerHTML = '<div style="color:#666;padding:20px;text-align:center">No insights yet</div>'; return; }
+      container.innerHTML = insights.map(ins => {
+        const statusColors = { applied: '#2ecc71', rejected: '#888', pending: '#f39c12', expired: '#666', rolled_back: '#e74c3c' };
+        const statusColor = statusColors[ins.status] || '#888';
+        const buttons = ins.status === 'pending'
+          ? '<div class="evo-insight-buttons">'
+            + '<button class="evo-btn-apply" onclick="applyInsight(\'' + escapeHtml(ins.id) + '\')">Apply</button>'
+            + '<button class="evo-btn-reject" onclick="rejectInsight(\'' + escapeHtml(ins.id) + '\')">Reject</button>'
+            + '</div>'
+          : '<span style="color:' + statusColor + ';font-size:12px">' + escapeHtml(ins.status) + '</span>';
+        return '<div class="evo-insight-card" data-risk="' + (ins.risk || 'low') + '">'
+          + '<div class="evo-insight-header">'
+          + '<span class="evo-risk-badge ' + (ins.risk || 'low') + '">' + escapeHtml(ins.risk || 'low') + '</span>'
+          + buttons
+          + '</div>'
+          + '<div class="evo-insight-judgement">' + escapeHtml(ins.judgement || '') + '</div>'
+          + '<div class="evo-insight-action">Action: ' + escapeHtml(ins.suggestedAction?.type || 'none') + ' &middot; by ' + escapeHtml(ins.by || 'unknown') + '</div>'
+          + '</div>';
+      }).join('');
+    }
+
+    function renderLessons(lessons) {
+      const container = document.getElementById('evo-tab-lessons');
+      if (!lessons.length) { container.innerHTML = '<div style="color:#666;padding:20px;text-align:center">No lessons yet</div>'; return; }
+      const statusColors = { active: '#4a9eff', validated: '#2ecc71', invalidated: '#e74c3c', superseded: '#888' };
+      container.innerHTML = '<table class="evo-lesson-table">'
+        + '<thead><tr><th>Rule</th><th>Status</th><th>Source</th><th>Effect</th></tr></thead>'
+        + '<tbody>' + lessons.map(l => '<tr>'
+          + '<td>' + escapeHtml(l.rule || '') + '</td>'
+          + '<td><span class="evo-lesson-status" style="background:' + (statusColors[l.status] || '#888') + '">' + escapeHtml(l.status || '') + '</span></td>'
+          + '<td style="color:#888">' + escapeHtml(l.by || '') + (l.fromInsight ? ' &larr; ' + escapeHtml(l.fromInsight) : '') + '</td>'
+          + '<td style="color:#888">' + escapeHtml(l.effect || '\u2014') + '</td>'
+          + '</tr>').join('') + '</tbody></table>';
+    }
+
+    function renderEvolution(board) {
+      const signals = (board.signals || []).slice().reverse().slice(0, 50);
+      const insights = (board.insights || []).slice().reverse();
+      const lessons = (board.lessons || []).filter(l => l.status !== 'invalidated' && l.status !== 'superseded');
+
+      renderSignals(signals);
+      renderInsights(insights);
+      renderLessons(lessons);
+
+      const pending = insights.filter(i => i.status === 'pending').length;
+      const badge = document.getElementById('evo-badge');
+      if (badge) {
+        badge.textContent = pending > 0 ? pending + ' pending' : '';
+        badge.style.display = pending > 0 ? 'inline' : 'none';
+      }
+    }
+
+    async function applyInsight(insightId) {
+      try {
+        const resp = await fetch('/api/insights/' + insightId + '/apply', { method: 'POST' });
+        if (!resp.ok) throw new Error(await resp.text());
+      } catch (e) {
+        alert('Apply failed: ' + e.message);
+      }
+    }
+
+    async function rejectInsight(insightId) {
+      try {
+        const board = await fetch('/api/board').then(r => r.json());
+        const ins = (board.insights || []).find(i => i.id === insightId);
+        if (ins) {
+          ins.status = 'rejected';
+          await fetch('/api/board', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ insights: board.insights }),
+          });
+        }
+      } catch (e) {
+        alert('Reject failed: ' + e.message);
+      }
+    }
+
+    boot().catch(err => {
+      console.error(err);
+      alert(`Boot failed: ${err.message}`);
+    });
+  </script>
+</body>
+
+</html>

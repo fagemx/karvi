@@ -1,0 +1,12 @@
+{
+  "name": "@fagemx/task-engine",
+  "version": "0.1.0",
+  "description": "AI task orchestration engine — board + brief + multi-runtime dispatch",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "test": "node test-evolution-loop.js"
+  },
+  "keywords": ["ai", "task-engine", "orchestration", "blackboard", "dispatch"],
+  "license": "MIT"
+}

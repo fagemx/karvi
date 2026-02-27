@@ -1,0 +1,1131 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Brief 控制面板 — OpenClaw 🦞</title>
+    <style>
+        :root {
+            --bg: #0f0f1a;
+            --surface: #1a1a2e;
+            --surface2: #16213e;
+            --border: #2a2a4a;
+            --text: #e0e0e0;
+            --text2: #888;
+            --accent: #667eea;
+            --accent2: #764ba2;
+            --green: #2ecc71;
+            --yellow: #f1c40f;
+            --red: #e74c3c;
+            --orange: #e67e22;
+            --blue: #3498db;
+            --pink: #f5576c;
+            --cyan: #1abc9c;
+        }
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: 'Microsoft JhengHei', 'Segoe UI', sans-serif;
+            background: var(--bg);
+            color: var(--text);
+            min-height: 100vh;
+        }
+
+        .header {
+            background: linear-gradient(135deg, var(--accent), var(--accent2));
+            padding: 16px 28px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            position: sticky;
+            top: 0;
+            z-index: 100;
+        }
+        .header-left { display: flex; align-items: center; gap: 14px; }
+        .header h1 { font-size: 1.3em; font-weight: 600; }
+        .header .tag {
+            background: rgba(255,255,255,0.2);
+            padding: 3px 10px;
+            border-radius: 12px;
+            font-size: 0.75em;
+        }
+        .header-right { display: flex; align-items: center; gap: 12px; font-size: 0.85em; }
+        .live-dot {
+            width: 8px; height: 8px; border-radius: 50%;
+            background: var(--green);
+            animation: pulse 2s infinite;
+        }
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.4; }
+        }
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+        .pause-btn {
+            background: rgba(255,255,255,0.15);
+            border: 1px solid rgba(255,255,255,0.3);
+            color: white;
+            padding: 5px 14px;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 0.85em;
+        }
+        .pause-btn:hover { background: rgba(255,255,255,0.25); }
+
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 20px;
+            display: grid;
+            grid-template-columns: 1fr 320px;
+            gap: 20px;
+        }
+
+        .card {
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            padding: 18px;
+            margin-bottom: 16px;
+        }
+        .card-title {
+            font-size: 0.85em;
+            color: var(--text2);
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            margin-bottom: 12px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .overview-grid {
+            display: grid;
+            grid-template-columns: repeat(5, 1fr);
+            gap: 12px;
+        }
+        .stat-box {
+            background: var(--surface2);
+            border-radius: 10px;
+            padding: 14px;
+            text-align: center;
+        }
+        .stat-value {
+            font-size: 1.8em;
+            font-weight: 700;
+            line-height: 1.2;
+        }
+        .stat-label { font-size: 0.75em; color: var(--text2); margin-top: 4px; }
+        .stat-value.green { color: var(--green); }
+        .stat-value.yellow { color: var(--yellow); }
+        .stat-value.red { color: var(--red); }
+        .stat-value.blue { color: var(--blue); }
+        .stat-value.cyan { color: var(--cyan); }
+
+        .progress-bar {
+            width: 100%;
+            height: 8px;
+            background: var(--surface2);
+            border-radius: 4px;
+            overflow: hidden;
+            margin-top: 12px;
+        }
+        .progress-fill {
+            height: 100%;
+            border-radius: 4px;
+            transition: width 0.6s ease;
+        }
+
+        .shot-list { display: flex; flex-direction: column; gap: 10px; }
+        .shot-card {
+            background: var(--surface2);
+            border-radius: 10px;
+            padding: 14px 16px;
+            display: grid;
+            grid-template-columns: 50px 1fr auto;
+            gap: 14px;
+            align-items: center;
+            border-left: 4px solid transparent;
+            transition: border-color 0.2s, background 0.2s;
+            cursor: pointer;
+        }
+        .shot-card:hover { background: #1e2a4a; }
+        .shot-card[data-status="pass"] { border-left-color: var(--green); }
+        .shot-card[data-status="review"] { border-left-color: var(--yellow); }
+        .shot-card[data-status="generating"] { border-left-color: var(--blue); }
+        .shot-card[data-status="pending"] { border-left-color: var(--border); }
+        .shot-card[data-status="fail"] { border-left-color: var(--red); }
+        .shot-card[data-status="retry"] { border-left-color: var(--orange); }
+        .shot-card[data-status="dispatched"] { border-left-color: var(--cyan); }
+
+        .shot-id {
+            font-size: 1.4em;
+            font-weight: 700;
+            color: var(--accent);
+            text-align: center;
+        }
+        .shot-info h4 { font-size: 0.95em; margin-bottom: 4px; }
+        .shot-info p { font-size: 0.8em; color: var(--text2); }
+        .shot-meta {
+            display: flex;
+            flex-direction: column;
+            align-items: flex-end;
+            gap: 6px;
+        }
+        .shot-thumb {
+            width: 80px;
+            height: 45px;
+            object-fit: cover;
+            border-radius: 6px;
+            border: 1px solid var(--border);
+            margin-top: 6px;
+        }
+
+        .badge {
+            padding: 3px 10px;
+            border-radius: 12px;
+            font-size: 0.72em;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+        .badge-pass { background: rgba(46,204,113,0.15); color: var(--green); }
+        .badge-review { background: rgba(241,196,15,0.15); color: var(--yellow); }
+        .badge-generating { background: rgba(52,152,219,0.15); color: var(--blue); }
+        .badge-pending { background: rgba(136,136,136,0.15); color: var(--text2); }
+        .badge-fail { background: rgba(231,76,60,0.15); color: var(--red); }
+        .badge-retry { background: rgba(230,126,34,0.15); color: var(--orange); }
+        .badge-dispatched { background: rgba(26,188,156,0.15); color: var(--cyan); }
+
+        .score-ring {
+            width: 36px; height: 36px;
+            border-radius: 50%;
+            display: flex; align-items: center; justify-content: center;
+            font-size: 0.75em; font-weight: 700;
+        }
+
+        .actions { display: flex; gap: 6px; margin-top: 8px; }
+        .act-btn {
+            padding: 4px 10px;
+            border-radius: 6px;
+            border: 1px solid var(--border);
+            background: transparent;
+            color: var(--text);
+            font-size: 0.75em;
+            cursor: pointer;
+            transition: all 0.15s;
+        }
+        .act-btn:hover { background: var(--accent); border-color: var(--accent); color: #fff; }
+        .act-btn.danger:hover { background: var(--red); border-color: var(--red); }
+        .act-btn.success:hover { background: var(--green); border-color: var(--green); }
+        .act-btn.dispatch:hover { background: var(--cyan); border-color: var(--cyan); }
+
+        .sidebar { display: flex; flex-direction: column; gap: 16px; }
+
+        .asset-list { display: flex; flex-direction: column; gap: 6px; }
+        .asset-row {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 6px 10px;
+            background: var(--surface2);
+            border-radius: 6px;
+            font-size: 0.82em;
+            font-family: 'Cascadia Code', 'Consolas', monospace;
+        }
+        .asset-ok { color: var(--green); }
+        .asset-missing { color: var(--red); }
+
+        .control-row {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 8px 0;
+            border-bottom: 1px solid var(--border);
+            font-size: 0.88em;
+        }
+        .control-row:last-child { border-bottom: none; }
+        .toggle {
+            width: 40px; height: 22px;
+            background: var(--border);
+            border-radius: 11px;
+            position: relative;
+            cursor: pointer;
+            transition: background 0.2s;
+        }
+        .toggle.on { background: var(--green); }
+        .toggle::after {
+            content: '';
+            width: 18px; height: 18px;
+            background: white;
+            border-radius: 50%;
+            position: absolute;
+            top: 2px; left: 2px;
+            transition: left 0.2s;
+        }
+        .toggle.on::after { left: 20px; }
+        .threshold-input {
+            width: 50px;
+            background: var(--surface2);
+            border: 1px solid var(--border);
+            color: var(--text);
+            text-align: center;
+            padding: 4px;
+            border-radius: 4px;
+            font-size: 0.9em;
+        }
+
+        .log-list {
+            max-height: 280px;
+            overflow-y: auto;
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+        }
+        .log-entry {
+            font-size: 0.78em;
+            padding: 6px 10px;
+            background: var(--surface2);
+            border-radius: 6px;
+            display: flex;
+            gap: 8px;
+            align-items: baseline;
+        }
+        .log-time { color: var(--text2); font-family: monospace; white-space: nowrap; }
+        .log-agent {
+            font-weight: 600;
+            padding: 1px 6px;
+            border-radius: 4px;
+            font-size: 0.85em;
+            white-space: nowrap;
+        }
+        .log-agent[data-agent="nox"] { background: rgba(102,126,234,0.2); color: var(--accent); }
+        .log-agent[data-agent="shotgen"] { background: rgba(46,204,113,0.2); color: var(--green); }
+        .log-agent[data-agent="shotcheck"] { background: rgba(241,196,15,0.2); color: var(--yellow); }
+        .log-agent[data-agent="user"] { background: rgba(245,87,108,0.2); color: var(--pink); }
+
+        .chip-list { display: flex; flex-wrap: wrap; gap: 6px; }
+        .chip {
+            padding: 4px 10px;
+            background: var(--surface2);
+            border-radius: 14px;
+            font-size: 0.78em;
+            border: 1px solid var(--border);
+        }
+
+        /* Modal */
+        .modal-overlay {
+            display: none;
+            position: fixed;
+            inset: 0;
+            background: rgba(0,0,0,0.7);
+            z-index: 200;
+            align-items: center;
+            justify-content: center;
+        }
+        .modal-overlay.open { display: flex; }
+        .modal {
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: 16px;
+            padding: 24px;
+            width: 560px;
+            max-height: 85vh;
+            overflow-y: auto;
+        }
+        .modal h2 { margin-bottom: 16px; }
+        .modal-close {
+            float: right;
+            background: none;
+            border: none;
+            color: var(--text2);
+            font-size: 1.4em;
+            cursor: pointer;
+        }
+        .modal-section { margin-bottom: 14px; }
+        .modal-section label {
+            display: block;
+            font-size: 0.78em;
+            color: var(--text2);
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            margin-bottom: 4px;
+        }
+        .must-neg-list {
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+        }
+        .must-item, .neg-item {
+            padding: 4px 10px;
+            border-radius: 6px;
+            font-size: 0.85em;
+        }
+        .must-item { background: rgba(46,204,113,0.1); border-left: 3px solid var(--green); }
+        .neg-item { background: rgba(231,76,60,0.1); border-left: 3px solid var(--red); }
+        .feedback-box {
+            background: var(--surface2);
+            padding: 10px 14px;
+            border-radius: 8px;
+            font-size: 0.88em;
+            border-left: 3px solid var(--yellow);
+        }
+        .modal-actions {
+            display: flex;
+            gap: 8px;
+            margin-top: 16px;
+            justify-content: flex-end;
+        }
+        .modal-btn {
+            padding: 8px 18px;
+            border-radius: 8px;
+            border: none;
+            font-size: 0.88em;
+            cursor: pointer;
+            font-weight: 600;
+        }
+        .modal-btn.primary { background: var(--accent); color: #fff; }
+        .modal-btn.success { background: var(--green); color: #fff; }
+        .modal-btn.danger { background: var(--red); color: #fff; }
+        .modal-btn.dispatch { background: var(--cyan); color: #fff; }
+        .modal-btn.ghost { background: transparent; border: 1px solid var(--border); color: var(--text); }
+
+        .modal-feedback-input {
+            width: 100%;
+            background: var(--surface2);
+            border: 1px solid var(--border);
+            color: var(--text);
+            padding: 10px 12px;
+            border-radius: 8px;
+            font-size: 0.88em;
+            font-family: inherit;
+            resize: vertical;
+            min-height: 60px;
+        }
+        .modal-feedback-input::placeholder { color: var(--text2); }
+        .modal-feedback-input:focus { outline: none; border-color: var(--accent); }
+
+        .modal-image {
+            width: 100%;
+            border-radius: 10px;
+            border: 1px solid var(--border);
+            margin-top: 4px;
+        }
+
+        .history-strip {
+            display: flex;
+            gap: 8px;
+            overflow-x: auto;
+            padding: 8px 0;
+        }
+        .history-thumb {
+            flex-shrink: 0;
+            width: 90px;
+            border-radius: 6px;
+            overflow: hidden;
+            border: 2px solid var(--border);
+            cursor: pointer;
+            position: relative;
+            transition: border-color 0.2s;
+        }
+        .history-thumb:hover { border-color: var(--accent); }
+        .history-thumb.current { border-color: var(--cyan); }
+        .history-thumb img {
+            width: 100%;
+            aspect-ratio: 16/9;
+            object-fit: cover;
+            display: block;
+        }
+        .history-thumb .ver-label {
+            position: absolute;
+            bottom: 0;
+            left: 0;
+            right: 0;
+            background: rgba(0,0,0,0.75);
+            font-size: 0.65em;
+            padding: 2px 4px;
+            text-align: center;
+        }
+        .history-thumb .ver-score {
+            position: absolute;
+            top: 2px;
+            right: 2px;
+            background: rgba(0,0,0,0.7);
+            font-size: 0.6em;
+            padding: 1px 4px;
+            border-radius: 4px;
+            font-weight: 700;
+        }
+        .history-detail {
+            background: var(--surface2);
+            border-radius: 8px;
+            padding: 10px 14px;
+            font-size: 0.82em;
+            margin-top: 8px;
+        }
+
+        .dispatched-info {
+            background: rgba(26,188,156,0.1);
+            border: 1px solid rgba(26,188,156,0.3);
+            border-radius: 8px;
+            padding: 10px 14px;
+            font-size: 0.85em;
+            color: var(--cyan);
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        .spinner {
+            width: 14px; height: 14px;
+            border: 2px solid var(--border);
+            border-top-color: var(--cyan);
+            border-radius: 50%;
+            animation: spin 0.8s linear infinite;
+        }
+
+        .toast {
+            position: fixed;
+            bottom: 24px;
+            right: 24px;
+            background: var(--accent);
+            color: #fff;
+            padding: 12px 20px;
+            border-radius: 10px;
+            font-size: 0.88em;
+            z-index: 300;
+            opacity: 0;
+            transform: translateY(10px);
+            transition: all 0.3s;
+            pointer-events: none;
+        }
+        .toast.show { opacity: 1; transform: translateY(0); }
+
+        @media (max-width: 900px) {
+            .container { grid-template-columns: 1fr; }
+            .overview-grid { grid-template-columns: repeat(3, 1fr); }
+        }
+    </style>
+</head>
+<body>
+
+<div class="header">
+    <div class="header-left">
+        <h1>🦞 Brief 控制面板</h1>
+        <span class="tag" id="projectName">載入中...</span>
+    </div>
+    <div class="header-right">
+        <div class="live-dot" id="liveDot"></div>
+        <span id="pollStatus">連線中...</span>
+        <button class="pause-btn" id="pauseBtn" onclick="togglePause()">⏸ 暫停</button>
+    </div>
+</div>
+
+<div class="container">
+    <div class="main-col">
+        <div class="card">
+            <div class="card-title">📊 專案總覽</div>
+            <div class="overview-grid" id="overviewGrid"></div>
+            <div class="progress-bar">
+                <div class="progress-fill" id="progressFill" style="width:0%; background: linear-gradient(90deg, var(--accent), var(--green));"></div>
+            </div>
+        </div>
+
+        <div class="card">
+            <div class="card-title">🎨 專案條件</div>
+            <div style="display:flex; align-items:center; gap:12px; margin-bottom:10px;">
+                <span style="font-size:0.85em; color:var(--text2);">風格：</span>
+                <span id="styleTag" style="font-weight:600;"></span>
+            </div>
+            <div class="chip-list" id="chipList"></div>
+        </div>
+
+        <div class="card">
+            <div class="card-title">🎬 鏡頭進度</div>
+            <div class="shot-list" id="shotList"></div>
+        </div>
+    </div>
+
+    <div class="sidebar">
+        <div class="card">
+            <div class="card-title">📦 RefPack 資產</div>
+            <div id="refpackStatus" style="margin-bottom:10px;"></div>
+            <div class="asset-list" id="assetList"></div>
+        </div>
+
+        <div class="card">
+            <div class="card-title">⚙️ 控制設定</div>
+            <div id="controlPanel"></div>
+        </div>
+
+        <div class="card">
+            <div class="card-title">📜 活動記錄</div>
+            <div class="log-list" id="logList"></div>
+        </div>
+
+        <div class="card">
+            <div class="card-title">💾 操作</div>
+            <button class="act-btn" style="width:100%; padding:8px; margin-bottom:6px;" onclick="exportBrief()">下載 Brief JSON</button>
+            <button class="act-btn" style="width:100%; padding:8px;" onclick="copyBriefSummary()">複製摘要給 Agent</button>
+        </div>
+    </div>
+</div>
+
+<div class="modal-overlay" id="modalOverlay" onclick="if(event.target===this)closeModal()">
+    <div class="modal" id="modalContent"></div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+let brief = null;
+let pollTimer = null;
+const POLL_MS = 3000;
+
+// S8: Detect taskId from URL path (/brief/:taskId)
+const _pathParts = location.pathname.split('/brief/');
+const TASK_ID = (_pathParts.length > 1 && _pathParts[1]) ? _pathParts[1].replace(/\/$/, '') : null;
+const API_BASE = TASK_ID ? `/api/brief/${TASK_ID}` : '/api/brief';
+
+async function loadBrief() {
+    try {
+        const res = await fetch(API_BASE + '?t=' + Date.now());
+        if (!res.ok) throw new Error('fetch failed');
+        brief = await res.json();
+        render();
+        document.getElementById('pollStatus').textContent = '即時同步';
+        document.getElementById('liveDot').style.background = 'var(--green)';
+    } catch (e) {
+        document.getElementById('pollStatus').textContent = '離線 — 無法讀取 brief';
+        document.getElementById('liveDot').style.background = 'var(--red)';
+    }
+}
+
+async function saveBrief() {
+    try {
+        await fetch(API_BASE, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(brief, null, 2)
+        });
+    } catch (e) {
+        showToast('儲存失敗 — server 無回應');
+    }
+}
+
+function startPoll() {
+    loadBrief();
+    pollTimer = setInterval(loadBrief, POLL_MS);
+
+    // S8: SSE for real-time updates (supplement polling)
+    if (TASK_ID) {
+        try {
+            const es = new EventSource('/api/events');
+            es.addEventListener('brief', (e) => {
+                try {
+                    const { taskId, data } = JSON.parse(e.data);
+                    if (taskId === TASK_ID && data) { brief = data; render(); }
+                } catch {}
+            });
+        } catch {}
+    }
+}
+
+function render() {
+    if (!brief) return;
+    renderHeader();
+    renderOverview();
+    renderConstraints();
+    renderShots();
+    renderRefpack();
+    renderControls();
+    renderLog();
+}
+
+function renderHeader() {
+    document.getElementById('projectName').textContent = brief.project.name;
+    const isPaused = brief.controls.paused;
+    const btn = document.getElementById('pauseBtn');
+    btn.textContent = isPaused ? '▶ 繼續' : '⏸ 暫停';
+    btn.style.background = isPaused ? 'rgba(231,76,60,0.3)' : '';
+}
+
+function renderOverview() {
+    const shots = brief.shotspec.shots;
+    const total = shots.length;
+    const passed = shots.filter(s => s.status === 'pass').length;
+    const reviewing = shots.filter(s => s.status === 'review').length;
+    const dispatched = shots.filter(s => s.status === 'dispatched' || s.status === 'generating').length;
+    const pending = shots.filter(s => s.status === 'pending').length;
+    const progress = total > 0 ? Math.round((passed / total) * 100) : 0;
+
+    document.getElementById('overviewGrid').innerHTML = `
+        <div class="stat-box">
+            <div class="stat-value green">${passed}</div>
+            <div class="stat-label">✅ 通過</div>
+        </div>
+        <div class="stat-box">
+            <div class="stat-value yellow">${reviewing}</div>
+            <div class="stat-label">🔍 待審查</div>
+        </div>
+        <div class="stat-box">
+            <div class="stat-value cyan">${dispatched}</div>
+            <div class="stat-label">🤖 代理處理中</div>
+        </div>
+        <div class="stat-box">
+            <div class="stat-value">${pending}</div>
+            <div class="stat-label">⏳ 待處理</div>
+        </div>
+        <div class="stat-box">
+            <div class="stat-value blue">${total}</div>
+            <div class="stat-label">📊 總計</div>
+        </div>
+    `;
+    document.getElementById('progressFill').style.width = progress + '%';
+}
+
+function renderConstraints() {
+    document.getElementById('styleTag').textContent = brief.project.style;
+    document.getElementById('chipList').innerHTML =
+        brief.project.constraints.map(c => `<span class="chip">${c}</span>`).join('');
+}
+
+const STATUS_LABEL = {
+    pass: '通過', review: '待審查', generating: '生成中',
+    pending: '待處理', fail: '失敗', retry: '重試中', dispatched: '已派發'
+};
+
+function renderShots() {
+    const container = document.getElementById('shotList');
+    container.innerHTML = brief.shotspec.shots.map(shot => {
+        const statusLabel = STATUS_LABEL[shot.status] || shot.status;
+
+        let scoreHtml = '';
+        if (shot.score !== null && shot.score !== undefined) {
+            const color = shot.score >= 85 ? 'var(--green)' : shot.score >= 70 ? 'var(--yellow)' : 'var(--red)';
+            scoreHtml = `<div class="score-ring" style="border: 2px solid ${color}; color: ${color};">${shot.score}</div>`;
+        }
+
+        let actionsHtml = '';
+        if (shot.status === 'review') {
+            actionsHtml = `
+                <div class="actions">
+                    <button class="act-btn success" onclick="event.stopPropagation();shotAction('${shot.id}','approve')">✓ 核准</button>
+                    <button class="act-btn dispatch" onclick="event.stopPropagation();openShotDetail('${shot.id}')">🤖 派發修正</button>
+                </div>`;
+        } else if (shot.status === 'pending') {
+            actionsHtml = `
+                <div class="actions">
+                    <button class="act-btn dispatch" onclick="event.stopPropagation();openShotDetail('${shot.id}')">🤖 派發生成</button>
+                </div>`;
+        } else if (shot.status === 'dispatched') {
+            actionsHtml = `
+                <div class="actions">
+                    <span class="dispatched-info"><span class="spinner"></span> 等待代理處理</span>
+                </div>`;
+        }
+
+        const retryInfo = shot.retries > 0 ? `<span style="font-size:0.72em; color:var(--orange);">重試 ×${shot.retries}</span>` : '';
+
+        const thumbHtml = shot.generated_url
+            ? `<img class="shot-thumb" src="${shot.generated_url}" onerror="this.style.display='none'">`
+            : '';
+
+        return `
+            <div class="shot-card" data-status="${shot.status}" onclick="openShotDetail('${shot.id}')">
+                <div class="shot-id">${shot.id}</div>
+                <div class="shot-info">
+                    <h4>${shot.title}</h4>
+                    <p>${shot.goal}</p>
+                    ${shot.user_feedback ? `<p style="color:var(--yellow); margin-top:4px;">💬 ${shot.user_feedback}</p>` : ''}
+                    ${shot.action ? `<p style="color:var(--cyan); margin-top:4px;">🎯 ${shot.action_detail || shot.action}</p>` : ''}
+                    ${thumbHtml}
+                    ${actionsHtml}
+                </div>
+                <div class="shot-meta">
+                    <span class="badge badge-${shot.status}">${statusLabel}</span>
+                    ${scoreHtml}
+                    ${retryInfo}
+                </div>
+            </div>
+        `;
+    }).join('');
+}
+
+function renderRefpack() {
+    const rp = brief.refpack;
+    const entries = Object.entries(rp.assets);
+    const okCount = entries.filter(([,v]) => v.ok).length;
+    const total = entries.length;
+
+    document.getElementById('refpackStatus').innerHTML = `
+        <span class="badge ${rp.validated ? 'badge-pass' : 'badge-review'}">${rp.validated ? '已驗證' : '未驗證'}</span>
+        <span style="font-size:0.82em; margin-left:8px;">${okCount}/${total} 完成</span>
+    `;
+
+    document.getElementById('assetList').innerHTML = entries.map(([name, info]) => `
+        <div class="asset-row">
+            <span>${name}</span>
+            <span class="${info.ok ? 'asset-ok' : 'asset-missing'}">${info.ok ? '✓' : '✗ 缺少'}</span>
+        </div>
+    `).join('');
+}
+
+function renderControls() {
+    const c = brief.controls;
+    document.getElementById('controlPanel').innerHTML = `
+        <div class="control-row">
+            <span>自動重試</span>
+            <div class="toggle ${c.auto_retry ? 'on' : ''}" onclick="toggleControl('auto_retry')"></div>
+        </div>
+        <div class="control-row">
+            <span>重試上限</span>
+            <input class="threshold-input" type="number" value="${c.max_retries}" min="1" max="10"
+                   onchange="updateControl('max_retries', parseInt(this.value))">
+        </div>
+        <div class="control-row">
+            <span>品質門檻</span>
+            <input class="threshold-input" type="number" value="${c.quality_threshold}" min="0" max="100"
+                   onchange="updateControl('quality_threshold', parseInt(this.value))">
+        </div>
+    `;
+}
+
+function renderLog() {
+    const container = document.getElementById('logList');
+    const logs = [...brief.log].reverse();
+    container.innerHTML = logs.map(l => {
+        const t = new Date(l.time);
+        const ts = t.toLocaleTimeString('zh-TW', { hour: '2-digit', minute: '2-digit' });
+        return `
+            <div class="log-entry">
+                <span class="log-time">${ts}</span>
+                <span class="log-agent" data-agent="${l.agent}">${l.agent}</span>
+                <span>${l.detail}</span>
+            </div>
+        `;
+    }).join('');
+}
+
+/* Actions */
+function shotAction(shotId, action) {
+    const shot = brief.shotspec.shots.find(s => s.id === shotId);
+    if (!shot) return;
+    const now = new Date().toISOString();
+
+    if (action === 'approve') {
+        shot.status = 'pass';
+        shot.action = null;
+        shot.action_detail = null;
+        shot.dispatched_at = null;
+        brief.log.push({ time: now, agent: 'user', action: 'review_approve', detail: `${shotId} 核准通過` });
+        showToast(`${shotId} 已核准 ✓`);
+    }
+
+    render();
+    saveBrief();
+}
+
+async function dispatchShot(shotId, actionType) {
+    const shot = brief.shotspec.shots.find(s => s.id === shotId);
+    if (!shot) return;
+    const now = new Date().toISOString();
+    const feedbackEl = document.getElementById('modal-feedback');
+    const feedback = feedbackEl ? feedbackEl.value.trim() : '';
+
+    if (!shot.history) shot.history = [];
+
+    if (actionType === 'fix' && shot.generated_url) {
+        shot.history.push({
+            version: shot.history.length + 1,
+            url: shot.generated_url,
+            local_path: shot.local_path || null,
+            score: shot.score,
+            time: shot.dispatched_at || now,
+            feedback: feedback || shot.user_feedback || null
+        });
+    }
+
+    shot.status = 'dispatched';
+    shot.action = actionType;
+    shot.action_detail = feedback || null;
+    shot.dispatched_at = now;
+    if (feedback) shot.user_feedback = feedback;
+    if (actionType === 'fix') shot.retries = (shot.retries || 0) + 1;
+
+    const actionLabel = actionType === 'fix' ? '派發修正' : '派發生成';
+    const detail = feedback
+        ? `${shotId} ${actionLabel}：${feedback}`
+        : `${shotId} ${actionLabel}`;
+
+    brief.log.push({ time: now, agent: 'user', action: 'dispatch_' + actionType, detail });
+
+    closeModal();
+    render();
+
+    const scriptPath = 'C:\\\\Users\\\\fagem\\\\.openclaw\\\\workspace\\\\skills\\\\conversapix-storyboard\\\\tools\\\\brief-panel\\\\process-brief.js';
+    const wakeMessage = feedback
+        ? `Brief 更新：${shotId} ${actionLabel} — ${feedback}。請執行 node ${scriptPath} 處理。`
+        : `Brief 更新：${shotId} ${actionLabel}。請執行 node ${scriptPath} 處理。`;
+
+    try {
+        const res = await fetch('/api/dispatch', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ brief, message: wakeMessage })
+        });
+        const data = await res.json();
+        if (data.dispatched) {
+            showToast(`${shotId} ${actionLabel} — 已通知代理 🤖`);
+        } else {
+            showToast(`${shotId} ${actionLabel} — 已儲存（代理未通知）`);
+        }
+    } catch (e) {
+        await saveBrief();
+        showToast(`${shotId} ${actionLabel} — 已儲存，請手動通知代理`);
+    }
+}
+
+function toggleControl(key) {
+    brief.controls[key] = !brief.controls[key];
+    render();
+    saveBrief();
+}
+
+function updateControl(key, value) {
+    brief.controls[key] = value;
+    saveBrief();
+}
+
+function togglePause() {
+    brief.controls.paused = !brief.controls.paused;
+    const now = new Date().toISOString();
+    brief.log.push({
+        time: now, agent: 'user',
+        action: brief.controls.paused ? 'paused' : 'resumed',
+        detail: brief.controls.paused ? '已暫停所有作業' : '已恢復作業'
+    });
+    render();
+    saveBrief();
+    showToast(brief.controls.paused ? '已暫停 ⏸' : '已恢復 ▶');
+}
+
+/* Modal */
+function openShotDetail(shotId) {
+    const shot = brief.shotspec.shots.find(s => s.id === shotId);
+    if (!shot) return;
+    const statusLabel = STATUS_LABEL[shot.status] || shot.status;
+
+    const imageHtml = shot.generated_url
+        ? `<div class="modal-section">
+            <label>生成結果 ${shot.local_path ? '(已下載)' : ''}</label>
+            <img class="modal-image" src="${shot.local_path ? '/' + shot.local_path : shot.generated_url}" onerror="this.src='${shot.generated_url}'">
+            ${!shot.local_path && shot.generated_url ? `<button class="act-btn" style="margin-top:6px;" onclick="downloadShot('${shot.id}')">📥 下載到本地</button>` : ''}
+           </div>`
+        : '';
+
+    const historyHtml = (shot.history && shot.history.length > 0)
+        ? `<div class="modal-section">
+            <label>版本歷史 (${shot.history.length} 版)</label>
+            <div class="history-strip">
+                ${shot.history.map((h, i) => {
+                    const imgSrc = h.local_path ? '/' + h.local_path : h.url;
+                    const scoreColor = h.score >= 85 ? 'var(--green)' : h.score >= 70 ? 'var(--yellow)' : 'var(--red)';
+                    return imgSrc ? `
+                        <div class="history-thumb" onclick="showHistoryDetail('${shot.id}', ${i})">
+                            <img src="${imgSrc}" onerror="this.parentElement.style.display='none'">
+                            <span class="ver-label">v${h.version}</span>
+                            ${h.score ? `<span class="ver-score" style="color:${scoreColor}">${h.score}</span>` : ''}
+                        </div>
+                    ` : `
+                        <div class="history-thumb" style="background:var(--surface);display:flex;align-items:center;justify-content:center;width:90px;aspect-ratio:16/9;" onclick="showHistoryDetail('${shot.id}', ${i})">
+                            <span style="font-size:0.7em;color:var(--text2);">v${h.version}<br>${h.score || '?'}</span>
+                            <span class="ver-label">v${h.version}</span>
+                        </div>
+                    `;
+                }).join('')}
+            </div>
+            <div id="history-detail-${shot.id}"></div>
+           </div>`
+        : '';
+
+    const dispatchedHtml = shot.status === 'dispatched'
+        ? `<div class="modal-section">
+            <div class="dispatched-info">
+                <span class="spinner"></span>
+                已派發 (${shot.action}) — ${shot.dispatched_at ? new Date(shot.dispatched_at).toLocaleString('zh-TW') : ''}
+                ${shot.action_detail ? `<br>指示: ${shot.action_detail}` : ''}
+            </div>
+           </div>`
+        : '';
+
+    const feedbackInputHtml = (shot.status === 'review' || shot.status === 'pending')
+        ? `<div class="modal-section">
+            <label>回饋 / 指示（可選）</label>
+            <textarea class="modal-feedback-input" id="modal-feedback"
+                placeholder="${shot.status === 'review' ? '描述問題，例如：角色比例太大、背景太亮...' : '描述需求，例如：風格要明亮、重點在產品...'}"
+            >${shot.user_feedback || ''}</textarea>
+           </div>`
+        : '';
+
+    let actionsHtml = `<button class="modal-btn ghost" onclick="closeModal()">關閉</button>`;
+
+    if (shot.status === 'review') {
+        actionsHtml += `
+            <button class="modal-btn success" onclick="shotAction('${shot.id}','approve');closeModal()">✓ 核准</button>
+            <button class="modal-btn dispatch" onclick="dispatchShot('${shot.id}','fix')">🤖 派發修正</button>
+        `;
+    } else if (shot.status === 'pending') {
+        actionsHtml += `
+            <button class="modal-btn dispatch" onclick="dispatchShot('${shot.id}','generate')">🤖 派發生成</button>
+        `;
+    }
+
+    document.getElementById('modalContent').innerHTML = `
+        <button class="modal-close" onclick="closeModal()">✕</button>
+        <h2>${shot.id} — ${shot.title}</h2>
+
+        ${imageHtml}
+
+        ${historyHtml}
+
+        <div class="modal-section">
+            <label>目標 Goal</label>
+            <p>${shot.goal}</p>
+        </div>
+
+        <div class="modal-section">
+            <label>必須 MUST</label>
+            <div class="must-neg-list">
+                ${shot.must.map(m => `<div class="must-item">✓ ${m}</div>`).join('')}
+                ${shot.must.length === 0 ? '<span style="color:var(--text2); font-size:0.85em;">（無）</span>' : ''}
+            </div>
+        </div>
+
+        <div class="modal-section">
+            <label>禁止 NEG</label>
+            <div class="must-neg-list">
+                ${shot.neg.map(n => `<div class="neg-item">✗ ${n}</div>`).join('')}
+                ${shot.neg.length === 0 ? '<span style="color:var(--red); font-size:0.85em;">⚠ 未設定 — 生成品質可能不穩</span>' : ''}
+            </div>
+        </div>
+
+        <div class="modal-section">
+            <label>狀態</label>
+            <span class="badge badge-${shot.status}">${statusLabel}</span>
+            ${shot.score != null ? `<span style="margin-left:8px;">分數: <strong>${shot.score}</strong></span>` : ''}
+            ${shot.retries > 0 ? `<span style="margin-left:8px; color:var(--orange);">重試 ×${shot.retries}</span>` : ''}
+        </div>
+
+        ${dispatchedHtml}
+
+        ${shot.user_feedback && shot.status !== 'review' && shot.status !== 'pending' ? `
+        <div class="modal-section">
+            <label>用戶回饋</label>
+            <div class="feedback-box">💬 ${shot.user_feedback}</div>
+        </div>
+        ` : ''}
+
+        ${feedbackInputHtml}
+
+        <div class="modal-actions">
+            ${actionsHtml}
+        </div>
+    `;
+    document.getElementById('modalOverlay').classList.add('open');
+}
+
+function closeModal() {
+    document.getElementById('modalOverlay').classList.remove('open');
+}
+
+/* Download + History */
+async function downloadShot(shotId) {
+    const shot = brief.shotspec.shots.find(s => s.id === shotId);
+    if (!shot || !shot.generated_url) return;
+    const version = (shot.history ? shot.history.length : 0) + 1;
+    try {
+        const res = await fetch('/api/download', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ shotId, version, url: shot.generated_url })
+        });
+        const data = await res.json();
+        if (data.ok) {
+            shot.local_path = data.local_path;
+            await saveBrief();
+            showToast(`${shotId} 已下載: ${data.filename}`);
+            openShotDetail(shotId);
+        }
+    } catch (e) {
+        showToast('下載失敗: ' + e.message);
+    }
+}
+
+function showHistoryDetail(shotId, idx) {
+    const shot = brief.shotspec.shots.find(s => s.id === shotId);
+    if (!shot || !shot.history[idx]) return;
+    const h = shot.history[idx];
+    const el = document.getElementById(`history-detail-${shotId}`);
+    if (!el) return;
+    const t = h.time ? new Date(h.time).toLocaleString('zh-TW') : '';
+    el.innerHTML = `
+        <div class="history-detail">
+            <strong>v${h.version}</strong> — ${t}
+            ${h.score ? ` | 分數: ${h.score}` : ''}
+            ${h.feedback ? `<br>💬 ${h.feedback}` : ''}
+            ${h.url ? `<br><a href="${h.url}" target="_blank" style="color:var(--accent);font-size:0.85em;">開啟原圖</a>` : '<br><span style="color:var(--text2);font-size:0.85em;">URL 未記錄</span>'}
+        </div>
+    `;
+}
+
+/* Export */
+function exportBrief() {
+    const blob = new Blob([JSON.stringify(brief, null, 2)], { type: 'application/json' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = 'brief.json';
+    a.click();
+    URL.revokeObjectURL(a.href);
+    showToast('Brief JSON 已下載');
+}
+
+function copyBriefSummary() {
+    const shots = brief.shotspec.shots;
+    const passed = shots.filter(s => s.status === 'pass').length;
+    const dispatched = shots.filter(s => s.status === 'dispatched');
+    const lines = [
+        `📋 ${brief.project.name}`,
+        `ShotSpec: ${brief.shotspec.score}分 | 進度: ${passed}/${shots.length}`,
+        '',
+        ...shots.map(s => {
+            const icon = { pass:'✅', review:'🔍', generating:'⚡', pending:'⏳', fail:'❌', dispatched:'🤖' }[s.status] || '❔';
+            let line = `${icon} ${s.id} ${s.title} — ${s.status}`;
+            if (s.score) line += ` (${s.score})`;
+            if (s.action) line += ` [action: ${s.action}]`;
+            if (s.action_detail) line += ` "${s.action_detail}"`;
+            if (s.user_feedback && !s.action_detail) line += ` 💬${s.user_feedback}`;
+            return line;
+        }),
+        '',
+        `RefPack: ${brief.refpack.validated ? '✅' : '⚠️ 未驗證'}`,
+        ...Object.entries(brief.refpack.assets).filter(([,v]) => !v.ok).map(([k]) => `  缺: ${k}`)
+    ];
+    navigator.clipboard.writeText(lines.join('\n'));
+    showToast('摘要已複製到剪貼簿');
+}
+
+function showToast(msg) {
+    const t = document.getElementById('toast');
+    t.textContent = msg;
+    t.classList.add('show');
+    setTimeout(() => t.classList.remove('show'), 2500);
+}
+
+document.addEventListener('keydown', e => {
+    if (e.key === 'Escape') closeModal();
+});
+
+startPoll();
+</script>
+</body>
+</html>
