@@ -57,11 +57,17 @@ export interface HistoryEntry {
   model?: string;
   update?: Record<string, unknown>;
   issues?: string[];
+  from?: string;
+  unblockedBy?: string;
+  message?: string;
+  score?: number;
+  event?: string;
 }
 
 export interface ReviewResult {
   score: number;
   issues?: string[];
+  summary?: string;
   threshold?: number;
   report?: string;
   source?: string;
@@ -278,6 +284,7 @@ export interface Board {
   signals: Signal[];
   insights: Insight[];
   lessons: Lesson[];
+  lessons_archive?: Lesson[];
   controls: Controls;
   meta: BoardMeta;
 }
