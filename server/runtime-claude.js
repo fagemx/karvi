@@ -23,19 +23,24 @@ function dispatch(plan) {
     // Claude-specific extras (passthrough if present on plan)
     if (plan.maxBudgetUsd) args.push('--max-budget-usd', String(plan.maxBudgetUsd));
     if (plan.allowedTools && plan.allowedTools.length) {
-      args.push('--allowedTools', plan.allowedTools.join(' '));
+      args.push('--allowedTools', ...plan.allowedTools);
     }
     if (plan.effort) args.push('--effort', plan.effort);
     if (plan.systemPrompt) args.push('--append-system-prompt', plan.systemPrompt);
-    if (plan.fullAuto) args.push('--dangerously-skip-permissions');
 
     // The prompt
     args.push(plan.message);
 
-    const child = spawn(CLAUDE_CMD, args, {
-      cwd: plan.workingDir || path.resolve(DIR, '..'),
+    const workDir = plan.workingDir || path.resolve(DIR, '..');
+    const spawnCmd = process.platform === 'win32' ? 'cmd.exe' : CLAUDE_CMD;
+    const spawnArgs = process.platform === 'win32'
+      ? ['/d', '/s', '/c', CLAUDE_CMD, ...args]
+      : args;
+
+    const child = spawn(spawnCmd, spawnArgs, {
+      cwd: workDir,
       windowsHide: true,
-      shell: process.platform === 'win32',
+      shell: false,
       timeout: (plan.timeoutSec || 300) * 1000,
     });
 
