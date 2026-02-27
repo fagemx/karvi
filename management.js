@@ -1,6 +1,6 @@
 const fs = require('fs');
 const path = require('path');
-const bb = require('../blackboard-server');
+const bb = require('./blackboard-server');
 const { nowIso, uid } = bb;
 
 const DIR = __dirname;
