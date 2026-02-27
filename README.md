@@ -1,100 +1,204 @@
-# Task Engine
+<h1 align="center">Karvi</h1>
 
-多 Agent 任務派發 + 進度追蹤黑板。基於 Blackboard Pattern，JSON + HTML + 零外部依賴。
+<p align="center">
+  <strong>Multi-agent task orchestration engine with real-time tracking.</strong><br/>
+  Blackboard pattern, JSON-based, zero external dependencies — pure Node.js.
+</p>
 
-## 快速開始
+<p align="center">
+  <a href="https://github.com/fagemx/karvi"><img src="https://img.shields.io/badge/node-%3E%3D22-brightgreen?style=flat-square" alt="Node" /></a>
+  <a href="https://github.com/fagemx/karvi/blob/main/package.json"><img src="https://img.shields.io/badge/dependencies-0-blue?style=flat-square" alt="Dependencies" /></a>
+  <a href="https://github.com/fagemx/karvi/blob/main/package.json"><img src="https://img.shields.io/badge/license-MIT-blue?style=flat-square" alt="License" /></a>
+  <a href="https://github.com/fagemx/karvi/stargazers"><img src="https://img.shields.io/github/stars/fagemx/karvi?style=flat-square" alt="Stars" /></a>
+</p>
+
+<p align="center">
+  <a href="#what-is-karvi">What is Karvi?</a> ·
+  <a href="#quick-start">Quick Start</a> ·
+  <a href="#architecture">Architecture</a> ·
+  <a href="#runtimes">Runtimes</a> ·
+  <a href="#api">API</a> ·
+  <a href="#evolution-layer">Evolution Layer</a>
+</p>
+
+---
+
+## What is Karvi?
+
+Karvi is a task orchestration engine for AI agents. You define a goal and a set of tasks — Karvi dispatches them to agents, tracks progress in real time, and manages the full lifecycle from planning through review and approval.
+
+Everything runs from a single `board.json` file (the "blackboard"), a single `server.js` with zero npm dependencies, and a single `index.html` for the web UI. No build step, no framework, no config files.
+
+```
+Director (Human)                   board.json
+    │  define goal, plan tasks         │
+    ▼                                  ▼
+  Server ──── dispatch ────→  Agent A (OpenClaw)
+    │                         Agent B (Claude Code)
+    │  ◄── status updates ──  Agent C (Codex)
+    │                         Agent D (Edda Conductor)
+    ▼
+  Web UI ──── SSE ────→ real-time task board + timeline
+```
+
+| Role | What it does |
+|------|-------------|
+| **Director** (Human) | Sets goals, creates task plans, approves or intervenes |
+| **Server** | Manages board.json, dispatches tasks, collects replies, runs reviews |
+| **Agents** | Receive tasks, execute, report back via REST API |
+| **Web UI** | Real-time task board with SSE — cards, actions, timeline |
+
+## Quick Start
 
 ```bash
-cd project/task-engine
-node server.js
+git clone https://github.com/fagemx/karvi.git
+cd karvi
+npm start
 # → http://localhost:3461
 ```
 
-## 架構
+No `npm install` needed — zero dependencies.
+
+## Architecture
+
+### Task Lifecycle
 
 ```
-Human (Director)
-    │
-    ▼
-Server (board.json = single source of truth)
-    │
-    ├→ Agent A (Engineer)
-    ├→ Agent B (Engineer)
-    └→ Agent C (Engineer)
+pending → dispatched → in_progress → completed → reviewing → approved
+                           │                          │
+                           └→ blocked                 └→ needs_revision → in_progress
+                               │
+                               └→ (human unblock) → in_progress
 ```
 
-- **Director (Human)**: 定目標、建任務計劃、批准/介入
-- **Server**: 管 board.json、派發任務給 agent、收回覆
-- **Engineer (Agent)**: 收到任務 → 執行 → 回報
+- Dependencies auto-unlock: when T1 is approved, T3 (`depends: [T1]`) auto-transitions to `dispatched`
+- All tasks approved → phase automatically becomes `done`
 
-## 任務生命週期
+### Project Structure
 
 ```
-pending → dispatched → in_progress → completed
-                           │
-                           └→ blocked → (human 回覆) → in_progress
+server/
+  server.js              HTTP server (REST API + SSE + dispatch)
+  blackboard-server.js   Shared server skeleton (CORS, MIME, SSE, JSON read/write)
+  management.js          Evolution layer (controls, insights, lessons)
+  process-review.js      Task quality review
+  retro.js               Retrospective analysis (pattern → insight)
+  runtime-openclaw.js    OpenClaw runtime adapter
+  runtime-claude.js      Claude Code runtime adapter
+  runtime-codex.js       Codex runtime adapter
+  runtime-edda.js        Edda conductor runtime adapter
+  skills/                Agent knowledge base
+shared/
+  types.ts               Type definitions (Board, Task, DispatchPlan, etc.)
+index.html               Web UI (single file, zero dependencies)
+board.json               Blackboard (single source of truth)
+task-log.jsonl           Event log (append-only)
 ```
 
-- 依賴自動解鎖：T1 完成 → T3 (depends: [T1]) 自動變 dispatched
-- 全部完成 → phase 自動變 `done`
+## Runtimes
+
+Karvi dispatches tasks through pluggable runtime adapters. Each adapter spawns an AI agent CLI and collects the result.
+
+| Runtime | CLI | Session Resume | Model Selection | Extras |
+|---------|-----|:-:|:-:|--------|
+| **OpenClaw** | `openclaw agent` | `--session-id` | — | Review spawning |
+| **Claude Code** | `claude -p` | `--resume` | `--model` | Budget limit, effort level, tool restriction |
+| **Codex** | `codex exec` | `exec resume` | `-m` | Role-based config |
+| **Edda** | `edda conduct run` | — | — | Multi-phase plans, auto-retry, budget tracking |
+
+Select a runtime per-task or globally:
+
+```bash
+# Global default
+curl -X POST http://localhost:3461/api/controls \
+  -H 'Content-Type: application/json' \
+  -d '{"preferred_runtime": "claude"}'
+
+# Per-task dispatch
+curl -X POST http://localhost:3461/api/tasks/T3/dispatch \
+  -H 'Content-Type: application/json' \
+  -d '{"runtimeHint": "edda"}'
+```
+
+Runtimes load with try/catch — if a CLI isn't installed, the runtime is silently skipped.
 
 ## API
 
-| Method | Path | 說明 |
-|--------|------|------|
-| GET | `/api/board` | 讀取完整 board.json |
-| GET | `/api/tasks` | 讀取 taskPlan |
-| POST | `/api/tasks` | 建立/覆蓋 taskPlan（`{ goal, phase, tasks }`）|
-| POST | `/api/tasks/:id/dispatch` | 派發單一任務給 assignee agent |
-| POST | `/api/tasks/:id/status` | 手動更新任務狀態（`{ status, reason? }`）|
-| POST | `/api/tasks/:id/update` | 更新任務欄位（`{ status, result, blocker }`）|
-| POST | `/api/tasks/:id/unblock` | 回覆 blocked 任務（`{ message }`）|
-| POST | `/api/tasks/dispatch` | 批量派發所有 ready 的任務 |
-| POST | `/api/conversations` | 新增房間 |
-| POST | `/api/conversations/:id/send` | 發送訊息 |
-| POST | `/api/conversations/:id/run` | 手動跑佇列 |
-| POST | `/api/conversations/:id/stop` | 停止佇列 |
-| POST | `/api/conversations/:id/resume` | 恢復佇列 |
-| POST | `/api/participants` | 新增參與者 |
+### Task Management
 
-## 任務狀態
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/api/board` | Full board.json |
+| GET | `/api/tasks` | Task plan |
+| POST | `/api/tasks` | Create/replace task plan (`{ goal, phase, tasks }`) |
+| POST | `/api/tasks/:id/dispatch` | Dispatch single task to assignee agent |
+| POST | `/api/tasks/:id/status` | Update task status (`{ status, reason? }`) |
+| POST | `/api/tasks/:id/update` | Update task fields (`{ status, result, blocker }`) |
+| POST | `/api/tasks/:id/unblock` | Unblock a blocked task (`{ message }`) |
+| POST | `/api/tasks/dispatch` | Bulk dispatch all ready tasks |
+| POST | `/api/dispatch-next` | Dispatch next ready task (sequential) |
 
-| 狀態 | 說明 |
-|------|------|
-| `pending` | 等待（依賴未滿足或尚未派發）|
-| `dispatched` | 已標記準備派發 |
-| `in_progress` | Agent 正在執行 |
-| `blocked` | 卡住，需要 Human 回覆 |
-| `completed` | 完成 |
+### Conversations
 
-## UI
+| Method | Path | Description |
+|--------|------|-------------|
+| POST | `/api/conversations` | Create room |
+| POST | `/api/conversations/:id/send` | Send message |
+| POST | `/api/conversations/:id/run` | Run queue |
+| POST | `/api/conversations/:id/stop` | Stop queue |
+| POST | `/api/conversations/:id/resume` | Resume queue |
+| POST | `/api/participants` | Add participant |
 
-兩個 Tab：
-- **Task Board**: 任務卡片看板，每張卡有操作按鈕（派發/完成/blocked/unblock）
-- **Timeline**: 所有訊息的時間線（agent 回覆、系統事件）
+### Evolution Layer
 
-## 檔案
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/api/controls` | Read current controls |
+| POST | `/api/controls` | Update controls (partial merge) |
+| POST | `/api/retro` | Trigger retrospective analysis |
+| GET | `/api/events` | SSE event stream |
+
+## Evolution Layer
+
+Karvi includes a self-improving feedback loop that learns from task reviews:
 
 ```
-board.json       ← 黑板（single source of truth）
-server.js        ← HTTP server（零外部依賴）
-index.html       ← UI（零外部依賴）
-task-log.jsonl   ← 事件日誌（append-only）
+Task completed
+    │
+    ▼
+  Review (process-review.js)
+    │  score + issues
+    ▼
+  Retro (retro.js)
+    │  pattern detection
+    ▼
+  Insight (suggestedAction)
+    │  risk = low → auto-apply
+    ▼
+  Verify (3+ reviews later)
+    │
+    ├→ score improved → crystallize as Lesson
+    └→ score degraded → rollback
 ```
 
-## 設計決策
+| Concept | What it is |
+|---------|-----------|
+| **Controls** | Tunable parameters (quality threshold, auto-review, auto-redispatch) |
+| **Signals** | Events recorded during task lifecycle (review results, dispatches) |
+| **Insights** | Patterns detected by retro analysis, with suggested actions |
+| **Lessons** | Validated insights that become permanent rules injected into future dispatches |
 
-- **Human 控制狀態，不靠 agent 回覆解析** — 按按鈕比解析自然語言可靠
-- **Per-task 派發** — 直接把任務送給 assignee agent，不透過中間人轉發
-- **Fire-and-forget** — 派發是非同步的，server 不等 agent 完成
-- **Agent 回覆存在 `lastReply`** — UI 顯示預覽，Human 看完決定標完成或 blocked
+Safety valves prevent runaway automation: max 3 auto-applies per 24h, no re-applying rolled-back actions, no duplicate action types.
 
-## 與其他黑板的關係
+## Design Decisions
 
-同一個 Blackboard Pattern family：
+- **board.json is the single source of truth** — atomic writes, SSE broadcast on every change
+- **Zero external dependencies** — only Node.js built-in modules (`http`, `fs`, `path`, `child_process`)
+- **Per-task dispatch** — tasks go directly to assignee agents, no intermediary routing
+- **Fire-and-forget** — dispatch is async, server doesn't block waiting for agent completion
+- **Windows-first spawn** — all runtimes use `cmd.exe /d /s /c` pattern for cross-platform reliability
+- **Human controls state** — buttons in UI are more reliable than parsing natural language responses
 
-| 應用 | Schema | Port |
-|------|--------|------|
-| Brief Panel（分鏡）| shotspec | - |
-| Agent Room（對話）| conversation | 3460 |
-| **Task Engine（任務）** | **taskPlan** | **3461** |
+## License
+
+MIT
