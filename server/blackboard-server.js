@@ -203,6 +203,13 @@ function createServer(ctx, routeHandler) {
   });
 }
 
+function ensureBoardExists(ctx, defaultBoard) {
+  if (!fs.existsSync(ctx.boardPath)) {
+    console.log(`[bb] board not found at ${ctx.boardPath}, creating default...`);
+    writeBoard(ctx, defaultBoard);
+  }
+}
+
 function listen(server, ctx) {
   if (!fs.existsSync(ctx.logPath)) {
     try { fs.writeFileSync(ctx.logPath, '', 'utf8'); } catch {}
@@ -226,5 +233,6 @@ module.exports = {
   serveStatic,
   handleSSE,
   createServer,
+  ensureBoardExists,
   listen,
 };

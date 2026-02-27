@@ -2,17 +2,19 @@
 /**
  * test-evolution-loop.js — 驗證完整的 signal → insight → lesson 迴路
  *
- * 前提：server.js 在 3461 port 運行
+ * 自包含測試：自動啟動 server、重置 board、執行測試、結束後關閉 server。
+ * 用法：npm test（不需要預先 npm start）
  *
  * Part A — 自動改善（正向迴路）
  * Part B — 自動回滾（負向迴路）
  */
 
 const http = require('http');
-const { spawnSync } = require('child_process');
+const { spawn, spawnSync } = require('child_process');
 const path = require('path');
 
-const PORT = 3461;
+const PORT = Number(process.env.TEST_PORT) || 3461;
+let serverProc = null;
 
 function post(urlPath, body) {
   return new Promise((resolve, reject) => {
@@ -36,8 +38,90 @@ function get(urlPath) {
 function ok(label) { console.log(`  ✅ ${label}`); }
 function fail(label, reason) { console.log(`  ❌ ${label}: ${reason}`); process.exitCode = 1; }
 
+function startServer() {
+  return new Promise((resolve, reject) => {
+    const proc = spawn(process.execPath, [path.join(__dirname, 'server.js')], {
+      stdio: ['ignore', 'pipe', 'pipe'],
+      env: { ...process.env, PORT: String(PORT) },
+    });
+
+    let started = false;
+    proc.stdout.on('data', (data) => {
+      const text = data.toString();
+      if (!started && text.includes('running at')) {
+        started = true;
+        resolve(proc);
+      }
+    });
+
+    proc.stderr.on('data', (data) => {
+      if (!started) {
+        // Log server stderr for debugging
+        process.stderr.write('[server] ' + data.toString());
+      }
+    });
+
+    const timer = setTimeout(() => {
+      if (!started) {
+        proc.kill();
+        reject(new Error('Server failed to start within 10s'));
+      }
+    }, 10000);
+
+    proc.on('error', (err) => {
+      clearTimeout(timer);
+      reject(err);
+    });
+
+    proc.on('exit', (code) => {
+      if (!started) {
+        clearTimeout(timer);
+        reject(new Error(`Server exited with code ${code} before ready`));
+      }
+    });
+  });
+}
+
+function stopServer() {
+  if (serverProc) {
+    serverProc.kill();
+    serverProc = null;
+  }
+}
+
+async function resetBoard() {
+  await post('/api/board', {
+    taskPlan: { goal: 'Evolution Loop Test', phase: 'idle', tasks: [] },
+    conversations: [],
+    participants: [],
+    signals: [],
+    insights: [],
+    lessons: [],
+    controls: {
+      auto_review: true,
+      auto_redispatch: false,
+      max_review_attempts: 3,
+      quality_threshold: 70,
+      review_timeout_sec: 180,
+      review_agent: 'engineer_lite',
+      auto_apply_insights: true,
+    },
+  });
+}
+
 async function main() {
-  console.log('=== Evolution Loop Test ===\n');
+  // --- Start server ---
+  console.log('Starting server...');
+  serverProc = await startServer();
+  console.log(`Server started on port ${PORT}`);
+  process.on('exit', stopServer);
+
+  // --- Reset board to clean state ---
+  console.log('Resetting board to clean state...');
+  await resetBoard();
+  ok('Board reset');
+
+  console.log('\n=== Evolution Loop Test ===\n');
 
   // Step 1: 寫 3 筆低分 signals
   console.log('Step 1: Writing 3 low-score review signals for engineer_lite...');
@@ -54,7 +138,7 @@ async function main() {
 
   // Step 2: 跑 retro.js
   console.log('\nStep 2: Running retro.js...');
-  const retro1 = spawnSync('node', [path.join(__dirname, 'retro.js')], { cwd: __dirname, encoding: 'utf8' });
+  const retro1 = spawnSync('node', [path.join(__dirname, 'retro.js'), '--port', String(PORT)], { cwd: __dirname, encoding: 'utf8' });
   console.log(retro1.stdout);
   if (retro1.status !== 0) { fail('retro.js', retro1.stderr); return; }
   ok('retro.js completed');
@@ -183,6 +267,7 @@ async function main() {
   }
 
   console.log('\n=== Done ===');
+  stopServer();
 }
 
-main().catch(err => { console.error('Fatal:', err.message); process.exit(1); });
+main().catch(err => { console.error('Fatal:', err.message); stopServer(); process.exit(1); });

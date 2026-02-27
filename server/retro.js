@@ -294,6 +294,13 @@ async function main() {
   const args = parseArgs();
   const boardPath = args.board || DEFAULT_BOARD;
   const port = args.port || DEFAULT_PORT;
+
+  if (!fs.existsSync(boardPath)) {
+    console.error(`[retro] Board not found: ${boardPath}`);
+    console.error('[retro] Start the server first: npm start');
+    process.exit(1);
+  }
+
   const board = JSON.parse(fs.readFileSync(boardPath, 'utf8'));
 
   console.log(`[retro] board: ${boardPath}`);

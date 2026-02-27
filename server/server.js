@@ -2057,14 +2057,31 @@ const server = bb.createServer(ctx, (req, res, helpers) => {
   return false; // fall through to bb static file serving
 });
 
+// --- Ensure board.json exists (support fresh clone) ---
+bb.ensureBoardExists(ctx, {
+  taskPlan: { goal: '', phase: 'idle', tasks: [] },
+  conversations: [],
+  participants: [],
+  signals: [],
+  insights: [],
+  lessons: [],
+  controls: {
+    auto_review: true,
+    auto_redispatch: false,
+    max_review_attempts: 3,
+    quality_threshold: 70,
+    review_timeout_sec: 180,
+    review_agent: 'engineer_lite',
+    auto_apply_insights: true,
+  },
+});
+
 // --- Evolution Layer: Ensure board has evolution fields on startup ---
-try {
-  const initBoard = readBoard();
-  let dirty = false;
-  if (!Array.isArray(initBoard.signals)) { initBoard.signals = []; dirty = true; }
-  if (!Array.isArray(initBoard.insights)) { initBoard.insights = []; dirty = true; }
-  if (!Array.isArray(initBoard.lessons)) { initBoard.lessons = []; dirty = true; }
-  if (dirty) writeBoard(initBoard);
-} catch {}
+const initBoard = readBoard();
+let dirty = false;
+if (!Array.isArray(initBoard.signals)) { initBoard.signals = []; dirty = true; }
+if (!Array.isArray(initBoard.insights)) { initBoard.insights = []; dirty = true; }
+if (!Array.isArray(initBoard.lessons)) { initBoard.lessons = []; dirty = true; }
+if (dirty) writeBoard(initBoard);
 
 bb.listen(server, ctx);
