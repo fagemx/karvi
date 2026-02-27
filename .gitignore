@@ -10,3 +10,6 @@ task-log.jsonl
 brief-panel/brief.json
 brief-panel/brief-log.jsonl
 brief-panel/output/
+
+.claude/
+.edda/
