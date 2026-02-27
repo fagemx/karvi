@@ -4,7 +4,7 @@ const https = require('https');
 const fs = require('fs');
 const path = require('path');
 const { exec } = require('child_process');
-const bb = require('../../../../project/blackboard-server');
+const bb = require('../blackboard-server');
 
 const DIR = __dirname;
 const OUTPUT = path.join(DIR, 'output');

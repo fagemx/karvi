@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 const fs = require('fs');
 const path = require('path');
-const bb = require('../blackboard-server');
+const bb = require('./blackboard-server');
 const mgmt = require('./management');
 const runtime = require('./runtime-openclaw');
 
