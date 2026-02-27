@@ -1,10 +1,10 @@
 node_modules/
 
 # Runtime data (per-instance)
-board.json
-board.json.bak
-briefs/*.json
-task-log.jsonl
+server/board.json
+server/board.json.bak
+server/briefs/*.json
+server/task-log.jsonl
 
 # Brief panel runtime
 brief-panel/brief.json

@@ -18,9 +18,10 @@ function getRuntime(hint) {
 }
 
 const DIR = __dirname;
+const ROOT = path.resolve(DIR, '..');
 
 const ctx = bb.createContext({
-  dir: DIR,
+  dir: ROOT,
   boardPath: path.join(DIR, 'board.json'),
   logPath: path.join(DIR, 'task-log.jsonl'),
   port: Number(process.env.PORT || 3461),
@@ -1527,7 +1528,7 @@ const server = bb.createServer(ctx, (req, res, helpers) => {
   // /brief/:taskId → serve brief-panel UI
   const briefUiMatch = req.url.match(/^\/brief\/([\w-]+)$/);
   if (req.method === 'GET' && briefUiMatch) {
-    const briefPanelHtml = path.resolve(DIR, '..', '..', 'skills',
+    const briefPanelHtml = path.resolve(DIR, '..', '..', '..', 'skills',
       'conversapix-storyboard', 'tools', 'brief-panel', 'index.html');
     if (fs.existsSync(briefPanelHtml)) {
       res.writeHead(200, { 'Content-Type': 'text/html' });

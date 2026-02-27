@@ -5,7 +5,7 @@ const { nowIso, uid } = bb;
 
 const DIR = __dirname;
 const SKILLS_DIR = path.join(DIR, 'skills');
-const WORKSPACE = path.resolve(DIR, '..', '..');
+const WORKSPACE = path.resolve(DIR, '..', '..', '..');
 const PORT = Number(process.env.PORT || 3461);
 
 const DEFAULT_CONTROLS = {

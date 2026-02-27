@@ -77,7 +77,7 @@ function emitSignal(signal) {
 
 function inferTargetDir(board, task) {
   const specPath = board.taskPlan?.spec || '';
-  const WORKSPACE = path.resolve(DIR, '..', '..');
+  const WORKSPACE = path.resolve(DIR, '..', '..', '..');
   let targetDir = '';
 
   if (specPath) {

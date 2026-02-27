@@ -20,7 +20,7 @@ function dispatch(plan) {
 
     if (plan.modelHint) args.push('-m', plan.modelHint);
 
-    const workDir = plan.workingDir || path.resolve(DIR, '..', '..');
+    const workDir = plan.workingDir || path.resolve(DIR, '..', '..', '..');
     args.push('-C', workDir);
 
     if (plan.codexRole) {
