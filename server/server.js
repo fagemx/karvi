@@ -8,9 +8,13 @@ const runtime = require('./runtime-openclaw');
 let runtimeCodex = null;
 try { runtimeCodex = require('./runtime-codex'); } catch { /* codex not installed, skip */ }
 
+let runtimeClaude = null;
+try { runtimeClaude = require('./runtime-claude'); } catch { /* claude not installed, skip */ }
+
 const RUNTIMES = {
   openclaw: runtime,
   ...(runtimeCodex ? { codex: runtimeCodex } : {}),
+  ...(runtimeClaude ? { claude: runtimeClaude } : {}),
 };
 
 function getRuntime(hint) {
