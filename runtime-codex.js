@@ -6,7 +6,17 @@ const CODEX_CMD = process.env.CODEX_CMD || 'codex';
 
 function dispatch(plan) {
   return new Promise((resolve, reject) => {
-    const args = ['exec', '--full-auto', '--json'];
+    let args;
+
+    if (plan.sessionId) {
+      // Resume existing session
+      args = ['exec', 'resume', plan.sessionId];
+    } else {
+      // New session
+      args = ['exec'];
+    }
+
+    args.push('--full-auto', '--json');
 
     if (plan.modelHint) args.push('-m', plan.modelHint);
 
