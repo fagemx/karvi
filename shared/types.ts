@@ -40,7 +40,7 @@ export type TurnStatus = 'queued' | 'running' | 'done' | 'error';
 
 export type MessageType = 'system' | 'message' | 'error';
 
-export type RuntimeName = 'openclaw' | 'codex';
+export type RuntimeName = 'openclaw' | 'codex' | 'edda';
 
 export type TaskPlanPhase = 'idle' | 'planning' | 'executing' | 'done';
 
