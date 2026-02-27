@@ -8,13 +8,13 @@ const runtime = require('./runtime-openclaw');
 let runtimeCodex = null;
 try { runtimeCodex = require('./runtime-codex'); } catch { /* codex not installed, skip */ }
 
-let runtimeEdda = null;
-try { runtimeEdda = require('./runtime-edda'); } catch { /* edda not installed, skip */ }
+let runtimeClaude = null;
+try { runtimeClaude = require('./runtime-claude'); } catch { /* claude not installed, skip */ }
 
 const RUNTIMES = {
   openclaw: runtime,
   ...(runtimeCodex ? { codex: runtimeCodex } : {}),
-  ...(runtimeEdda ? { edda: runtimeEdda } : {}),
+  ...(runtimeClaude ? { claude: runtimeClaude } : {}),
 };
 
 function getRuntime(hint) {
