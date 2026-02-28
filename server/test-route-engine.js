@@ -117,7 +117,7 @@ test('classifyFailure correctly maps error patterns', () => {
   assert.strictEqual(routeEngine.classifyFailure({ error: 'merge conflict in main.rs' }), FM.CONFLICT);
   assert.strictEqual(routeEngine.classifyFailure({ error: 'test failed: expected 3 got 4' }), FM.TEST_FAILURE);
   assert.strictEqual(routeEngine.classifyFailure({ error: 'ETIMEDOUT connecting to API' }), FM.TOOL_ERROR);
-  assert.strictEqual(routeEngine.classifyFailure({ error: 'try alternative approach' }), FM.STRATEGY_MISMATCH);
+  assert.strictEqual(routeEngine.classifyFailure({ error: 'wrong direction, need to rethink' }), FM.STRATEGY_MISMATCH);
   // Explicit failure_mode from agent takes precedence
   assert.strictEqual(routeEngine.classifyFailure({ failure: { failure_mode: 'CONFLICT' }, error: 'something else' }), FM.CONFLICT);
   // Unknown → TOOL_ERROR default

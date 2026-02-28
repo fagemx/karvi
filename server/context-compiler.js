@@ -5,6 +5,7 @@
  * input envelope with objective, constraints, retry context, and budget.
  * No dependency on conversation history — purely artifact-driven.
  */
+const { BUDGET_DEFAULTS } = require('./route-engine');
 
 const STEP_OBJECTIVES = {
   plan:      'Analyze the task and create a detailed implementation plan with specific files and changes.',
@@ -92,7 +93,6 @@ function buildConstraints(task) {
 
 function computeRemainingBudget(budget) {
   if (!budget) return null;
-  const { BUDGET_DEFAULTS } = require('./route-engine');
   const limits = { ...BUDGET_DEFAULTS, ...budget.limits };
   const used = budget.used || {};
   return {

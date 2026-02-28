@@ -199,7 +199,7 @@ function createKernel(deps) {
       status: result.code === 0 ? 'succeeded' : 'failed',
       failure: result.code !== 0 ? { failure_signature: replyText?.slice(0, 200), retryable: true } : null,
       summary: replyText?.slice(0, 500) || null,
-      tokens_used: usage?.inputTokens + usage?.outputTokens || 0,
+      tokens_used: (usage?.inputTokens || 0) + (usage?.outputTokens || 0),
       duration_ms: null,
       model_used: plan.modelHint,
     };
@@ -233,12 +233,15 @@ function createKernel(deps) {
       helpers.writeBoard(latestBoard);
       helpers.appendLog({ ts: helpers.nowIso(), event: signalType, taskId: envelope.task_id, stepId: envelope.step_id, from: 'running', to: latestStep.state });
 
-      // Recurse: trigger kernel again for the new terminal state
+      // Trigger kernel again for the new terminal state (via setImmediate to avoid deep recursion)
       const newSignal = {
         type: signalType,
         data: { taskId: envelope.task_id, stepId: envelope.step_id, from: 'running', to: latestStep.state },
       };
-      await onStepEvent(newSignal, helpers.readBoard(), helpers);
+      setImmediate(() => {
+        onStepEvent(newSignal, helpers.readBoard(), helpers)
+          .catch(err => console.error(`[kernel] recursive onStepEvent error for ${envelope.step_id}:`, err.message));
+      });
     }
   }
 

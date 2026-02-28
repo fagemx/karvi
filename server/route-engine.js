@@ -41,7 +41,7 @@ const FAILURE_PATTERNS = [
   { mode: FAILURE_MODES.MISSING_CONTEXT,  pattern: /not.found|missing.*file|missing.*context|no.such|undefined.reference/i },
   { mode: FAILURE_MODES.CONFLICT,         pattern: /conflict|merge.*conflict|rebase.*conflict|already.exists/i },
   { mode: FAILURE_MODES.TEST_FAILURE,     pattern: /test.*fail|assert.*fail|expect.*received|spec.*fail/i },
-  { mode: FAILURE_MODES.STRATEGY_MISMATCH, pattern: /approach|strategy|alternative|wrong.direction|rethink/i },
+  { mode: FAILURE_MODES.STRATEGY_MISMATCH, pattern: /wrong.direction|rethink|strategy.*(?:fail|wrong|bad)|approach.*(?:fail|wrong|bad)|(?:fail|wrong|bad).*(?:strategy|approach)/i },
   { mode: FAILURE_MODES.TOOL_ERROR,       pattern: /timeout|ETIMEDOUT|rate.limit|ECONNREFUSED|socket.hang/i },
 ];
 
