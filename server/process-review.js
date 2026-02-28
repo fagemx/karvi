@@ -13,6 +13,7 @@
 const fs = require('fs');
 const path = require('path');
 const { spawnSync } = require('child_process');
+const storageBackend = require('./storage');
 
 const DIR = __dirname;
 const DEFAULT_BOARD = path.join(DIR, 'board.json');
@@ -56,7 +57,7 @@ function uid(prefix) {
 }
 
 function appendLog(entry) {
-  try { fs.appendFileSync(LOG_PATH, JSON.stringify(entry) + '\n', 'utf8'); } catch {}
+  storageBackend.appendLog(LOG_PATH, entry);
 }
 
 function emitSignal(signal) {
@@ -332,12 +333,12 @@ function main() {
   const args = parseArgs();
   const boardPath = args.board || DEFAULT_BOARD;
 
-  if (!fs.existsSync(boardPath)) {
+  if (!storageBackend.boardExists(boardPath)) {
     console.error(`Board not found: ${boardPath}`);
     process.exit(1);
   }
 
-  const board = JSON.parse(fs.readFileSync(boardPath, 'utf8'));
+  const board = storageBackend.readBoard(boardPath);
   const controls = { ...DEFAULT_CONTROLS, ...(board.controls || {}) };
   const threshold = args.threshold || controls.quality_threshold;
 
@@ -469,7 +470,7 @@ function main() {
       id: uid('msg'), ts: nowIso(), type: 'system', from: 'system', to: 'human',
       text: `【${task.id} 審查中】第 ${task.reviewAttempts}/${controls.max_review_attempts} 次`,
     });
-    fs.writeFileSync(boardPath, JSON.stringify(board, null, 2), 'utf8');
+    storageBackend.writeBoard(boardPath, board);
 
     let replyText;
     try {
@@ -586,7 +587,7 @@ function main() {
   if (!args.dryRun && processed > 0) {
     board.meta = board.meta || {};
     board.meta.updatedAt = nowIso();
-    fs.writeFileSync(boardPath, JSON.stringify(board, null, 2), 'utf8');
+    storageBackend.writeBoard(boardPath, board);
     console.log(`\nBoard updated. ${processed} task(s) processed.`);
   } else if (args.dryRun) {
     console.log(`\nDRY RUN complete. ${processed} task(s) would be processed.`);

@@ -33,6 +33,7 @@ const http = require('http');
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
+const storage = require('./storage');
 
 const MIME = {
   '.html': 'text/html; charset=utf-8',
@@ -105,7 +106,7 @@ function checkAuth(ctx, req) {
 }
 
 function readBoard(ctx) {
-  return JSON.parse(fs.readFileSync(ctx.boardPath, 'utf8'));
+  return storage.readBoard(ctx.boardPath);
 }
 
 function writeBoard(ctx, board) {
@@ -113,12 +114,12 @@ function writeBoard(ctx, board) {
   board.meta.updatedAt = nowIso();
   if (ctx.boardType) board.meta.boardType = ctx.boardType;
   if (board.meta.version === undefined) board.meta.version = 1;
-  fs.writeFileSync(ctx.boardPath, JSON.stringify(board, null, 2), 'utf8');
+  storage.writeBoard(ctx.boardPath, board);
   broadcastSSE(ctx, 'board', board);
 }
 
 function appendLog(ctx, entry) {
-  try { fs.appendFileSync(ctx.logPath, JSON.stringify(entry) + '\n', 'utf8'); } catch {}
+  storage.appendLog(ctx.logPath, entry);
 }
 
 function broadcastSSE(ctx, event, data) {
@@ -261,16 +262,14 @@ function createServer(ctx, routeHandler) {
 }
 
 function ensureBoardExists(ctx, defaultBoard) {
-  if (!fs.existsSync(ctx.boardPath)) {
+  if (!storage.boardExists(ctx.boardPath)) {
     console.log(`[bb] board not found at ${ctx.boardPath}, creating default...`);
     writeBoard(ctx, defaultBoard);
   }
 }
 
 function listen(server, ctx) {
-  if (!fs.existsSync(ctx.logPath)) {
-    try { fs.writeFileSync(ctx.logPath, '', 'utf8'); } catch {}
-  }
+  storage.ensureLogFile(ctx.logPath);
   server.listen(ctx.port, () => {
     console.log(`Blackboard server running at http://localhost:${ctx.port}`);
   });
@@ -294,4 +293,5 @@ module.exports = {
   listen,
   checkAuth,
   tokenMatch,
+  storage,
 };
