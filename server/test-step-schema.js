@@ -1,0 +1,255 @@
+#!/usr/bin/env node
+/**
+ * test-step-schema.js — Unit tests for step-schema.js and artifact-store.js
+ *
+ * Usage: node server/test-step-schema.js
+ */
+const assert = require('assert');
+const fs = require('fs');
+const path = require('path');
+const os = require('os');
+
+let passed = 0;
+let failed = 0;
+
+function ok(label) { passed++; console.log(`  ✅ ${label}`); }
+function fail(label, reason) { failed++; console.log(`  ❌ ${label}: ${reason}`); process.exitCode = 1; }
+
+function test(label, fn) {
+  try {
+    fn();
+    ok(label);
+  } catch (err) {
+    fail(label, err.message);
+  }
+}
+
+// ─────────────────────────────────────
+// Step Schema Tests
+// ─────────────────────────────────────
+
+const stepSchema = require('./step-schema');
+
+console.log('\n=== step-schema.js ===\n');
+
+test('createStep returns correct defaults', () => {
+  const step = stepSchema.createStep('T-00001', 'run-abc', 'plan');
+  assert.strictEqual(step.step_id, 'T-00001:plan');
+  assert.strictEqual(step.task_id, 'T-00001');
+  assert.strictEqual(step.run_id, 'run-abc');
+  assert.strictEqual(step.type, 'plan');
+  assert.strictEqual(step.state, 'queued');
+  assert.strictEqual(step.attempt, 0);
+  assert.strictEqual(step.max_attempts, 3);
+  assert.strictEqual(step.locked_by, null);
+  assert.strictEqual(step.input_ref, null);
+  assert.strictEqual(step.output_ref, null);
+  assert.strictEqual(step.error, null);
+  assert.ok(step.scheduled_at);
+  assert.deepStrictEqual(step.retry_policy, stepSchema.DEFAULT_RETRY_POLICY);
+});
+
+test('createStep accepts custom retry_policy', () => {
+  const step = stepSchema.createStep('T-00001', 'run-abc', 'test', {
+    retry_policy: { max_attempts: 5, timeout_ms: 600000 },
+  });
+  assert.strictEqual(step.max_attempts, 5);
+  assert.strictEqual(step.retry_policy.timeout_ms, 600000);
+  // defaults preserved for unspecified fields
+  assert.strictEqual(step.retry_policy.backoff_base_ms, 5000);
+});
+
+test('canTransitionStep validates all transitions', () => {
+  // Valid
+  assert.strictEqual(stepSchema.canTransitionStep('queued', 'running'), true);
+  assert.strictEqual(stepSchema.canTransitionStep('running', 'succeeded'), true);
+  assert.strictEqual(stepSchema.canTransitionStep('running', 'failed'), true);
+  assert.strictEqual(stepSchema.canTransitionStep('failed', 'queued'), true);
+  assert.strictEqual(stepSchema.canTransitionStep('failed', 'dead'), true);
+  // Invalid
+  assert.strictEqual(stepSchema.canTransitionStep('queued', 'succeeded'), false);
+  assert.strictEqual(stepSchema.canTransitionStep('running', 'queued'), false);
+  assert.strictEqual(stepSchema.canTransitionStep('succeeded', 'running'), false);
+  assert.strictEqual(stepSchema.canTransitionStep('dead', 'queued'), false);
+  assert.strictEqual(stepSchema.canTransitionStep('queued', 'queued'), false);
+});
+
+test('transitionStep to running sets started_at', () => {
+  const step = stepSchema.createStep('T-1', 'run-1', 'plan');
+  assert.strictEqual(step.started_at, null);
+  stepSchema.transitionStep(step, 'running');
+  assert.strictEqual(step.state, 'running');
+  assert.ok(step.started_at);
+});
+
+test('transitionStep to succeeded sets completed_at', () => {
+  const step = stepSchema.createStep('T-1', 'run-1', 'plan');
+  stepSchema.transitionStep(step, 'running');
+  stepSchema.transitionStep(step, 'succeeded');
+  assert.strictEqual(step.state, 'succeeded');
+  assert.ok(step.completed_at);
+});
+
+test('transitionStep to failed auto-requeues with backoff', () => {
+  const step = stepSchema.createStep('T-1', 'run-1', 'plan');
+  stepSchema.transitionStep(step, 'running');
+  const beforeFail = Date.now();
+  stepSchema.transitionStep(step, 'failed', { error: 'timeout' });
+  // Should auto-requeue (attempt 1 < max 3)
+  assert.strictEqual(step.state, 'queued');
+  assert.strictEqual(step.attempt, 1);
+  assert.strictEqual(step.error, 'timeout');
+  assert.strictEqual(step.locked_by, null);
+  // scheduled_at should be in the future (backoff)
+  const scheduledAt = new Date(step.scheduled_at).getTime();
+  assert.ok(scheduledAt >= beforeFail);
+});
+
+test('transitionStep auto-escalates to dead on max attempts', () => {
+  const step = stepSchema.createStep('T-1', 'run-1', 'plan', {
+    retry_policy: { max_attempts: 2 },
+  });
+  // Attempt 1: queued → running → failed (requeue)
+  stepSchema.transitionStep(step, 'running');
+  stepSchema.transitionStep(step, 'failed', { error: 'err1' });
+  assert.strictEqual(step.state, 'queued');
+  assert.strictEqual(step.attempt, 1);
+
+  // Attempt 2: queued → running → failed (dead)
+  stepSchema.transitionStep(step, 'running');
+  stepSchema.transitionStep(step, 'failed', { error: 'err2' });
+  assert.strictEqual(step.state, 'dead');
+  assert.strictEqual(step.attempt, 2);
+});
+
+test('ensureStepTransition throws on invalid transition', () => {
+  assert.throws(() => {
+    stepSchema.ensureStepTransition('queued', 'succeeded');
+  }, (err) => err.code === 'INVALID_STEP_TRANSITION');
+});
+
+test('computeIdempotencyKey is deterministic', () => {
+  const key1 = stepSchema.computeIdempotencyKey('run-1', 'T-1:plan', { foo: 'bar' });
+  const key2 = stepSchema.computeIdempotencyKey('run-1', 'T-1:plan', { foo: 'bar' });
+  assert.strictEqual(key1, key2);
+  assert.strictEqual(key1.length, 64); // sha256 hex
+  // Different input → different key
+  const key3 = stepSchema.computeIdempotencyKey('run-1', 'T-1:plan', { foo: 'baz' });
+  assert.notStrictEqual(key1, key3);
+});
+
+test('isStepIdempotent returns true only for succeeded', () => {
+  const step = stepSchema.createStep('T-1', 'run-1', 'plan');
+  assert.strictEqual(stepSchema.isStepIdempotent(step), false);
+  stepSchema.transitionStep(step, 'running');
+  assert.strictEqual(stepSchema.isStepIdempotent(step), false);
+  stepSchema.transitionStep(step, 'succeeded');
+  assert.strictEqual(stepSchema.isStepIdempotent(step), true);
+});
+
+// ─────────────────────────────────────
+// Artifact Store Tests
+// ─────────────────────────────────────
+
+const artifactStore = require('./artifact-store');
+
+console.log('\n=== artifact-store.js ===\n');
+
+// Use a temp directory to avoid polluting project
+const ORIG_DIR = artifactStore.ARTIFACT_DIR;
+const TEST_DIR = path.join(os.tmpdir(), `karvi-test-artifacts-${Date.now()}`);
+
+// Monkey-patch artifact dir for testing
+const artifactPathOrig = artifactStore.artifactPath;
+// We need to override the module's internal path — re-require with env override won't work
+// Instead, use the module's functions directly since they use ARTIFACT_DIR from __dirname
+// For isolated testing, we'll test via writeArtifact/readArtifact which use the internal path
+
+// Clean approach: test with real paths but in a subdirectory
+const testRunId = `test-run-${Date.now()}`;
+
+test('writeArtifact + readArtifact roundtrip', () => {
+  const data = { objective: 'implement auth', constraints: ['no breaking changes'] };
+  artifactStore.writeArtifact(testRunId, 'T-00001:plan', 'input', data);
+  const read = artifactStore.readArtifact(testRunId, 'T-00001:plan', 'input');
+  assert.deepStrictEqual(read, data);
+});
+
+test('readArtifact returns null for missing', () => {
+  const result = artifactStore.readArtifact('nonexistent-run', 'T-99999:plan', 'input');
+  assert.strictEqual(result, null);
+});
+
+test('artifactExists returns correct boolean', () => {
+  assert.strictEqual(artifactStore.artifactExists(testRunId, 'T-00001:plan', 'input'), true);
+  assert.strictEqual(artifactStore.artifactExists(testRunId, 'T-00001:plan', 'output'), false);
+});
+
+test('writeArtifact creates directory recursively', () => {
+  const deepRunId = `${testRunId}/nested/deep`;
+  artifactStore.writeArtifact(deepRunId, 'T-00002:test', 'output', { status: 'succeeded' });
+  const read = artifactStore.readArtifact(deepRunId, 'T-00002:test', 'output');
+  assert.deepStrictEqual(read, { status: 'succeeded' });
+});
+
+test('listArtifacts returns correct entries', () => {
+  artifactStore.writeArtifact(testRunId, 'T-00001:plan', 'output', { summary: 'done' });
+  const list = artifactStore.listArtifacts(testRunId);
+  assert.ok(list.length >= 2); // input + output from earlier tests
+  const kinds = list.map(a => `${a.stepId}:${a.kind}`);
+  assert.ok(kinds.includes('T-00001:plan:input'));
+  assert.ok(kinds.includes('T-00001:plan:output'));
+});
+
+// ─────────────────────────────────────
+// Management.js Step Helpers
+// ─────────────────────────────────────
+
+const mgmt = require('./management');
+
+console.log('\n=== management.js step helpers ===\n');
+
+test('generateStepsForTask creates default pipeline', () => {
+  const task = { id: 'T-00001' };
+  const steps = mgmt.generateStepsForTask(task, 'run-xyz');
+  assert.strictEqual(steps.length, 4);
+  assert.deepStrictEqual(steps.map(s => s.type), ['plan', 'implement', 'test', 'review']);
+  assert.strictEqual(steps[0].step_id, 'T-00001:plan');
+  assert.strictEqual(steps[0].run_id, 'run-xyz');
+});
+
+test('generateStepsForTask accepts custom pipeline', () => {
+  const task = { id: 'T-00002' };
+  const steps = mgmt.generateStepsForTask(task, 'run-abc', ['plan', 'implement']);
+  assert.strictEqual(steps.length, 2);
+  assert.deepStrictEqual(steps.map(s => s.type), ['plan', 'implement']);
+});
+
+test('buildDispatchPlan includes steps field', () => {
+  // Minimal board and task for buildDispatchPlan
+  const board = {
+    taskPlan: { tasks: [{ id: 'T-00001', assignee: 'engineer_lite', status: 'dispatched' }] },
+    controls: {},
+    lessons: [],
+    participants: [{ id: 'owner', type: 'human' }],
+  };
+  const task = board.taskPlan.tasks[0];
+  const plan = mgmt.buildDispatchPlan(board, task, { steps: ['mock-step'] });
+  assert.deepStrictEqual(plan.steps, ['mock-step']);
+
+  const planNoSteps = mgmt.buildDispatchPlan(board, task);
+  assert.strictEqual(planNoSteps.steps, null);
+});
+
+// ─────────────────────────────────────
+// Cleanup & Summary
+// ─────────────────────────────────────
+
+// Clean up test artifacts
+try {
+  fs.rmSync(path.join(artifactStore.ARTIFACT_DIR, testRunId), { recursive: true, force: true });
+} catch {}
+
+console.log(`\n${'─'.repeat(40)}`);
+console.log(`Results: ${passed} passed, ${failed} failed`);
+if (failed > 0) process.exit(1);

@@ -2,6 +2,7 @@ const fs = require('fs');
 const path = require('path');
 const bb = require('./blackboard-server');
 const { nowIso, uid } = bb;
+const stepSchema = require('./step-schema');
 
 const DIR = __dirname;
 const SKILLS_DIR = path.join(DIR, 'skills');
@@ -743,7 +744,18 @@ function buildDispatchPlan(board, task, options = {}) {
       chosen: runtimeHint,
       rationale: runtimeRationale,
     },
+    // Step-level orchestration (null for legacy dispatch, populated by kernel)
+    steps: options.steps || null,
   };
+}
+
+// --- Step-level helpers ---
+
+const DEFAULT_STEP_PIPELINE = ['plan', 'implement', 'test', 'review'];
+
+function generateStepsForTask(task, runId, pipeline) {
+  const types = pipeline || DEFAULT_STEP_PIPELINE;
+  return types.map(type => stepSchema.createStep(task.id, runId, type));
 }
 
 function pickNextTask(board) {
@@ -824,4 +836,6 @@ module.exports = {
   DEFAULT_CODEX_ROLE,
   pickNextTask,
   autoUnlockDependents,
+  generateStepsForTask,
+  DEFAULT_STEP_PIPELINE,
 };

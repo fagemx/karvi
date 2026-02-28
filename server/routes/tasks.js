@@ -462,7 +462,7 @@ module.exports = function tasksRoutes(req, res, helpers, deps) {
 
   // --- Task Engine APIs ---
 
-  if (req.method === 'GET' && req.url.startsWith('/api/tasks')) {
+  if (req.method === 'GET' && req.url.startsWith('/api/tasks') && !req.url.includes('/steps')) {
     try {
       const board = helpers.readBoard();
       return json(res, 200, board.taskPlan || {});
@@ -914,6 +914,106 @@ module.exports = function tasksRoutes(req, res, helpers, deps) {
         json(res, 200, { ok: true, task });
       } catch (error) {
         json(res, 400, { error: error.message });
+      }
+    });
+    return;
+  }
+
+  // --- Step-level endpoints ---
+
+  const stepsCreateMatch = req.url.match(/^\/api\/tasks\/([^/]+)\/steps$/);
+
+  // POST /api/tasks/:id/steps — create step pipeline for a task
+  if (req.method === 'POST' && stepsCreateMatch) {
+    const taskId = decodeURIComponent(stepsCreateMatch[1]);
+    let body = '';
+    req.on('data', c => (body += c));
+    req.on('end', () => {
+      try {
+        const payload = JSON.parse(body || '{}');
+        const runId = payload.run_id || helpers.uid('run');
+        const pipeline = payload.pipeline || null;
+        const board = helpers.readBoard();
+        const task = (board.taskPlan?.tasks || []).find(t => t.id === taskId);
+        if (!task) return json(res, 404, { error: `Task ${taskId} not found` });
+        task.steps = mgmt.generateStepsForTask(task, runId, pipeline);
+        mgmt.ensureEvolutionFields(board);
+        board.signals.push({
+          id: helpers.uid('sig'), ts: helpers.nowIso(), by: 'kernel',
+          type: 'steps_created', content: `${taskId} steps created (${task.steps.length})`,
+          refs: [taskId], data: { taskId, runId, count: task.steps.length },
+        });
+        if (board.signals.length > 500) board.signals = board.signals.slice(-500);
+        helpers.writeBoard(board);
+        helpers.appendLog({ ts: helpers.nowIso(), event: 'steps_created', taskId, runId, count: task.steps.length });
+        json(res, 200, { ok: true, taskId, runId, steps: task.steps });
+      } catch (error) {
+        json(res, 400, { error: error.message });
+      }
+    });
+    return;
+  }
+
+  // GET /api/tasks/:id/steps — list steps for a task
+  if (req.method === 'GET' && stepsCreateMatch) {
+    const taskId = decodeURIComponent(stepsCreateMatch[1]);
+    const board = helpers.readBoard();
+    const task = (board.taskPlan?.tasks || []).find(t => t.id === taskId);
+    if (!task) return json(res, 404, { error: `Task ${taskId} not found` });
+    json(res, 200, { ok: true, taskId, steps: task.steps || [] });
+    return;
+  }
+
+  // PATCH /api/tasks/:id/steps/:stepId — update step state
+  const stepUpdateMatch = req.url.match(/^\/api\/tasks\/([^/]+)\/steps\/([^/]+)$/);
+  if (req.method === 'PATCH' && stepUpdateMatch) {
+    const taskId = decodeURIComponent(stepUpdateMatch[1]);
+    const stepId = decodeURIComponent(stepUpdateMatch[2]);
+    let body = '';
+    req.on('data', c => (body += c));
+    req.on('end', () => {
+      try {
+        const payload = JSON.parse(body || '{}');
+        const newState = String(payload.state || '').trim();
+        if (!newState) return json(res, 400, { error: 'state is required' });
+
+        const board = helpers.readBoard();
+        const task = (board.taskPlan?.tasks || []).find(t => t.id === taskId);
+        if (!task) return json(res, 404, { error: `Task ${taskId} not found` });
+
+        const step = (task.steps || []).find(s => s.step_id === stepId);
+        if (!step) return json(res, 404, { error: `Step ${stepId} not found` });
+
+        const oldState = step.state;
+        deps.stepSchema.transitionStep(step, newState, {
+          error: payload.error,
+          output_ref: payload.output_ref,
+          input_ref: payload.input_ref,
+          locked_by: payload.locked_by,
+          lock_expires_at: payload.lock_expires_at,
+        });
+
+        // Emit signal
+        const signalType = (step.state === 'succeeded') ? 'step_completed'
+          : (step.state === 'dead') ? 'step_dead'
+          : (step.state === 'queued' && oldState === 'running') ? 'step_failed'
+          : `step_${step.state}`;
+        mgmt.ensureEvolutionFields(board);
+        board.signals.push({
+          id: helpers.uid('sig'), ts: helpers.nowIso(), by: 'kernel',
+          type: signalType,
+          content: `${taskId} step ${stepId} ${oldState} → ${step.state}`,
+          refs: [taskId],
+          data: { taskId, stepId, from: oldState, to: step.state, attempt: step.attempt },
+        });
+        if (board.signals.length > 500) board.signals = board.signals.slice(-500);
+
+        helpers.writeBoard(board);
+        helpers.appendLog({ ts: helpers.nowIso(), event: signalType, taskId, stepId, from: oldState, to: step.state });
+        json(res, 200, { ok: true, taskId, step });
+      } catch (error) {
+        const status = error.code === 'INVALID_STEP_TRANSITION' ? 400 : 500;
+        json(res, status, { error: error.message });
       }
     });
     return;

@@ -86,6 +86,10 @@ const deps = {
   DIR,
   DATA_DIR,
 
+  // Step-level modules
+  stepSchema: require('./step-schema'),
+  artifactStore: require('./artifact-store'),
+
   // Cross-module functions (set by tasks.js init)
   tryAutoDispatch: null,
   redispatchTask: null,
