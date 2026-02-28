@@ -9,6 +9,7 @@ const WORKSPACE = path.resolve(DIR, '..', '..', '..');
 const PORT = Number(process.env.PORT || 3461);
 
 const DEFAULT_CONTROLS = {
+  auto_dispatch: false,
   auto_review: true,
   auto_redispatch: false,
   max_review_attempts: 3,
@@ -638,6 +639,7 @@ function buildDispatchPlan(board, task, options = {}) {
     codexRole: profile?.codexRole || DEFAULT_CODEX_ROLE,
     controlsSnapshot: {
       quality_threshold: controls.quality_threshold,
+      auto_dispatch: controls.auto_dispatch,
       auto_review: controls.auto_review,
       auto_redispatch: controls.auto_redispatch,
       max_review_attempts: controls.max_review_attempts,
@@ -674,6 +676,7 @@ function pickNextTask(board) {
 
 function autoUnlockDependents(board) {
   const allTasks = board.taskPlan?.tasks || [];
+  const unlocked = [];
   allTasks.forEach(t => {
     if (t.status === 'pending' && t.depends?.length > 0) {
       const allDepsApproved = t.depends.every(depId => {
@@ -684,9 +687,11 @@ function autoUnlockDependents(board) {
         t.status = 'dispatched';
         t.history = t.history || [];
         t.history.push({ ts: nowIso(), status: 'dispatched', reason: 'dependencies_approved' });
+        unlocked.push(t.id);
       }
     }
   });
+  return unlocked;
 }
 
 module.exports = {

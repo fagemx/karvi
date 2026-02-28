@@ -224,6 +224,41 @@ async function runSuite(target) {
     } catch (e) { fail('Vault API', e.message); }
   }
 
+  // Auto-dispatch controls tests (task-engine only)
+  if (port === 3461) {
+    // Verify auto_dispatch defaults to false
+    try {
+      const r = await get(port, '/api/controls');
+      const controls = JSON.parse(r.body);
+      if (controls.auto_dispatch !== false) throw new Error(`expected auto_dispatch: false, got ${controls.auto_dispatch}`);
+      ok('GET /api/controls → auto_dispatch defaults to false');
+    } catch (e) { fail('GET /api/controls (auto_dispatch default)', e.message); }
+
+    // Toggle auto_dispatch to true
+    try {
+      const r = await post(port, '/api/controls', { auto_dispatch: true });
+      if (r.status !== 200) throw new Error(`status ${r.status}`);
+      const body = JSON.parse(r.body);
+      if (body.controls.auto_dispatch !== true) throw new Error(`expected auto_dispatch: true, got ${body.controls.auto_dispatch}`);
+      ok('POST /api/controls { auto_dispatch: true } → accepted');
+    } catch (e) { fail('POST /api/controls (auto_dispatch: true)', e.message); }
+
+    // Reject non-boolean value for auto_dispatch (should stay true from previous test)
+    try {
+      const r = await post(port, '/api/controls', { auto_dispatch: 'not-boolean' });
+      if (r.status !== 200) throw new Error(`status ${r.status}`);
+      const body = JSON.parse(r.body);
+      if (body.controls.auto_dispatch !== true) throw new Error(`expected auto_dispatch to stay true, got ${body.controls.auto_dispatch}`);
+      ok('POST /api/controls { auto_dispatch: "not-boolean" } → rejected (stays true)');
+    } catch (e) { fail('POST /api/controls (auto_dispatch: invalid)', e.message); }
+
+    // Reset auto_dispatch back to false for clean state
+    try {
+      await post(port, '/api/controls', { auto_dispatch: false });
+      ok('POST /api/controls { auto_dispatch: false } → reset for clean state');
+    } catch (e) { fail('POST /api/controls (auto_dispatch: reset)', e.message); }
+  }
+
   // 9-12. Evolution API checks (task-engine only)
   if (port === 3461) {
     try {
