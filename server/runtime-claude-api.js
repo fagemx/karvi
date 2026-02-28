@@ -4,7 +4,7 @@
  * 透過 HTTPS 直接呼叫 Claude Messages API，使用 vault 管理的 per-user API key。
  * 適用於 SaaS 環境，不需要本機安裝 Claude CLI。
  *
- * Factory pattern: create({ vault }) → { dispatch, extractReplyText, extractSessionId, capabilities }
+ * Factory pattern: create({ vault }) → { dispatch, extractReplyText, extractSessionId, extractUsage, capabilities }
  *
  * 零外部依賴 — 僅使用 Node.js 內建模組 (https, fs, path, child_process)
  */
@@ -352,7 +352,7 @@ async function runConversationLoop(opts) {
  * Create a claude-api runtime instance with vault injection.
  * @param {object} opts
  * @param {object} opts.vault - Vault instance for API key retrieval
- * @returns {{ dispatch, extractReplyText, extractSessionId, capabilities }}
+ * @returns {{ dispatch, extractReplyText, extractSessionId, extractUsage, capabilities }}
  */
 function create(opts = {}) {
   const vault = opts.vault || null;
@@ -397,7 +397,12 @@ function create(opts = {}) {
       maxTokens: DEFAULT_MAX_TOKENS,
     });
 
-    // 6. Extract text from final response
+    // 6. Surface accumulated usage for extractUsage() to find on parsed
+    if (result.response) {
+      result.response._accumulatedUsage = result.usage;
+    }
+
+    // 7. Extract text from final response
     const textBlocks = (result.response?.content || []).filter(b => b.type === 'text');
     const stdout = textBlocks.map(b => b.text).join('\n\n').trim() || '(no text response)';
 
@@ -437,6 +442,27 @@ function create(opts = {}) {
   }
 
   /**
+   * Extract token usage from Claude API dispatch result.
+   *
+   * The dispatch method attaches accumulated multi-turn usage as
+   * `parsed._accumulatedUsage`. Falls back to `parsed.usage` for
+   * single-turn or direct API response objects.
+   *
+   * @param {object} parsed - The parsed response object from dispatch
+   * @param {string} stdout - Fallback stdout text (unused for claude-api)
+   * @returns {object|null} { inputTokens, outputTokens, totalCost } or null
+   */
+  function extractUsage(parsed, stdout) {
+    if (!parsed) return null;
+    const acc = parsed._accumulatedUsage;
+    const inputTokens = acc?.input_tokens ?? parsed.usage?.input_tokens ?? null;
+    const outputTokens = acc?.output_tokens ?? parsed.usage?.output_tokens ?? null;
+    const totalCost = null; // Claude API does not return cost
+    if (inputTokens == null && outputTokens == null) return null;
+    return { inputTokens, outputTokens, totalCost };
+  }
+
+  /**
    * Runtime capabilities descriptor.
    * @returns {object}
    */
@@ -451,7 +477,7 @@ function create(opts = {}) {
     };
   }
 
-  return { dispatch, extractReplyText, extractSessionId, capabilities };
+  return { dispatch, extractReplyText, extractSessionId, extractUsage, capabilities };
 }
 
 // Export factory + internal helpers (for testing)
