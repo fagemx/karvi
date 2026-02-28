@@ -1029,6 +1029,64 @@ module.exports = function tasksRoutes(req, res, helpers, deps) {
     return;
   }
 
+  // POST /api/tasks/:id/steps/dispatch-batch — dispatch multiple steps in parallel
+  const batchDispatchMatch = req.url.match(/^\/api\/tasks\/([^/]+)\/steps\/dispatch-batch$/);
+  if (req.method === 'POST' && batchDispatchMatch) {
+    const taskId = decodeURIComponent(batchDispatchMatch[1]);
+    let body = '';
+    req.on('data', c => (body += c));
+    req.on('end', async () => {
+      try {
+        const payload = JSON.parse(body || '{}');
+        const board = helpers.readBoard();
+        const task = (board.taskPlan?.tasks || []).find(t => t.id === taskId);
+        if (!task) return json(res, 404, { error: `Task ${taskId} not found` });
+        if (!task.steps?.length) return json(res, 400, { error: 'Task has no steps' });
+
+        // Filter steps: by step_ids or all queued
+        let targets = task.steps;
+        if (Array.isArray(payload.step_ids) && payload.step_ids.length > 0) {
+          targets = task.steps.filter(s => payload.step_ids.includes(s.step_id));
+        } else {
+          targets = task.steps.filter(s => s.state === 'queued');
+        }
+        if (targets.length === 0) return json(res, 400, { error: 'No dispatchable steps found' });
+
+        // Build envelopes and dispatch in parallel
+        const runState = { task, steps: task.steps, run_id: targets[0].run_id, budget: task.budget };
+        const results = await Promise.allSettled(targets.map(async (step) => {
+          const decision = { action: 'next_step', next_step: { step_id: step.step_id, step_type: step.type } };
+          const envelope = deps.contextCompiler.buildEnvelope(decision, runState, deps);
+          if (!envelope) throw new Error(`Cannot build envelope for ${step.step_id}`);
+
+          // Write input artifact and transition to running
+          deps.artifactStore.writeArtifact(envelope.run_id, envelope.step_id, 'input', envelope);
+          if (step.state === 'queued') {
+            deps.stepSchema.transitionStep(step, 'running', {
+              locked_by: 'batch-dispatch',
+              input_ref: deps.artifactStore.artifactPath(envelope.run_id, envelope.step_id, 'input'),
+            });
+          }
+
+          const output = await deps.stepWorker.executeStep(envelope, helpers.readBoard(), helpers);
+          return { step_id: step.step_id, status: output.status };
+        }));
+
+        helpers.writeBoard(helpers.readBoard());
+        const summary = results.map((r, i) => ({
+          step_id: targets[i].step_id,
+          status: r.status === 'fulfilled' ? r.value.status : 'error',
+          error: r.status === 'rejected' ? r.reason.message : undefined,
+        }));
+
+        json(res, 200, { ok: true, taskId, dispatched: targets.length, results: summary });
+      } catch (error) {
+        json(res, 500, { error: error.message });
+      }
+    });
+    return;
+  }
+
   // --- Per-task dispatch: send task directly to assigned agent ---
   const taskDispatchMatch = req.url.match(/^\/api\/tasks\/([^/]+)\/dispatch$/);
   if (req.method === 'POST' && taskDispatchMatch) {

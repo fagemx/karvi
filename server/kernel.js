@@ -95,9 +95,9 @@ function createKernel(deps) {
           stepSchema.transitionStep(nextStep, 'running', { locked_by: 'kernel', input_ref: artifactStore.artifactPath(envelope.run_id, envelope.step_id, 'input') });
         }
         helpers.writeBoard(latestBoard);
-        // Dispatch async (fire-and-forget, errors logged)
-        dispatchStep(envelope, latestBoard, helpers).catch(err =>
-          console.error(`[kernel] dispatchStep error for ${envelope.step_id}:`, err.message));
+        // Dispatch async via StepWorker (fire-and-forget, errors logged)
+        deps.stepWorker.executeStep(envelope, latestBoard, helpers).catch(err =>
+          console.error(`[kernel] executeStep error for ${envelope.step_id}:`, err.message));
         return;  // writeBoard already called
       }
 
@@ -167,120 +167,7 @@ function createKernel(deps) {
     helpers.writeBoard(latestBoard);
   }
 
-  /**
-   * Dispatch a step to the appropriate runtime adapter.
-   * Reuses existing buildDispatchPlan + runtime dispatch.
-   */
-  async function dispatchStep(envelope, board, helpers) {
-    const task = (board.taskPlan?.tasks || []).find(t => t.id === envelope.task_id);
-    if (!task) throw new Error(`Task ${envelope.task_id} not found`);
-
-    const stepMessage = buildStepMessage(envelope);
-    const plan = mgmt.buildDispatchPlan(board, task, {
-      mode: 'dispatch',
-      timeoutSec: Math.ceil(envelope.timeout_ms / 1000),
-      steps: task.steps,
-    });
-    // Override message with step-specific content
-    plan.message = stepMessage;
-    plan.stepId = envelope.step_id;
-    plan.stepType = envelope.step_type;
-
-    const rt = deps.getRuntime(plan.runtimeHint);
-    const result = await rt.dispatch(plan);
-
-    // Parse result and write output artifact
-    const replyText = rt.extractReplyText(result.parsed, result.stdout);
-    const usage = rt.extractUsage?.(result.parsed, result.stdout) || null;
-
-    const agentOutput = {
-      run_id: envelope.run_id,
-      step_id: envelope.step_id,
-      status: result.code === 0 ? 'succeeded' : 'failed',
-      failure: result.code !== 0 ? { failure_signature: replyText?.slice(0, 200), retryable: true } : null,
-      summary: replyText?.slice(0, 500) || null,
-      tokens_used: (usage?.inputTokens || 0) + (usage?.outputTokens || 0),
-      duration_ms: null,
-      model_used: plan.modelHint,
-    };
-    artifactStore.writeArtifact(envelope.run_id, envelope.step_id, 'output', agentOutput);
-
-    // Transition step to final state via PATCH-like logic
-    const latestBoard = helpers.readBoard();
-    const latestTask = (latestBoard.taskPlan?.tasks || []).find(t => t.id === envelope.task_id);
-    const latestStep = latestTask?.steps?.find(s => s.step_id === envelope.step_id);
-    if (latestStep && latestStep.state === 'running') {
-      const newState = agentOutput.status === 'succeeded' ? 'succeeded' : 'failed';
-      stepSchema.transitionStep(latestStep, newState, {
-        output_ref: artifactStore.artifactPath(envelope.run_id, envelope.step_id, 'output'),
-        error: agentOutput.failure?.failure_signature || null,
-      });
-
-      // Emit signal (mirrors PATCH handler)
-      const signalType = latestStep.state === 'succeeded' ? 'step_completed'
-        : latestStep.state === 'dead' ? 'step_dead'
-        : latestStep.state === 'queued' ? 'step_failed'
-        : `step_${latestStep.state}`;
-      mgmt.ensureEvolutionFields(latestBoard);
-      latestBoard.signals.push({
-        id: helpers.uid('sig'), ts: helpers.nowIso(), by: 'kernel',
-        type: signalType,
-        content: `${envelope.task_id} step ${envelope.step_id} running → ${latestStep.state}`,
-        refs: [envelope.task_id],
-        data: { taskId: envelope.task_id, stepId: envelope.step_id, from: 'running', to: latestStep.state, attempt: latestStep.attempt },
-      });
-      if (latestBoard.signals.length > 500) latestBoard.signals = latestBoard.signals.slice(-500);
-      helpers.writeBoard(latestBoard);
-      helpers.appendLog({ ts: helpers.nowIso(), event: signalType, taskId: envelope.task_id, stepId: envelope.step_id, from: 'running', to: latestStep.state });
-
-      // Trigger kernel again for the new terminal state (via setImmediate to avoid deep recursion)
-      const newSignal = {
-        type: signalType,
-        data: { taskId: envelope.task_id, stepId: envelope.step_id, from: 'running', to: latestStep.state },
-      };
-      setImmediate(() => {
-        onStepEvent(newSignal, helpers.readBoard(), helpers)
-          .catch(err => console.error(`[kernel] recursive onStepEvent error for ${envelope.step_id}:`, err.message));
-      });
-    }
-  }
-
-  return { onStepEvent, dispatchStep };
-}
-
-// --- Helpers ---
-
-function buildStepMessage(envelope) {
-  const lines = [
-    `【Step Dispatch: ${envelope.step_type.toUpperCase()}】`,
-    '',
-    `Task: ${envelope.task_id}`,
-    `Step: ${envelope.step_id} (${envelope.step_type})`,
-    `Objective: ${envelope.objective}`,
-  ];
-
-  if (envelope.constraints.length > 0) {
-    lines.push('', 'Constraints:');
-    envelope.constraints.forEach(c => lines.push(`  - ${c}`));
-  }
-
-  if (envelope.input_refs.task_description) {
-    lines.push('', `Task description: ${envelope.input_refs.task_description}`);
-  }
-
-  if (envelope.retry_context) {
-    lines.push('', '⚠ RETRY CONTEXT:');
-    lines.push(`  Attempt: ${envelope.retry_context.attempt}`);
-    if (envelope.retry_context.previous_error) lines.push(`  Previous error: ${envelope.retry_context.previous_error}`);
-    if (envelope.retry_context.failure_mode) lines.push(`  Failure mode: ${envelope.retry_context.failure_mode}`);
-    if (envelope.retry_context.remediation_hint) lines.push(`  Hint: ${envelope.retry_context.remediation_hint}`);
-  }
-
-  if (envelope.budget_remaining) {
-    lines.push('', `Budget remaining: ${envelope.budget_remaining.llm_calls} LLM calls, ${envelope.budget_remaining.tokens} tokens, ${Math.round(envelope.budget_remaining.wall_clock_ms / 1000)}s`);
-  }
-
-  return lines.join('\n');
+  return { onStepEvent };
 }
 
 module.exports = { createKernel };

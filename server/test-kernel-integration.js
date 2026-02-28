@@ -68,21 +68,25 @@ function createMockHelpers(board) {
   };
 }
 
-// --- Create kernel (no runtime dispatch — mock deps) ---
+// --- Create kernel + stepWorker (mock runtime — always succeeds) ---
 const deps = {
   artifactStore,
   stepSchema,
   mgmt,
   push: null,           // No push in tests
   PUSH_TOKENS_PATH: null,
-  getRuntime: () => ({  // Mock runtime — always succeeds
+  getRuntime: () => ({
     dispatch: async () => ({ code: 0, stdout: '{"result":"ok"}', stderr: '', parsed: { result: 'ok' } }),
     extractReplyText: () => 'Step completed successfully',
     extractSessionId: () => null,
     extractUsage: () => ({ inputTokens: 100, outputTokens: 200, totalCost: 0.01 }),
   }),
+  stepWorker: null,
+  kernel: null,
 };
-const kernel = require('./kernel').createKernel(deps);
+deps.stepWorker = require('./step-worker').createStepWorker(deps);
+deps.kernel = require('./kernel').createKernel(deps);
+const kernel = deps.kernel;
 
 (async () => {
   console.log('\n=== kernel.js integration ===\n');

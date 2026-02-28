@@ -92,7 +92,8 @@ const deps = {
   routeEngine: require('./route-engine'),
   contextCompiler: require('./context-compiler'),
 
-  // Kernel (set after deps object is created)
+  // StepWorker + Kernel (set after deps object is created)
+  stepWorker: null,
   kernel: null,
 
   // Cross-module functions (set by tasks.js init)
@@ -100,7 +101,8 @@ const deps = {
   redispatchTask: null,
 };
 
-// --- Initialize kernel ---
+// --- Initialize StepWorker + Kernel (order matters: worker before kernel) ---
+deps.stepWorker = require('./step-worker').createStepWorker(deps);
 deps.kernel = require('./kernel').createKernel(deps);
 
 // --- Route modules ---
@@ -191,6 +193,14 @@ if (!Array.isArray(initBoard.signals)) { initBoard.signals = []; dirty = true; }
 if (!Array.isArray(initBoard.insights)) { initBoard.insights = []; dirty = true; }
 if (!Array.isArray(initBoard.lessons)) { initBoard.lessons = []; dirty = true; }
 if (dirty) writeBoard(initBoard);
+
+// --- Recover expired step locks (crashed dispatch recovery) ---
+const { recoverExpiredLocks } = require('./step-worker');
+const recoveredLocks = recoverExpiredLocks(initBoard);
+if (recoveredLocks > 0) {
+  console.log(`[step-worker] recovered ${recoveredLocks} expired step lock(s)`);
+  writeBoard(initBoard);
+}
 
 // --- Telemetry init ---
 let telemetryHandle;
