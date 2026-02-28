@@ -265,6 +265,79 @@ async function runSuite(target) {
     } catch (e) { fail('POST + GET /api/lessons', e.message); }
   }
 
+  // 13-16. Jira Webhook tests (task-engine only)
+  if (port === 3461) {
+    // 13. POST /api/webhooks/jira with issue_created → 201 + task created
+    try {
+      const jiraPayload = {
+        webhookEvent: 'jira:issue_created',
+        issue: {
+          key: 'SMOKE-9999',
+          fields: {
+            summary: 'Smoke test Jira ticket',
+            description: { type: 'doc', version: 1, content: [
+              { type: 'paragraph', content: [{ type: 'text', text: 'Smoke test description from Jira' }] },
+            ]},
+            priority: { name: 'High' },
+            assignee: { displayName: 'SmokeBot' },
+          },
+        },
+      };
+      const r = await post(port, '/api/webhooks/jira', jiraPayload);
+      if (r.status !== 201) throw new Error(`expected 201, got ${r.status}: ${r.body}`);
+      const body = JSON.parse(r.body);
+      if (body.action !== 'create_task') throw new Error(`expected action create_task, got ${body.action}`);
+      if (body.jiraKey !== 'SMOKE-9999') throw new Error(`expected jiraKey SMOKE-9999, got ${body.jiraKey}`);
+
+      // Verify task exists in board with correct fields
+      const boardR = await get(port, '/api/board');
+      const board = JSON.parse(boardR.body);
+      const task = (board.taskPlan?.tasks || []).find(t => t.jiraKey === 'SMOKE-9999');
+      if (!task) throw new Error('task not found in board');
+      if (task.source !== 'jira') throw new Error(`expected source jira, got ${task.source}`);
+      if (task.priority !== 'P1') throw new Error(`expected priority P1, got ${task.priority}`);
+      if (!task.jiraUrl) throw new Error('missing jiraUrl');
+      if (!task.description) throw new Error('missing description');
+      ok('POST /api/webhooks/jira (issue_created) → 201 + task in board');
+    } catch (e) { fail('POST /api/webhooks/jira (issue_created)', e.message); }
+
+    // 14. Duplicate issue_created → 200 with skipped
+    try {
+      const dupPayload = {
+        webhookEvent: 'jira:issue_created',
+        issue: {
+          key: 'SMOKE-9999',
+          fields: { summary: 'Duplicate ticket' },
+        },
+      };
+      const r = await post(port, '/api/webhooks/jira', dupPayload);
+      if (r.status !== 200) throw new Error(`expected 200, got ${r.status}`);
+      const body = JSON.parse(r.body);
+      if (!body.skipped) throw new Error('expected skipped: true');
+      ok('POST /api/webhooks/jira (duplicate) → 200 skipped');
+    } catch (e) { fail('POST /api/webhooks/jira (duplicate)', e.message); }
+
+    // 15. Invalid/unsupported event → 200 with skipped
+    try {
+      const r = await post(port, '/api/webhooks/jira', { webhookEvent: 'jira:unknown_event' });
+      if (r.status !== 200) throw new Error(`expected 200, got ${r.status}`);
+      const body = JSON.parse(r.body);
+      if (!body.skipped) throw new Error('expected skipped: true');
+      ok('POST /api/webhooks/jira (unsupported event) → 200 skipped');
+    } catch (e) { fail('POST /api/webhooks/jira (unsupported event)', e.message); }
+
+    // 16. Clean up: remove smoke test task from board
+    try {
+      const boardR = await get(port, '/api/board');
+      const board = JSON.parse(boardR.body);
+      if (board.taskPlan?.tasks) {
+        board.taskPlan.tasks = board.taskPlan.tasks.filter(t => t.jiraKey !== 'SMOKE-9999');
+        await post(port, '/api/board', board);
+      }
+      ok('Jira webhook cleanup → smoke task removed');
+    } catch (e) { fail('Jira webhook cleanup', e.message); }
+  }
+
   // Auth-specific tests (only when --token is provided)
   if (authToken) {
     console.log('\n  ── Auth tests ──');

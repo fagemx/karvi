@@ -124,6 +124,9 @@ export interface Task {
   blocker?: { reason: string; askedAt: string } | null;
   history?: HistoryEntry[];
   jiraKey?: string;
+  jiraUrl?: string;
+  source?: string;
+  priority?: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -288,6 +291,7 @@ export interface JiraConfig {
   statusMapping: Record<string, TaskStatus>;
   reverseMapping: Record<string, string>;
   triggerStatus?: string;
+  autoDispatchOnCreate?: boolean;
   humanGate: {
     enabled: boolean;
     mergeRequiresHuman: boolean;

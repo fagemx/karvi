@@ -2140,6 +2140,40 @@ const server = bb.createServer(ctx, (req, res, helpers) => {
           json(res, 200, { ok: true, skipped: true, reason: result.error });
           return;
         }
+
+        // --- Handle create_task: append new task from Jira issue_created ---
+        if (result.action === 'create_task' && result.task) {
+          board.taskPlan = board.taskPlan || { tasks: [] };
+          board.taskPlan.tasks = board.taskPlan.tasks || [];
+          board.taskPlan.tasks.push(result.task);
+          writeBoard(board);
+          appendLog({ ts: nowIso(), event: 'jira_task_created', taskId: result.task.id, jiraKey: result.issueKey, source: 'jira-webhook' });
+
+          // Optional auto-dispatch via internal HTTP loopback (when config flag is set)
+          const jiraConfig = board.integrations?.jira || {};
+          if (jiraConfig.autoDispatchOnCreate) {
+            const taskId = result.task.id;
+            setImmediate(() => {
+              const http = require('http');
+              const authToken = process.env.KARVI_API_TOKEN;
+              const headers = {};
+              if (authToken) headers['Authorization'] = `Bearer ${authToken}`;
+              const dreq = http.request({
+                hostname: 'localhost',
+                port: ctx.port,
+                path: `/api/tasks/${encodeURIComponent(taskId)}/dispatch`,
+                method: 'POST',
+                headers,
+              });
+              dreq.on('error', err => console.error(`[jira-webhook] auto-dispatch failed for ${taskId}:`, err.message));
+              dreq.end();
+            });
+          }
+
+          json(res, 201, { ok: true, action: 'create_task', taskId: result.task.id, jiraKey: result.issueKey });
+          return;
+        }
+
         if (result.action === 'dispatch' && result.task) {
           result.task.status = 'dispatched';
           result.task.history = result.task.history || [];
