@@ -387,21 +387,80 @@ async function runTests() {
   );
 
   // ----------------------------------------------------------
-  // 19. Module exports structure
+  // 19. extractUsage
+  // ----------------------------------------------------------
+  console.log('\n--- Extract Usage ---');
+
+  assert(typeof rt.extractUsage === 'function', '19a. create() returns extractUsage function');
+
+  // Multi-turn: _accumulatedUsage takes priority
+  {
+    const parsed = {
+      _accumulatedUsage: { input_tokens: 500, output_tokens: 200 },
+      usage: { input_tokens: 100, output_tokens: 50 },
+    };
+    const usage = rt.extractUsage(parsed, '');
+    assert(usage.inputTokens === 500, '19b. extractUsage prefers _accumulatedUsage input_tokens');
+    assert(usage.outputTokens === 200, '19c. extractUsage prefers _accumulatedUsage output_tokens');
+  }
+
+  // Single-turn: falls back to parsed.usage
+  {
+    const parsed = {
+      usage: { input_tokens: 100, output_tokens: 50 },
+    };
+    const usage = rt.extractUsage(parsed, '');
+    assert(usage.inputTokens === 100, '19d. extractUsage falls back to parsed.usage input_tokens');
+    assert(usage.outputTokens === 50, '19e. extractUsage falls back to parsed.usage output_tokens');
+  }
+
+  // Null parsed returns null
+  {
+    const usage = rt.extractUsage(null, 'some stdout');
+    assert(usage === null, '19f. extractUsage returns null for null parsed');
+  }
+
+  // Empty object (no usage data) returns null
+  {
+    const usage = rt.extractUsage({}, '');
+    assert(usage === null, '19g. extractUsage returns null for empty object');
+  }
+
+  // Return shape: { inputTokens, outputTokens, totalCost }
+  {
+    const parsed = { _accumulatedUsage: { input_tokens: 10, output_tokens: 20 } };
+    const usage = rt.extractUsage(parsed, '');
+    assert('inputTokens' in usage, '19h. extractUsage result has inputTokens');
+    assert('outputTokens' in usage, '19i. extractUsage result has outputTokens');
+    assert('totalCost' in usage, '19j. extractUsage result has totalCost');
+    assert(usage.totalCost === null, '19k. extractUsage totalCost is null (no cost from API)');
+  }
+
+  // Partial usage: only input_tokens present
+  {
+    const parsed = { usage: { input_tokens: 42 } };
+    const usage = rt.extractUsage(parsed, '');
+    assert(usage !== null, '19l. extractUsage returns object when at least one token field present');
+    assert(usage.inputTokens === 42, '19m. extractUsage partial: inputTokens is 42');
+    assert(usage.outputTokens === null, '19n. extractUsage partial: outputTokens is null');
+  }
+
+  // ----------------------------------------------------------
+  // 20. Module exports structure
   // ----------------------------------------------------------
   console.log('\n--- Module Exports ---');
 
-  assert(typeof runtimeModule.create === 'function', '19a. module exports create function');
-  assert(typeof runtimeModule._internal === 'object', '19b. module exports _internal object');
-  assert(typeof _internal.httpsPost === 'function', '19c. _internal.httpsPost exists');
-  assert(typeof _internal.resolveApiKey === 'function', '19d. _internal.resolveApiKey exists');
-  assert(typeof _internal.buildTools === 'function', '19e. _internal.buildTools exists');
-  assert(typeof _internal.safePath === 'function', '19f. _internal.safePath exists');
-  assert(typeof _internal.executeToolCall === 'function', '19g. _internal.executeToolCall exists');
-  assert(typeof _internal.runConversationLoop === 'function', '19h. _internal.runConversationLoop exists');
+  assert(typeof runtimeModule.create === 'function', '20a. module exports create function');
+  assert(typeof runtimeModule._internal === 'object', '20b. module exports _internal object');
+  assert(typeof _internal.httpsPost === 'function', '20c. _internal.httpsPost exists');
+  assert(typeof _internal.resolveApiKey === 'function', '20d. _internal.resolveApiKey exists');
+  assert(typeof _internal.buildTools === 'function', '20e. _internal.buildTools exists');
+  assert(typeof _internal.safePath === 'function', '20f. _internal.safePath exists');
+  assert(typeof _internal.executeToolCall === 'function', '20g. _internal.executeToolCall exists');
+  assert(typeof _internal.runConversationLoop === 'function', '20h. _internal.runConversationLoop exists');
 
   // ----------------------------------------------------------
-  // 20. Conversation loop — end_turn stops loop
+  // 21. Conversation loop — end_turn stops loop
   // ----------------------------------------------------------
   console.log('\n--- Conversation Loop ---');
 
@@ -433,11 +492,11 @@ async function runTests() {
       timeoutSec: 10,
     });
 
-    assert(callCount === 1, '20a. end_turn stops loop after 1 API call');
-    assert(loopResult.turns === 1, '20b. turns count is 1');
-    assert(loopResult.usage.input_tokens === 100, '20c. usage.input_tokens accumulated');
-    assert(loopResult.usage.output_tokens === 50, '20d. usage.output_tokens accumulated');
-    assert(loopResult.response.id === 'msg_mock_end', '20e. last response is returned');
+    assert(callCount === 1, '21a. end_turn stops loop after 1 API call');
+    assert(loopResult.turns === 1, '21b. turns count is 1');
+    assert(loopResult.usage.input_tokens === 100, '21c. usage.input_tokens accumulated');
+    assert(loopResult.usage.output_tokens === 50, '21d. usage.output_tokens accumulated');
+    assert(loopResult.response.id === 'msg_mock_end', '21e. last response is returned');
   }
 
   // Test: loop handles tool_use then end_turn (multi-turn)
@@ -480,9 +539,9 @@ async function runTests() {
       timeoutSec: 10,
     });
 
-    assert(callCount === 2, '20f. multi-turn: 2 API calls for tool_use then end_turn');
-    assert(loopResult.turns === 2, '20g. multi-turn: turns count is 2');
-    assert(loopResult.usage.input_tokens === 200, '20h. multi-turn: usage accumulated across turns');
+    assert(callCount === 2, '21f. multi-turn: 2 API calls for tool_use then end_turn');
+    assert(loopResult.turns === 2, '21g. multi-turn: turns count is 2');
+    assert(loopResult.usage.input_tokens === 200, '21h. multi-turn: usage accumulated across turns');
   }
 
   // Test: loop rejects on API error
@@ -503,7 +562,7 @@ async function runTests() {
         maxTurns: 3,
         timeoutSec: 10,
       }),
-      '20i. loop rejects on API 401 error',
+      '21i. loop rejects on API 401 error',
       'Claude API error'
     );
   }
@@ -533,16 +592,65 @@ async function runTests() {
         maxTurns: 100,
         timeoutSec: 0, // immediate timeout
       }),
-      '20j. loop rejects on total timeout',
+      '21j. loop rejects on total timeout',
       'timed out'
     );
+  }
+
+  // Test: dispatch result flows through extractUsage correctly (end-to-end)
+  {
+    let callCount = 0;
+    _internal.httpsPost = async () => {
+      callCount++;
+      if (callCount === 1) {
+        return {
+          status: 200,
+          body: {
+            id: 'msg_e2e_tool',
+            content: [
+              { type: 'tool_use', id: 'tu_e2e', name: 'bash', input: { command: 'echo ok' } },
+            ],
+            stop_reason: 'tool_use',
+            usage: { input_tokens: 60, output_tokens: 20 },
+          },
+        };
+      }
+      return {
+        status: 200,
+        body: {
+          id: 'msg_e2e_done',
+          content: [{ type: 'text', text: 'All done.' }],
+          stop_reason: 'end_turn',
+          usage: { input_tokens: 90, output_tokens: 35 },
+        },
+      };
+    };
+
+    const dispatchResult = await rt.dispatch({
+      userId: 'user1',
+      message: 'e2e test',
+      workingDir: os.tmpdir(),
+      timeoutSec: 10,
+    });
+
+    // dispatch.parsed should have _accumulatedUsage attached
+    assert(dispatchResult.parsed._accumulatedUsage != null, '21k. dispatch attaches _accumulatedUsage to parsed');
+    assert(dispatchResult.parsed._accumulatedUsage.input_tokens === 150, '21l. _accumulatedUsage.input_tokens is accumulated total');
+    assert(dispatchResult.parsed._accumulatedUsage.output_tokens === 55, '21m. _accumulatedUsage.output_tokens is accumulated total');
+
+    // extractUsage should pick up _accumulatedUsage
+    const usage = rt.extractUsage(dispatchResult.parsed, dispatchResult.stdout);
+    assert(usage !== null, '21n. extractUsage returns non-null from dispatch result');
+    assert(usage.inputTokens === 150, '21o. extractUsage.inputTokens matches accumulated total');
+    assert(usage.outputTokens === 55, '21p. extractUsage.outputTokens matches accumulated total');
+    assert(usage.totalCost === null, '21q. extractUsage.totalCost is null');
   }
 
   // Restore original httpsPost
   _internal.httpsPost = origHttpsPost;
 
   // ----------------------------------------------------------
-  // 21. httpsPost error handling
+  // 22. httpsPost error handling
   // ----------------------------------------------------------
   console.log('\n--- httpsPost Error Handling ---');
 
@@ -550,9 +658,9 @@ async function runTests() {
   // The real API responds with 401 for fake keys — verify we get { status, body }
   {
     const result = await _internal.httpsPost('fake-key', { model: 'x', max_tokens: 1, messages: [] }, 5000);
-    assert(typeof result.status === 'number', '21a. httpsPost returns status number');
-    assert(result.status >= 400, '21b. httpsPost returns error status for bad key');
-    assert(typeof result.body === 'object', '21c. httpsPost returns parsed error body');
+    assert(typeof result.status === 'number', '22a. httpsPost returns status number');
+    assert(result.status >= 400, '22b. httpsPost returns error status for bad key');
+    assert(typeof result.body === 'object', '22c. httpsPost returns parsed error body');
   }
 
   // Test: httpsPost handles timeout via mock (verifying the wrapper message)
@@ -572,7 +680,7 @@ async function runTests() {
         maxTurns: 1,
         timeoutSec: 30,
       }),
-      '21d. httpsPost timeout propagates through conversation loop',
+      '22d. httpsPost timeout propagates through conversation loop',
       'timed out'
     );
     _internal.httpsPost = origFn;
@@ -594,7 +702,7 @@ async function runTests() {
         maxTurns: 1,
         timeoutSec: 30,
       }),
-      '21e. httpsPost network error propagates through conversation loop',
+      '22e. httpsPost network error propagates through conversation loop',
       'network error'
     );
     _internal.httpsPost = origFn;
