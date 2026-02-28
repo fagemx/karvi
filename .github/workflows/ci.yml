@@ -1,0 +1,62 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      # Syntax check all server JS files
+      - name: Syntax check
+        run: |
+          for f in server/server.js \
+                   server/blackboard-server.js \
+                   server/management.js \
+                   server/process-review.js \
+                   server/retro.js \
+                   server/runtime-openclaw.js \
+                   server/runtime-codex.js \
+                   server/runtime-claude.js \
+                   server/runtime-edda.js; do
+            echo "Checking $f..."
+            node --check "$f"
+          done
+
+      # Create initial board.json (gitignored, needed for server to start)
+      - name: Seed board
+        run: echo '{"meta":{"boardType":"task-engine"},"taskPlan":{"tasks":[]}}' > server/board.json
+
+      # Start server in background, wait for ready
+      - name: Start server
+        run: |
+          node server/server.js &
+          echo $! > /tmp/server.pid
+          # Wait for server to be ready (max 10s)
+          for i in $(seq 1 20); do
+            if curl -s http://localhost:3461/api/board > /dev/null 2>&1; then
+              echo "Server ready"
+              break
+            fi
+            sleep 0.5
+          done
+
+      # Smoke test (task-engine only, port 3461)
+      - name: Smoke test
+        run: node server/smoke-test.js 3461
+
+      # Evolution loop integration test
+      - name: Evolution loop test
+        run: node server/test-evolution-loop.js
+
+      # Stop server
+      - name: Stop server
+        if: always()
+        run: kill $(cat /tmp/server.pid) 2>/dev/null || true
