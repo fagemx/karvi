@@ -371,6 +371,34 @@ async function runSuite(target) {
       }
       ok('Jira webhook cleanup → smoke task removed');
     } catch (e) { fail('Jira webhook cleanup', e.message); }
+
+    // 17. POST /api/webhooks/jira with field changes → 200 + fields_updated (issue #51)
+    try {
+      // First create a task to update
+      await post(port, '/api/webhooks/jira', {
+        webhookEvent: 'jira:issue_created',
+        issue: { key: 'SMOKE-FIELD', fields: { summary: 'Original Title', priority: { name: 'Medium' } } },
+      });
+      // Now send field update
+      const r = await post(port, '/api/webhooks/jira', {
+        webhookEvent: 'jira:issue_updated',
+        issue: { key: 'SMOKE-FIELD', fields: { summary: 'Updated Title' } },
+        changelog: { items: [{ field: 'summary', fromString: 'Original Title', toString: 'Updated Title' }] },
+      });
+      if (r.status !== 200) throw new Error(`expected 200, got ${r.status}`);
+      const body = JSON.parse(r.body);
+      if (body.action !== 'fields_updated') throw new Error(`action: ${body.action}`);
+      // Verify board updated
+      const boardR = await get(port, '/api/board');
+      const board = JSON.parse(boardR.body);
+      const task = board.taskPlan.tasks.find(t => t.jiraKey === 'SMOKE-FIELD');
+      if (!task) throw new Error('task not found');
+      if (task.title !== 'Updated Title') throw new Error(`title: ${task.title}`);
+      // Cleanup
+      board.taskPlan.tasks = board.taskPlan.tasks.filter(t => t.jiraKey !== 'SMOKE-FIELD');
+      await post(port, '/api/board', board);
+      ok('POST /api/webhooks/jira (field_update) → 200 + task updated');
+    } catch (e) { fail('POST /api/webhooks/jira (field_update)', e.message); }
   }
 
   // ── Rate Limit / Body Size / SSE Limit tests ──

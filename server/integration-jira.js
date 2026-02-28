@@ -118,6 +118,9 @@ function mapJiraPriority(name) {
   return JIRA_PRIORITY_MAP[name] || 'P2';
 }
 
+// Fields that always trigger sync (Jira standard fields)
+const SUBSTANTIVE_FIELDS = new Set(['summary', 'description', 'priority']);
+
 // ---------------------------------------------------------------------------
 // Build Karvi task from Jira issue
 // ---------------------------------------------------------------------------
@@ -166,6 +169,64 @@ function buildTaskFromIssue(issue, config) {
     depends: [],
     history: [{ ts: new Date().toISOString(), status: 'created', by: 'jira-webhook' }],
   };
+}
+
+// ---------------------------------------------------------------------------
+// Field change detection (issue #51 — AC/DoD sync)
+// ---------------------------------------------------------------------------
+
+/**
+ * detectFieldChanges(changelogItems, config)
+ *
+ * Filters changelog items to find substantive field changes.
+ * Returns array of { field, label, fromValue, toValue } or empty array.
+ *
+ * @param {Array} changelogItems — payload.changelog.items
+ * @param {object} config — board.integrations.jira config
+ * @returns {Array<{field, label, fromValue, toValue}>}
+ */
+function detectFieldChanges(changelogItems, config) {
+  if (!Array.isArray(changelogItems)) return [];
+
+  // Build set of custom AC/DoD field names from config
+  const customFields = new Map();
+  if (Array.isArray(config?.acFields)) {
+    for (const f of config.acFields) {
+      if (f.jiraField) customFields.set(f.jiraField, f.label || f.jiraField);
+    }
+  }
+
+  const changes = [];
+  for (const item of changelogItems) {
+    const field = item.field;
+    if (!field) continue;
+
+    // Skip status — handled by existing logic
+    if (field === 'status') continue;
+
+    if (SUBSTANTIVE_FIELDS.has(field) || customFields.has(field)) {
+      changes.push({
+        field,
+        label: customFields.get(field) || field,
+        fromValue: item.fromString || '',
+        toValue: item.toString || '',
+      });
+    }
+  }
+  return changes;
+}
+
+/**
+ * computeChangeHash(changes)
+ * Deterministic hash of field changes for dedup.
+ * Order-independent: sorts before hashing.
+ */
+function computeChangeHash(changes) {
+  const payload = changes
+    .map(c => `${c.field}:${c.toValue}`)
+    .sort()
+    .join('|');
+  return crypto.createHash('sha256').update(payload).digest('hex').slice(0, 16);
 }
 
 // ---------------------------------------------------------------------------
@@ -250,18 +311,94 @@ function handleWebhook(board, payload, url) {
     };
   }
 
-  // --- Handle issue_updated: existing logic ---
+  // --- Handle issue_updated: status + field changes ---
   if (event !== 'jira:issue_updated') {
     return { action: 'skipped', error: `Unsupported event: ${event}` };
   }
 
-  // 3. Find status change in changelog
+  // 3a. Check for status change (existing behavior)
   const items = payload.changelog?.items || [];
   const statusChange = items.find(i => i.field === 'status');
-  if (!statusChange) {
-    return { action: 'skipped', error: 'No status change in event' };
+
+  // 3b. Check for substantive field changes (AC/DoD sync — issue #51)
+  const fieldChanges = detectFieldChanges(items, config);
+
+  // If neither status nor field changes, skip
+  if (!statusChange && fieldChanges.length === 0) {
+    return { action: 'skipped', error: 'No substantive changes in event' };
   }
 
+  // 3c. Find matching task by jiraKey
+  const issueKey = payload.issue?.key;
+  if (!issueKey) {
+    return { action: 'skipped', error: 'No issue key in payload' };
+  }
+  const tasks = board.taskPlan?.tasks || [];
+  const task = tasks.find(t =>
+    t.jiraKey === issueKey ||
+    t.id === issueKey ||
+    (t.title && t.title.includes(issueKey))
+  );
+  if (!task) {
+    return { action: 'skipped', error: `No task matches Jira key "${issueKey}"` };
+  }
+
+  // 3d. Handle field changes (processed BEFORE status change)
+  if (fieldChanges.length > 0) {
+    // Compute change hash for dedup
+    const changeHash = computeChangeHash(fieldChanges);
+    if (task._lastChangeHash === changeHash) {
+      return { action: 'skipped', error: 'Duplicate field change (same hash)' };
+    }
+
+    // Build updated values from the issue's current fields
+    const issue = payload.issue;
+    const updatedFields = {};
+    for (const change of fieldChanges) {
+      if (change.field === 'summary') {
+        updatedFields.title = issue.fields?.summary || change.toValue;
+      }
+      if (change.field === 'description') {
+        let desc = '';
+        if (issue.fields?.description) {
+          desc = typeof issue.fields.description === 'string'
+            ? issue.fields.description
+            : adfToPlainText(issue.fields.description).trim();
+        }
+        if (desc.length > 2000) desc = desc.slice(0, 2000) + '... (truncated)';
+        updatedFields.description = desc || change.toValue;
+      }
+      if (change.field === 'priority') {
+        updatedFields.priority = mapJiraPriority(issue.fields?.priority?.name || change.toValue);
+      }
+      // Custom AC/DoD fields → stored in acFields for appending to description
+      if (!SUBSTANTIVE_FIELDS.has(change.field)) {
+        updatedFields.acFields = updatedFields.acFields || {};
+        updatedFields.acFields[change.label] = change.toValue;
+      }
+    }
+
+    // Determine if this is a priority escalation (P0 < P1 — string compare works)
+    const priorityEscalated = !!(updatedFields.priority &&
+      updatedFields.priority < (task.priority || 'P2'));
+
+    return {
+      action: 'fields_updated',
+      task,
+      issueKey,
+      changes: fieldChanges,
+      updatedFields,
+      changeHash,
+      priorityEscalated,
+      // Also return statusChange if both happened in same webhook
+      statusChange: statusChange ? {
+        newStatus: mapJiraToKarvi(statusChange.toString, config),
+        rawStatus: statusChange.toString,
+      } : null,
+    };
+  }
+
+  // 3e. Status-only change (existing logic, unchanged)
   const newJiraStatus = statusChange.toString;
 
   // 4. Check trigger condition
@@ -273,23 +410,6 @@ function handleWebhook(board, payload, url) {
   const karviStatus = mapJiraToKarvi(newJiraStatus, config);
   if (!karviStatus) {
     return { action: 'skipped', error: `No mapping for Jira status "${newJiraStatus}"` };
-  }
-
-  // 6. Find matching task by jiraKey
-  const issueKey = payload.issue?.key;
-  if (!issueKey) {
-    return { action: 'skipped', error: 'No issue key in payload' };
-  }
-
-  const tasks = board.taskPlan?.tasks || [];
-  const task = tasks.find(t =>
-    t.jiraKey === issueKey ||
-    t.id === issueKey ||
-    (t.title && t.title.includes(issueKey))
-  );
-
-  if (!task) {
-    return { action: 'skipped', error: `No task matches Jira key "${issueKey}"` };
   }
 
   return {
@@ -436,6 +556,8 @@ module.exports = {
   adfToPlainText,
   mapJiraPriority,
   buildTaskFromIssue,
+  detectFieldChanges,
+  computeChangeHash,
 };
 
 // ---------------------------------------------------------------------------
@@ -566,6 +688,109 @@ if (require.main === module) {
     if (result.karviStatus !== 'completed') throw new Error(`karviStatus: ${result.karviStatus}`);
     ok('handleWebhook: issue_updated regression → status_change');
   } catch (e) { fail('handleWebhook: issue_updated regression', e.message); }
+
+  // --- detectFieldChanges: filters substantive fields ---
+  try {
+    const items = [
+      { field: 'summary', fromString: 'Old', toString: 'New' },
+      { field: 'status', fromString: 'Open', toString: 'Done' },
+      { field: 'Rank', fromString: '1', toString: '2' },
+    ];
+    const changes = detectFieldChanges(items, {});
+    if (changes.length !== 1) throw new Error(`expected 1 change, got ${changes.length}`);
+    if (changes[0].field !== 'summary') throw new Error(`expected summary, got ${changes[0].field}`);
+    ok('detectFieldChanges: filters substantive fields');
+  } catch (e) { fail('detectFieldChanges: filters', e.message); }
+
+  // --- detectFieldChanges: custom AC fields ---
+  try {
+    const items = [
+      { field: 'customfield_10020', fromString: 'old AC', toString: 'new AC' },
+    ];
+    const config = { acFields: [{ jiraField: 'customfield_10020', label: 'Acceptance Criteria' }] };
+    const changes = detectFieldChanges(items, config);
+    if (changes.length !== 1) throw new Error(`expected 1, got ${changes.length}`);
+    if (changes[0].label !== 'Acceptance Criteria') throw new Error(`label: ${changes[0].label}`);
+    ok('detectFieldChanges: custom AC fields');
+  } catch (e) { fail('detectFieldChanges: custom AC fields', e.message); }
+
+  // --- computeChangeHash: deterministic and order-independent ---
+  try {
+    const changes = [
+      { field: 'summary', toValue: 'New Title' },
+      { field: 'description', toValue: 'New Desc' },
+    ];
+    const h1 = computeChangeHash(changes);
+    const h2 = computeChangeHash([...changes].reverse());
+    if (h1 !== h2) throw new Error('hash should be order-independent');
+    if (h1.length !== 16) throw new Error(`expected 16-char hash, got ${h1.length}`);
+    ok('computeChangeHash: deterministic and order-independent');
+  } catch (e) { fail('computeChangeHash', e.message); }
+
+  // --- handleWebhook: fields_updated action ---
+  try {
+    const board = {
+      integrations: { jira: { enabled: true, statusMapping: { 'Done': 'completed' } } },
+      taskPlan: { tasks: [{ id: 'UPD-1', jiraKey: 'UPD-1', title: 'Old Title', description: 'Old desc', priority: 'P2', status: 'in_progress' }] },
+    };
+    const payload = {
+      webhookEvent: 'jira:issue_updated',
+      issue: {
+        key: 'UPD-1',
+        fields: { summary: 'New Title', description: 'New desc', priority: { name: 'High' } },
+      },
+      changelog: {
+        items: [
+          { field: 'summary', fromString: 'Old Title', toString: 'New Title' },
+          { field: 'description', fromString: 'Old desc', toString: 'New desc' },
+        ],
+      },
+    };
+    const result = handleWebhook(board, payload, 'http://localhost/api/webhooks/jira');
+    if (result.action !== 'fields_updated') throw new Error(`action: ${result.action}`);
+    if (result.changes.length !== 2) throw new Error(`changes: ${result.changes.length}`);
+    if (result.updatedFields.title !== 'New Title') throw new Error(`title: ${result.updatedFields.title}`);
+    ok('handleWebhook: fields_updated action');
+  } catch (e) { fail('handleWebhook: fields_updated', e.message); }
+
+  // --- handleWebhook: dedup via change hash ---
+  try {
+    const board = {
+      integrations: { jira: { enabled: true } },
+      taskPlan: { tasks: [{ id: 'DUP-1', jiraKey: 'DUP-1', title: 'Title', status: 'in_progress', _lastChangeHash: null }] },
+    };
+    const payload = {
+      webhookEvent: 'jira:issue_updated',
+      issue: { key: 'DUP-1', fields: { summary: 'New' } },
+      changelog: { items: [{ field: 'summary', fromString: 'Title', toString: 'New' }] },
+    };
+    const r1 = handleWebhook(board, payload, 'http://localhost/api/webhooks/jira');
+    if (r1.action !== 'fields_updated') throw new Error(`first call: ${r1.action}`);
+    // Simulate applying the hash
+    board.taskPlan.tasks[0]._lastChangeHash = r1.changeHash;
+    const r2 = handleWebhook(board, payload, 'http://localhost/api/webhooks/jira');
+    if (r2.action !== 'skipped') throw new Error(`second call: ${r2.action}`);
+    ok('handleWebhook: dedup via change hash');
+  } catch (e) { fail('handleWebhook: dedup via change hash', e.message); }
+
+  // --- handleWebhook: ignores non-substantive fields ---
+  try {
+    const board = {
+      integrations: { jira: { enabled: true } },
+      taskPlan: { tasks: [{ id: 'IGN-1', jiraKey: 'IGN-1', title: 'Title', status: 'pending' }] },
+    };
+    const payload = {
+      webhookEvent: 'jira:issue_updated',
+      issue: { key: 'IGN-1' },
+      changelog: { items: [
+        { field: 'Rank', fromString: '1', toString: '2' },
+        { field: 'Sprint', fromString: 'Sprint 1', toString: 'Sprint 2' },
+      ]},
+    };
+    const result = handleWebhook(board, payload, 'http://localhost/api/webhooks/jira');
+    if (result.action !== 'skipped') throw new Error(`action: ${result.action}`);
+    ok('handleWebhook: ignores non-substantive fields');
+  } catch (e) { fail('handleWebhook: ignores non-substantive', e.message); }
 
   console.log(`\n  ${passed} passed, ${failed} failed`);
   process.exit(failed > 0 ? 1 : 0);

@@ -2656,6 +2656,94 @@ const server = bb.createServer(ctx, (req, res, helpers) => {
           return;
         }
 
+        // --- Handle fields_updated: sync field changes from Jira (issue #51) ---
+        if (result.action === 'fields_updated' && result.task) {
+          const task = result.task;
+
+          // Apply field updates
+          if (result.updatedFields.title) task.title = result.updatedFields.title;
+          if (result.updatedFields.description !== undefined) task.description = result.updatedFields.description;
+          if (result.updatedFields.priority) task.priority = result.updatedFields.priority;
+
+          // Append custom AC fields to description if present
+          if (result.updatedFields.acFields) {
+            const acLines = Object.entries(result.updatedFields.acFields)
+              .map(([label, value]) => `\n\n--- ${label} ---\n${value}`)
+              .join('');
+            task.description = (task.description || '') + acLines;
+          }
+
+          // Store change hash for dedup
+          task._lastChangeHash = result.changeHash;
+
+          // Record in history
+          task.history = task.history || [];
+          task.history.push({
+            ts: nowIso(),
+            event: 'fields_updated',
+            by: 'jira-webhook',
+            changes: result.changes.map(c => ({
+              field: c.field,
+              label: c.label,
+              from: (c.fromValue || '').slice(0, 200),
+              to: (c.toValue || '').slice(0, 200),
+            })),
+            changeHash: result.changeHash,
+          });
+
+          writeBoard(board);
+          appendLog({
+            ts: nowIso(),
+            event: 'jira_fields_updated',
+            taskId: task.id,
+            jiraKey: result.issueKey,
+            fields: result.changes.map(c => c.field),
+            source: 'jira-webhook',
+          });
+
+          // SSE: broadcast dedicated event for in-progress tasks
+          if (task.status === 'in_progress' || task.status === 'dispatched') {
+            broadcastSSE('task.ac_changed', {
+              taskId: task.id,
+              changes: result.changes,
+              priorityEscalated: result.priorityEscalated || false,
+              needsReplan: result.priorityEscalated || false,
+            });
+          }
+
+          // Push notification for in-progress tasks
+          if (task.status === 'in_progress' || task.status === 'dispatched') {
+            push.notifyTaskEvent(PUSH_TOKENS_PATH, task, 'task.ac_changed')
+              .catch(err => console.error('[push] ac_changed notify failed:', err.message));
+          }
+
+          // If status also changed in same webhook, process it too
+          if (result.statusChange?.newStatus) {
+            const karviStatus = result.statusChange.newStatus;
+            if (karviStatus) {
+              try {
+                mgmt.ensureTaskTransition(task.status, karviStatus);
+                task.status = karviStatus;
+                task.history.push({ ts: nowIso(), status: karviStatus, by: 'jira-webhook' });
+                writeBoard(board);
+              } catch (err) {
+                // Log but don't fail — field updates already applied
+                console.error(`[jira] Status transition failed alongside field update: ${err.message}`);
+              }
+            }
+          }
+
+          json(res, 200, {
+            ok: true,
+            action: 'fields_updated',
+            taskId: task.id,
+            jiraKey: result.issueKey,
+            fieldsChanged: result.changes.map(c => c.field),
+            priorityEscalated: result.priorityEscalated || false,
+          });
+          return;
+        }
+
         if (result.action === 'dispatch' && result.task) {
           result.task.status = 'dispatched';
           result.task.history = result.task.history || [];
