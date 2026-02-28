@@ -15,13 +15,16 @@ const { spawn, spawnSync } = require('child_process');
 const path = require('path');
 
 const PORT = Number(process.env.TEST_PORT) || 13461;
+const API_TOKEN = process.env.KARVI_API_TOKEN || null;
 let serverProc = null;
 
 function post(urlPath, body) {
   return new Promise((resolve, reject) => {
     const data = JSON.stringify(body);
+    const headers = { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(data) };
+    if (API_TOKEN) headers['Authorization'] = `Bearer ${API_TOKEN}`;
     const req = http.request({ hostname: 'localhost', port: PORT, path: urlPath, method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(data) }
+      headers
     }, res => { let d = ''; res.on('data', c => d += c); res.on('end', () => { try { resolve(JSON.parse(d)); } catch { resolve(d); } }); });
     req.on('error', reject);
     req.end(data);
@@ -30,7 +33,9 @@ function post(urlPath, body) {
 
 function get(urlPath) {
   return new Promise((resolve, reject) => {
-    http.get({ hostname: 'localhost', port: PORT, path: urlPath }, res => {
+    const headers = {};
+    if (API_TOKEN) headers['Authorization'] = `Bearer ${API_TOKEN}`;
+    http.get({ hostname: 'localhost', port: PORT, path: urlPath, headers }, res => {
       let d = ''; res.on('data', c => d += c); res.on('end', () => { try { resolve(JSON.parse(d)); } catch { resolve(d); } });
     }).on('error', reject);
   });

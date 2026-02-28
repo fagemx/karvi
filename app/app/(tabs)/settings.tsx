@@ -13,14 +13,18 @@ import { ConnectionIndicator } from '../../components/ConnectionIndicator';
 export default function SettingsScreen() {
   const serverUrl = useBoardStore((s) => s.serverUrl);
   const setServerUrl = useBoardStore((s) => s.setServerUrl);
+  const apiToken = useBoardStore((s) => s.apiToken);
+  const setApiToken = useBoardStore((s) => s.setApiToken);
   const connectionStatus = useBoardStore((s) => s.connectionStatus);
   const [draft, setDraft] = useState(serverUrl);
+  const [draftToken, setDraftToken] = useState(apiToken);
   const [testing, setTesting] = useState(false);
   const t = useTheme();
 
   const handleSave = () => {
     const url = draft.replace(/\/+$/, '');
     setServerUrl(url);
+    setApiToken(draftToken.trim());
     Alert.alert('Saved', url ? `Server: ${url}` : 'Server URL cleared');
   };
 
@@ -32,7 +36,10 @@ export default function SettingsScreen() {
     }
     setTesting(true);
     try {
-      const res = await fetch(`${url}/api/board`, { signal: AbortSignal.timeout(5000) });
+      const headers: Record<string, string> = {};
+      const token = draftToken.trim();
+      if (token) headers['Authorization'] = `Bearer ${token}`;
+      const res = await fetch(`${url}/api/board`, { headers, signal: AbortSignal.timeout(5000) });
       if (res.ok) {
         const board = await res.json();
         const taskCount = board?.taskPlan?.tasks?.length ?? 0;
@@ -75,6 +82,20 @@ export default function SettingsScreen() {
               autoCapitalize="none"
               autoCorrect={false}
               keyboardType="url"
+            />
+          </View>
+          <Text style={[styles.inputLabel, { color: t.textSecondary }]}>API Token</Text>
+          <View style={[styles.inputBox, { backgroundColor: t.bgSubtle, borderColor: t.border }]}>
+            <Ionicons name="key-outline" size={16} color={t.textTertiary} />
+            <TextInput
+              style={[styles.input, { color: t.text }]}
+              value={draftToken}
+              onChangeText={setDraftToken}
+              placeholder="Optional — leave empty if no auth"
+              placeholderTextColor={t.placeholder}
+              autoCapitalize="none"
+              autoCorrect={false}
+              secureTextEntry
             />
           </View>
           <View style={styles.btnRow}>

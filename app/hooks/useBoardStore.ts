@@ -8,9 +8,11 @@ export type ConnectionStatus = 'connected' | 'polling' | 'reconnecting' | 'disco
 interface BoardStore {
   board: Board | null;
   serverUrl: string;
+  apiToken: string;
   connectionStatus: ConnectionStatus;
   setBoard: (board: Board) => void;
   setServerUrl: (url: string) => void;
+  setApiToken: (token: string) => void;
   setConnectionStatus: (s: ConnectionStatus) => void;
 }
 
@@ -19,15 +21,17 @@ export const useBoardStore = create<BoardStore>()(
     (set) => ({
       board: null,
       serverUrl: '',
+      apiToken: '',
       connectionStatus: 'disconnected',
       setBoard: (board) => set({ board }),
       setServerUrl: (serverUrl) => set({ serverUrl }),
+      setApiToken: (apiToken) => set({ apiToken }),
       setConnectionStatus: (connectionStatus) => set({ connectionStatus }),
     }),
     {
       name: 'karvi-board',
       storage: createJSONStorage(() => AsyncStorage),
-      partialize: (state) => ({ board: state.board, serverUrl: state.serverUrl }),
+      partialize: (state) => ({ board: state.board, serverUrl: state.serverUrl, apiToken: state.apiToken }),
     }
   )
 );
