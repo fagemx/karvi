@@ -102,10 +102,13 @@ function createKernel(deps) {
         if (nextStep && nextStep.state === 'queued') {
           stepSchema.transitionStep(nextStep, 'running', { locked_by: 'kernel', input_ref: artifactStore.artifactPath(envelope.run_id, envelope.step_id, 'input') });
         }
+        // Guard: stepWorker must be initialized before persisting state (see server.js init order)
+        if (!deps.stepWorker) {
+          console.error('[kernel] deps.stepWorker not initialized — check init order in server.js');
+          break;
+        }
         helpers.writeBoard(latestBoard);
         // Dispatch async via StepWorker (fire-and-forget, errors logged)
-        // Guard: stepWorker must be initialized (see server.js init order)
-        if (!deps.stepWorker) throw new Error('[kernel] deps.stepWorker not initialized \u2014 check init order in server.js');
         deps.stepWorker.executeStep(envelope, latestBoard, helpers).catch(err =>
           console.error(`[kernel] executeStep error for ${envelope.step_id}:`, err.message));
         return;  // writeBoard already called

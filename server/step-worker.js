@@ -140,9 +140,8 @@ function createStepWorker(deps) {
           deps.kernel.onStepEvent(newSignal, helpers.readBoard(), helpers)
             .catch(err => console.error(`[step-worker] kernel callback error for ${envelope.step_id}:`, err.message));
         });
-      } else {
-        console.warn(`[step-worker] deps.kernel not set \u2014 skipping kernel callback for ${envelope.step_id}. Check init order in server.js.`);
       }
+      // Note: deps.kernel is null during unit tests — this is expected (see server.js init order)
     }
 
     return agentOutput;
