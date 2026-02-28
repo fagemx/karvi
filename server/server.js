@@ -326,6 +326,138 @@ function redispatchTask(board, task) {
   });
 }
 
+// --- Auto-dispatch: automatically dispatch tasks when auto_dispatch control is enabled ---
+function tryAutoDispatch(taskId) {
+  const board = readBoard();
+  const ctrl = mgmt.getControls(board);
+  if (!ctrl.auto_dispatch) return;
+
+  const task = (board.taskPlan?.tasks || []).find(t => t.id === taskId);
+  if (!task) return;
+  if (task.status !== 'dispatched') return;
+  if (task.dispatch?.state === 'dispatching') return;
+
+  const assignee = participantById(board, task.assignee);
+  if (!assignee || assignee.type !== 'agent') {
+    console.log(`[auto-dispatch:${taskId}] skip: assignee ${task.assignee} is not an agent`);
+    return;
+  }
+
+  // Check dependencies
+  const unmetDeps = (task.depends || []).filter(depId => {
+    const dep = (board.taskPlan?.tasks || []).find(t => t.id === depId);
+    return !dep || dep.status !== 'approved';
+  });
+  if (unmetDeps.length > 0) {
+    console.log(`[auto-dispatch:${taskId}] skip: unmet deps ${unmetDeps.join(', ')}`);
+    return;
+  }
+
+  console.log(`[auto-dispatch] dispatching ${taskId} to ${task.assignee}`);
+
+  const sessionId = board.conversations?.[0]?.sessionIds?.[task.assignee] || null;
+  const plan = mgmt.buildDispatchPlan(board, task, { mode: 'dispatch' });
+  plan.sessionId = plan.sessionId || sessionId;
+
+  // Transition dispatched → in_progress
+  task.status = 'in_progress';
+  task.startedAt = task.startedAt || nowIso();
+  task.history = task.history || [];
+  task.history.push({
+    ts: nowIso(),
+    status: 'in_progress',
+    by: 'auto-dispatch',
+    model: plan.modelHint || undefined,
+  });
+  task.lastDispatchModel = plan.modelHint || null;
+  if (board.taskPlan) board.taskPlan.phase = 'executing';
+
+  // Write dispatch state
+  task.dispatch = {
+    version: mgmt.DISPATCH_PLAN_VERSION,
+    state: 'dispatching',
+    planId: plan.planId,
+    runtime: plan.runtimeHint,
+    agentId: plan.agentId,
+    model: plan.modelHint || null,
+    timeoutSec: plan.timeoutSec,
+    preparedAt: plan.createdAt,
+    startedAt: nowIso(),
+    finishedAt: null,
+    sessionId: plan.sessionId || null,
+    lastError: null,
+  };
+
+  writeBoard(board);
+  appendLog({
+    ts: nowIso(),
+    event: 'task_auto_dispatched',
+    taskId,
+    assignee: task.assignee,
+    source: 'auto',
+    planId: plan.planId,
+  });
+
+  // Async runtime execution
+  const rt = getRuntime(plan.runtimeHint);
+  rt.dispatch(plan).then(result => {
+    const replyText = rt.extractReplyText(result.parsed, result.stdout);
+    const newSessionId = rt.extractSessionId(result.parsed);
+    const latestBoard = readBoard();
+    const latestTask = (latestBoard.taskPlan?.tasks || []).find(t => t.id === taskId);
+
+    if (latestTask) {
+      latestTask.dispatch = latestTask.dispatch || {};
+      latestTask.dispatch.state = 'completed';
+      latestTask.dispatch.finishedAt = nowIso();
+      latestTask.dispatch.sessionId = newSessionId || latestTask.dispatch.sessionId || null;
+      latestTask.dispatch.lastError = null;
+      latestTask.lastReply = replyText;
+      latestTask.lastReplyAt = nowIso();
+      if (result.usage) latestTask.dispatch.usage = result.usage;
+    }
+
+    const latestConv = latestBoard.conversations?.[0];
+    if (latestConv) {
+      if (newSessionId) {
+        latestConv.sessionIds = latestConv.sessionIds || {};
+        latestConv.sessionIds[task.assignee] = newSessionId;
+      }
+      pushMessage(latestConv, {
+        id: uid('msg'), ts: nowIso(), type: 'message',
+        from: task.assignee, to: 'human',
+        text: `[Auto-dispatch ${taskId} Reply]\n${replyText}`,
+        sessionId: newSessionId || sessionId,
+      });
+    }
+
+    writeBoard(latestBoard);
+    broadcastSSE('board', latestBoard);
+    appendLog({
+      ts: nowIso(),
+      event: 'auto_dispatch_reply',
+      taskId,
+      agent: task.assignee,
+      source: 'auto',
+      reply: replyText.slice(0, 500),
+    });
+    if (result.usage) appendLog({ ts: nowIso(), event: 'token_usage', taskId, usage: result.usage });
+  }).catch(err => {
+    console.error(`[auto-dispatch:${taskId}] error: ${err.message}`);
+    const latestBoard = readBoard();
+    const latestTask = (latestBoard.taskPlan?.tasks || []).find(t => t.id === taskId);
+    if (latestTask) {
+      latestTask.dispatch = latestTask.dispatch || {};
+      latestTask.dispatch.state = 'failed';
+      latestTask.dispatch.finishedAt = nowIso();
+      latestTask.dispatch.lastError = err.message;
+      // Don't block — keep as in_progress so human can retry
+    }
+    writeBoard(latestBoard);
+    broadcastSSE('board', latestBoard);
+  });
+}
+
 async function processQueue(conversationId) {
   if (processing.get(conversationId)) return;
   processing.set(conversationId, true);
@@ -886,7 +1018,7 @@ const server = bb.createServer(ctx, (req, res, helpers) => {
         for (const key of allowed) {
           if (key in patch) {
             const val = patch[key];
-            if ((key === 'auto_review' || key === 'auto_redispatch' || key === 'auto_apply_insights' || key === 'telemetry_enabled') && typeof val === 'boolean') board.controls[key] = val;
+            if ((key === 'auto_dispatch' || key === 'auto_review' || key === 'auto_redispatch' || key === 'auto_apply_insights' || key === 'telemetry_enabled') && typeof val === 'boolean') board.controls[key] = val;
             else if (key === 'max_review_attempts' && Number.isFinite(val)) board.controls[key] = Math.max(1, Math.min(10, val));
             else if (key === 'quality_threshold' && Number.isFinite(val)) board.controls[key] = Math.max(0, Math.min(100, val));
             else if (key === 'review_timeout_sec' && Number.isFinite(val)) board.controls[key] = Math.max(30, Math.min(600, val));
@@ -997,6 +1129,17 @@ const server = bb.createServer(ctx, (req, res, helpers) => {
 
         writeBoard(board);
         appendLog({ ts: nowIso(), event: 'taskPlan_updated', goal: board.taskPlan.goal });
+
+        // Auto-dispatch any dispatched tasks in the new plan
+        const ctrl = mgmt.getControls(board);
+        if (ctrl.auto_dispatch) {
+          for (const t of (board.taskPlan?.tasks || [])) {
+            if (t.status === 'dispatched') {
+              setImmediate(() => tryAutoDispatch(t.id));
+            }
+          }
+        }
+
         json(res, 200, { ok: true, taskPlan: board.taskPlan });
       } catch (error) {
         json(res, 400, { error: error.message });
@@ -1069,7 +1212,11 @@ const server = bb.createServer(ctx, (req, res, helpers) => {
 
         // Strict gate: only approved can unlock dependents
         if (payload.status === 'approved') {
-          mgmt.autoUnlockDependents(board);
+          const unlocked = mgmt.autoUnlockDependents(board);
+          // Auto-dispatch newly unlocked tasks
+          for (const id of unlocked) {
+            setImmediate(() => tryAutoDispatch(id));
+          }
         }
 
         // Evolution Layer: emit status_change signal
@@ -1251,7 +1398,11 @@ const server = bb.createServer(ctx, (req, res, helpers) => {
 
         // Strict gate: only approved can unlock dependents
         if (newStatus === 'approved') {
-          mgmt.autoUnlockDependents(board);
+          const unlocked = mgmt.autoUnlockDependents(board);
+          // Auto-dispatch newly unlocked tasks
+          for (const id of unlocked) {
+            setImmediate(() => tryAutoDispatch(id));
+          }
         }
 
         // Update phase if all tasks approved
@@ -1862,6 +2013,16 @@ const server = bb.createServer(ctx, (req, res, helpers) => {
 
         const result = { ok: true, title, taskCount: tasks.length };
 
+        // Auto-dispatch: check all dispatched tasks when auto_dispatch is enabled
+        const projCtrl = mgmt.getControls(board);
+        if (projCtrl.auto_dispatch) {
+          for (const t of board.taskPlan.tasks) {
+            if (t.status === 'dispatched') {
+              setImmediate(() => tryAutoDispatch(t.id));
+            }
+          }
+        }
+
         // autoStart: dispatch first ready task
         if (payload.autoStart) {
           const nextTask = mgmt.pickNextTask(board);
@@ -2218,9 +2379,14 @@ const server = bb.createServer(ctx, (req, res, helpers) => {
           writeBoard(board);
           appendLog({ ts: nowIso(), event: 'jira_task_created', taskId: result.task.id, jiraKey: result.issueKey, source: 'jira-webhook' });
 
-          // Optional auto-dispatch via internal HTTP loopback (when config flag is set)
+          // Global auto-dispatch (replaces Jira-specific autoDispatchOnCreate)
+          if (result.task.status === 'dispatched') {
+            setImmediate(() => tryAutoDispatch(result.task.id));
+          }
+
+          // Legacy: Jira-specific auto-dispatch via HTTP loopback (kept for backward compat when global auto_dispatch is off)
           const jiraConfig = board.integrations?.jira || {};
-          if (jiraConfig.autoDispatchOnCreate) {
+          if (jiraConfig.autoDispatchOnCreate && !mgmt.getControls(board).auto_dispatch) {
             const taskId = result.task.id;
             setImmediate(() => {
               const http = require('http');
