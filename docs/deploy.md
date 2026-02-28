@@ -4,6 +4,8 @@
 
 本文件說明如何透過反向代理將 Karvi 暴露至外網，並提供 HTTPS 加密。
 
+> **雲端部署** (Fly.io / Railway / Docker) 請參考 [deploy-cloud.md](deploy-cloud.md)。
+
 ## 目錄
 
 1. [前置需求](#前置需求)

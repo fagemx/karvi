@@ -1,0 +1,38 @@
+# Git and CI
+.git
+.github
+
+# Claude / Edda agent artifacts
+.claude
+.edda
+
+# Secrets
+.env
+
+# Node modules (none needed — zero dependencies)
+node_modules
+
+# Root-level markdown files (docs/ is copied explicitly)
+README.md
+CHANGELOG.md
+tmp-*.md
+
+# Runtime data (lives on the volume, not in the image)
+server/board.json
+server/board.json.bak
+server/task-log.jsonl
+server/briefs/
+server/vaults/
+server/push-tokens.json
+server/.karvi-telemetry-id
+
+# Brief panel runtime data
+brief-panel/brief.json
+brief-panel/brief-log.jsonl
+brief-panel/output/
+
+# Mobile app (not needed in server container)
+app/
+
+# Shared types (TypeScript definitions, not used at runtime)
+shared/
