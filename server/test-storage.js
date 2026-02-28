@@ -289,9 +289,13 @@ function test_factoryApiShape() {
 
 function test_factoryDefaultJson() {
   test('20. Factory returns json backend by default', () => {
+    if (process.env.KARVI_STORAGE && process.env.KARVI_STORAGE !== 'json') {
+      console.log('    (skipped: KARVI_STORAGE=' + process.env.KARVI_STORAGE + ')');
+      passed++;
+      return;
+    }
     const storage = require('./storage');
-    assert.strictEqual(storage.name, 'json',
-      'default backend should be json (unless KARVI_STORAGE is set)');
+    assert.strictEqual(storage.name, 'json');
   });
 }
 
