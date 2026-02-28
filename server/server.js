@@ -133,8 +133,8 @@ function getUserId(req) {
     || 'default';
 }
 
-function getUserIdForTask(board) {
-  return board.controls?.owner_user_id || 'default';
+function getUserIdForTask() {
+  return 'default';
 }
 
 function conversationById(board, id) {
@@ -298,7 +298,7 @@ function redispatchTask(board, task) {
     if (result.usage) appendLog({ ts: nowIso(), event: 'token_usage', taskId: task.id, usage: result.usage });
 
     // --- Usage tracking: auto re-dispatch (Path C) ---
-    const redispatchUserId = getUserIdForTask(latestBoard);
+    const redispatchUserId = getUserIdForTask();
     const redispatchDuration = latestTask?.dispatch?.startedAt
       ? Math.round((Date.now() - new Date(latestTask.dispatch.startedAt).getTime()) / 1000)
       : 0;
@@ -1764,7 +1764,7 @@ const server = bb.createServer(ctx, (req, res, helpers) => {
         if (result.usage) appendLog({ ts: nowIso(), event: 'token_usage', taskId, usage: result.usage });
 
         // --- Usage tracking: per-task dispatch (Path A) ---
-        const dispatchUserId = getUserIdForTask(latestBoard);
+        const dispatchUserId = getUserIdForTask();
         const dispatchDuration = latestTask?.dispatch?.startedAt
           ? Math.round((Date.now() - new Date(latestTask.dispatch.startedAt).getTime()) / 1000)
           : 0;
@@ -2093,7 +2093,7 @@ const server = bb.createServer(ctx, (req, res, helpers) => {
         if (result.usage) appendLog({ ts: nowIso(), event: 'token_usage', taskId: task.id, usage: result.usage });
 
         // --- Usage tracking: dispatch-next ---
-        const dnUserId = getUserIdForTask(latestBoard);
+        const dnUserId = getUserIdForTask();
         const dnDuration = latestTask?.dispatch?.startedAt
           ? Math.round((Date.now() - new Date(latestTask.dispatch.startedAt).getTime()) / 1000)
           : 0;
@@ -2290,7 +2290,7 @@ const server = bb.createServer(ctx, (req, res, helpers) => {
               broadcastSSE('board', lb);
 
               // --- Usage tracking: project autoStart ---
-              const asUserId = getUserIdForTask(lb);
+              const asUserId = getUserIdForTask();
               const asDuration = lt?.dispatch?.startedAt
                 ? Math.round((Date.now() - new Date(lt.dispatch.startedAt).getTime()) / 1000)
                 : 0;

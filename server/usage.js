@@ -193,6 +193,10 @@ function aggregateFromFile(userId, month) {
 function init(opts) {
   if (!opts || !opts.dataDir) throw new Error('usage.init requires dataDir');
 
+  // Clear stale cache from previous init() calls to prevent double-counting
+  cache.clear();
+  alertTimestamps.clear();
+
   config = {
     dataDir: opts.dataDir,
     broadcastSSE: opts.broadcastSSE || (() => {}),
