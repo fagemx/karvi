@@ -496,7 +496,9 @@ function buildPreflightSection(board, task, options = {}) {
     (byRelevance[l.relevance] || []).push(l);
   }
 
+  let budgetExhausted = false;
   for (const [tier, lessons] of Object.entries(byRelevance)) {
+    if (budgetExhausted) break;
     if (lessons.length === 0) continue;
     const tierLabel = tier === 'agent' ? task.assignee + ' 專屬'
                     : tier === 'skill' ? (task.skill || task.type || 'task') + ' 相關'
@@ -506,6 +508,7 @@ function buildPreflightSection(board, task, options = {}) {
       const line = '- ' + l.rule;
       if (charCount + line.length > MAX_CHARS) {
         lines.push('  ... (更多規則省略)');
+        budgetExhausted = true;
         break;
       }
       lines.push(line);
