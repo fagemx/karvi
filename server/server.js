@@ -26,6 +26,9 @@ try { digestTask = require('./digest-task'); } catch { /* digest-task not availa
 let timelineTask = null;
 try { timelineTask = require('./timeline-task'); } catch { /* timeline-task not available, skip */ }
 
+let confidenceEngine = null;
+try { confidenceEngine = require('./confidence-engine'); } catch { /* confidence-engine not available, skip */ }
+
 const telemetry = require('./telemetry');
 const push = require('./push');
 const githubApi = require('./github-api');
@@ -75,6 +78,7 @@ const deps = {
   jiraIntegration,
   digestTask,
   timelineTask,
+  confidenceEngine,
 
   // Config / paths
   ctx,

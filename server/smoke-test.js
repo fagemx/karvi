@@ -778,6 +778,31 @@ async function runSuite(target) {
     // It calls gracefulShutdown() which terminates the server process,
     // preventing remaining tests from running. The endpoint is trivial
     // (respond 200 then shutdown) and is better covered by lifecycle tests.
+
+    // ── L1 Confidence API ──
+    // GET /api/tasks/:id/confidence → 404 (no confidence on nonexistent task)
+    try {
+      const r = await get(port, '/api/tasks/SMOKE-NOEXIST/confidence');
+      if (r.status === 404) {
+        const body = JSON.parse(r.body);
+        if (!body.error) throw new Error('missing error message');
+        ok(`GET /api/tasks/:id/confidence (no task) → 404`);
+      } else {
+        throw new Error(`expected 404, got ${r.status}`);
+      }
+    } catch (e) { fail('GET /api/tasks/:id/confidence', e.message); }
+
+    // POST /api/tasks/:id/confidence → 404 (no task) or 503 (engine unavailable)
+    try {
+      const r = await post(port, '/api/tasks/SMOKE-NOEXIST/confidence', {});
+      if (r.status === 404 || r.status === 503) {
+        const body = JSON.parse(r.body);
+        if (!body.error) throw new Error('missing error message');
+        ok(`POST /api/tasks/:id/confidence → ${r.status} (expected without task)`);
+      } else {
+        throw new Error(`expected 404 or 503, got ${r.status}`);
+      }
+    } catch (e) { fail('POST /api/tasks/:id/confidence', e.message); }
   }
 
   // Auth-specific tests (only when --token is provided)

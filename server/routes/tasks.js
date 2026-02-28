@@ -411,7 +411,7 @@ function summarizeBriefAsSignal(taskId, helpers, DIR) {
 }
 
 module.exports = function tasksRoutes(req, res, helpers, deps) {
-  const { mgmt, runtime, push, usage, ctx, jiraIntegration, digestTask, timelineTask, PUSH_TOKENS_PATH, DIR, DATA_DIR } = deps;
+  const { mgmt, runtime, push, usage, ctx, jiraIntegration, digestTask, timelineTask, confidenceEngine, PUSH_TOKENS_PATH, DIR, DATA_DIR } = deps;
 
   // --- Manual review trigger ---
 
@@ -646,6 +646,15 @@ module.exports = function tasksRoutes(req, res, helpers, deps) {
                   console.log(`[review:${taskId}] auto-redispatch triggered`);
                   setImmediate(() => redispatchTask(updatedBoard, t, deps, helpers));
                 }
+                // L1 Confidence: compute before digest so confidence feeds into L2
+                if (confidenceEngine) {
+                  try {
+                    confidenceEngine.triggerConfidence(taskId, 'review_completed', {
+                      readBoard: helpers.readBoard, writeBoard: helpers.writeBoard,
+                      broadcastSSE: helpers.broadcastSSE, appendLog: helpers.appendLog,
+                    });
+                  } catch (err) { console.error(`[confidence:${taskId}] error:`, err.message); }
+                }
                 // L2 Digest: trigger after review completion
                 if (digestTask?.isDigestEnabled()) {
                   setImmediate(() => {
@@ -662,6 +671,15 @@ module.exports = function tasksRoutes(req, res, helpers, deps) {
           }));
         }
 
+        // L1 Confidence: trigger after task approved
+        if (payload.status === 'approved' && confidenceEngine) {
+          try {
+            confidenceEngine.triggerConfidence(taskId, 'approved', {
+              readBoard: helpers.readBoard, writeBoard: helpers.writeBoard,
+              broadcastSSE: helpers.broadcastSSE, appendLog: helpers.appendLog,
+            });
+          } catch (err) { console.error(`[confidence:${taskId}] error:`, err.message); }
+        }
         // L2 Digest: trigger after task approved
         if (payload.status === 'approved' && digestTask?.isDigestEnabled()) {
           setImmediate(() => {
@@ -857,6 +875,15 @@ module.exports = function tasksRoutes(req, res, helpers, deps) {
                 ) {
                   console.log(`[review:${taskId}] auto-redispatch triggered`);
                   setImmediate(() => redispatchTask(updatedBoard, t, deps, helpers));
+                }
+                // L1 Confidence: compute before digest so confidence feeds into L2
+                if (confidenceEngine) {
+                  try {
+                    confidenceEngine.triggerConfidence(taskId, 'review_completed', {
+                      readBoard: helpers.readBoard, writeBoard: helpers.writeBoard,
+                      broadcastSSE: helpers.broadcastSSE, appendLog: helpers.appendLog,
+                    });
+                  } catch (err) { console.error(`[confidence:${taskId}] error:`, err.message); }
                 }
                 // L2 Digest: trigger after review completion
                 if (digestTask?.isDigestEnabled()) {
@@ -1233,6 +1260,34 @@ module.exports = function tasksRoutes(req, res, helpers, deps) {
     }).then(() => json(res, 200, { ok: true, taskId }))
       .catch(err => json(res, 500, { error: err.message }));
     return;
+  }
+
+  // --- L1 Confidence API ---
+
+  const confidenceMatch = req.url.match(/^\/api\/tasks\/([^/]+)\/confidence$/);
+  if (req.method === 'GET' && confidenceMatch) {
+    const taskId = decodeURIComponent(confidenceMatch[1]);
+    const board = helpers.readBoard();
+    const task = (board.taskPlan?.tasks || []).find(t => t.id === taskId);
+    if (!task) return json(res, 404, { error: 'Task not found' });
+    if (!task.confidence) return json(res, 404, { error: 'No confidence data available' });
+    return json(res, 200, task.confidence);
+  }
+
+  if (req.method === 'POST' && confidenceMatch) {
+    const taskId = decodeURIComponent(confidenceMatch[1]);
+    if (!confidenceEngine) return json(res, 503, { error: 'Confidence engine not available' });
+    try {
+      confidenceEngine.triggerConfidence(taskId, 'manual', {
+        readBoard: helpers.readBoard, writeBoard: helpers.writeBoard,
+        broadcastSSE: helpers.broadcastSSE, appendLog: helpers.appendLog,
+      });
+      const board = helpers.readBoard();
+      const task = (board.taskPlan?.tasks || []).find(t => t.id === taskId);
+      return json(res, 200, { ok: true, taskId, confidence: task?.confidence || null });
+    } catch (err) {
+      return json(res, 500, { error: err.message });
+    }
   }
 
   // --- L3 Timeline API ---
