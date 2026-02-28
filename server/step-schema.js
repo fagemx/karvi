@@ -46,6 +46,7 @@ function createStep(taskId, runId, type, opts = {}) {
     idempotency_key: null,
     input_ref: null,
     output_ref: null,
+    runtime_hint: opts.runtime_hint || null,
     retry_policy: retry,
     error: null,
     started_at: null,
