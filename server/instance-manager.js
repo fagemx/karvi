@@ -167,7 +167,7 @@ function init({ dataRoot: root }) {
   loadRegistry();
 }
 
-async function createInstance({ userId, memoryLimitMB = DEFAULT_MEMORY_LIMIT_MB }) {
+async function createInstance({ userId, memoryLimitMB = DEFAULT_MEMORY_LIMIT_MB, envExtra = {} }) {
   if (!dataRoot) throw new Error('Instance manager not initialized. Call init() first.');
   if (getInstanceByUserId(userId)) {
     throw new Error(`Instance already exists for user ${userId}`);
@@ -187,6 +187,7 @@ async function createInstance({ userId, memoryLimitMB = DEFAULT_MEMORY_LIMIT_MB 
       PORT: String(port),
       DATA_DIR: userDataDir,
       INSTANCE_ID: instanceId,
+      ...envExtra,
     },
     stdio: ['ignore', 'pipe', 'pipe'],
     windowsHide: true,
