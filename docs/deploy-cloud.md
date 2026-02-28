@@ -356,25 +356,36 @@ curl https://your-app.railway.app/health
 | `openclaw` | 是 | 否 | 需要本地安裝 CLI |
 | `codex` | 是 | 否 | 需要本地安裝 CLI |
 | `claude` | 是 | 否 | 需要本地安裝 CLI |
-| `claude-api` | 否 (HTTP) | 是 | 只需 `ANTHROPIC_API_KEY` |
+| `claude-api` | 否 (HTTP) | 是 | 使用 vault per-user API key |
 
 ### 建議：雲端使用 claude-api runtime
 
+`claude-api` runtime 透過 vault 管理 per-user Anthropic API key，不使用全域環境變數。每位使用者需透過 API 將自己的 key 存入 vault：
+
 ```bash
+# 1. 確保 KARVI_VAULT_KEY 已設定（加密金鑰）
 # Fly.io
-fly secrets set ANTHROPIC_API_KEY=sk-ant-xxx
+fly secrets set KARVI_VAULT_KEY=your-32-byte-hex-key
 
 # Docker
 docker run -d \
-  -e ANTHROPIC_API_KEY=sk-ant-xxx \
+  -e KARVI_VAULT_KEY=your-32-byte-hex-key \
   ... karvi
 
-# 在 board controls 中設定預設 runtime
+# 2. 每位使用者透過 API 存入自己的 Anthropic API key
+curl -X POST https://your-app.fly.dev/api/vault/store \
+  -H 'Authorization: Bearer your-token' \
+  -H 'Content-Type: application/json' \
+  -d '{"userId": "user1", "key": "anthropic_api_key", "value": "sk-ant-xxx"}'
+
+# 3. 在 board controls 中設定預設 runtime
 curl -X POST https://your-app.fly.dev/api/controls \
   -H 'Authorization: Bearer your-token' \
   -H 'Content-Type: application/json' \
   -d '{"preferred_runtime": "claude-api"}'
 ```
+
+> **注意**: `ANTHROPIC_API_KEY` 環境變數不被 `claude-api` runtime 使用。所有 API key 皆從 vault 按使用者解析（見 `server/runtime-claude-api.js` 的 `resolveApiKey()`）。
 
 ### 進階：自訂 Dockerfile 安裝 CLI
 
@@ -389,10 +400,12 @@ RUN apk add --no-cache curl bash
 # 安裝 claude CLI（範例）
 # RUN npm install -g @anthropic-ai/claude-cli
 
+# Data directory (must run as root before USER node)
+RUN mkdir -p /data/briefs /data/vaults && chown -R node:node /data
+
 USER node
 WORKDIR /app
 COPY --chown=node:node . .
-RUN mkdir -p /data/briefs /data/vaults
 ENV PORT=3461 DATA_DIR=/data NODE_ENV=production
 EXPOSE 3461
 CMD ["node", "server/server.js"]
@@ -427,12 +440,6 @@ CMD ["node", "server/server.js"]
 | `KARVI_MAX_BODY` | POST body 大小上限 (bytes) | `1048576` | 否 |
 | `KARVI_SSE_LIMIT` | SSE 最大同時連線數 | `50` | 否 |
 
-### Agent Runtime
-
-| 變數 | 說明 | 預設值 | Secret? |
-|------|------|--------|---------|
-| `ANTHROPIC_API_KEY` | claude-api runtime 用 | 無 | **是** |
-
 ### 整合
 
 | 變數 | 說明 | 預設值 | Secret? |
@@ -440,6 +447,7 @@ CMD ["node", "server/server.js"]
 | `JIRA_HOST` | Jira instance hostname | 無 | 否 |
 | `JIRA_EMAIL` | Jira auth email | 無 | 否 |
 | `JIRA_API_TOKEN` | Jira API token | 無 | **是** |
+| `JIRA_WEBHOOK_SECRET` | Jira webhook 簽名驗證密鑰 | 無 | **是** |
 
 ### 進階
 

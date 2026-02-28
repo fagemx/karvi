@@ -2,6 +2,10 @@
 # Multi-purpose: works with fly deploy, docker build, Railway
 FROM node:22-alpine
 
+# Data directory — mount a volume here for persistence
+# Must run as root before switching to non-root user
+RUN mkdir -p /data/briefs /data/vaults && chown -R node:node /data
+
 # Non-root user for security (node user exists in node:alpine)
 USER node
 
@@ -13,9 +17,6 @@ COPY --chown=node:node server/ ./server/
 COPY --chown=node:node index.html ./
 COPY --chown=node:node brief-panel/ ./brief-panel/
 COPY --chown=node:node deploy/ ./deploy/
-
-# Data directory — mount a volume here for persistence
-RUN mkdir -p /data/briefs /data/vaults
 
 VOLUME /data
 
