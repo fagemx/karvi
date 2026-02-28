@@ -1,24 +1,27 @@
-import { View, Text, Pressable, StyleSheet } from 'react-native';
+import { View, Text, StyleSheet } from 'react-native';
 import { useRouter } from 'expo-router';
 import type { Task } from '../../shared/types';
 import { StatusBadge } from './StatusBadge';
+import { Card } from './ui/Card';
 import { useTheme } from '../hooks/useTheme';
+import { StatusColors, Palette } from '../theme/tokens';
+
+function statusAccent(status: string): string {
+  return StatusColors[status]?.dot ?? Palette.gray400;
+}
 
 export function TaskCard({ task }: { task: Task }) {
   const router = useRouter();
   const t = useTheme();
 
   return (
-    <Pressable
-      style={({ pressed }) => [
-        styles.card,
-        { backgroundColor: t.bgCard, borderLeftColor: t.accent },
-        pressed && styles.pressed,
-      ]}
+    <Card
+      accentColor={statusAccent(task.status)}
       onPress={() => router.push(`/task/${task.id}`)}
+      style={styles.card}
     >
       <View style={styles.header}>
-        <Text style={[styles.id, { color: t.accent }]}>{task.id}</Text>
+        <Text style={[styles.id, { color: t.primary }]}>{task.id}</Text>
         <StatusBadge status={task.status} />
       </View>
       <Text style={[styles.title, { color: t.text }]} numberOfLines={2}>
@@ -29,24 +32,20 @@ export function TaskCard({ task }: { task: Task }) {
           <Text style={[styles.meta, { color: t.textSecondary }]}>{task.assignee}</Text>
         ) : null}
         {task.dispatch?.state === 'dispatching' ? (
-          <Text style={styles.dispatching}>dispatching...</Text>
+          <Text style={[styles.dispatching, { color: t.warning }]}>dispatching...</Text>
         ) : null}
         {task.review?.score != null ? (
           <Text style={[styles.meta, { color: t.textSecondary }]}>score: {task.review.score}</Text>
         ) : null}
       </View>
-    </Pressable>
+    </Card>
   );
 }
 
 const styles = StyleSheet.create({
   card: {
-    borderRadius: 8,
-    padding: 12,
     marginBottom: 8,
-    borderLeftWidth: 3,
   },
-  pressed: { opacity: 0.7 },
   header: {
     flexDirection: 'row',
     justifyContent: 'space-between',
@@ -57,5 +56,5 @@ const styles = StyleSheet.create({
   title: { fontSize: 15, marginBottom: 6 },
   footer: { flexDirection: 'row', gap: 12 },
   meta: { fontSize: 12 },
-  dispatching: { color: '#ffa726', fontSize: 12 },
+  dispatching: { fontSize: 12 },
 });
