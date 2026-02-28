@@ -2,6 +2,7 @@
 const fs = require('fs');
 const path = require('path');
 const http = require('http');
+const storage = require('./storage');
 
 const DIR = __dirname;
 const DEFAULT_BOARD = path.join(DIR, 'board.json');
@@ -298,13 +299,13 @@ async function main() {
   const boardPath = args.board || DEFAULT_BOARD;
   const port = args.port || DEFAULT_PORT;
 
-  if (!fs.existsSync(boardPath)) {
+  if (!storage.boardExists(boardPath)) {
     console.error(`[retro] Board not found: ${boardPath}`);
     console.error('[retro] Start the server first: npm start');
     process.exit(1);
   }
 
-  const board = JSON.parse(fs.readFileSync(boardPath, 'utf8'));
+  const board = storage.readBoard(boardPath);
 
   console.log(`[retro] board: ${boardPath}`);
   console.log(`[retro] signals: ${(board.signals || []).length}`);
