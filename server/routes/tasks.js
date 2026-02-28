@@ -411,7 +411,7 @@ function summarizeBriefAsSignal(taskId, helpers, DIR) {
 }
 
 module.exports = function tasksRoutes(req, res, helpers, deps) {
-  const { mgmt, runtime, push, usage, ctx, jiraIntegration, digestTask, PUSH_TOKENS_PATH, DIR, DATA_DIR } = deps;
+  const { mgmt, runtime, push, usage, ctx, jiraIntegration, digestTask, timelineTask, PUSH_TOKENS_PATH, DIR, DATA_DIR } = deps;
 
   // --- Manual review trigger ---
 
@@ -1233,6 +1233,33 @@ module.exports = function tasksRoutes(req, res, helpers, deps) {
     }).then(() => json(res, 200, { ok: true, taskId }))
       .catch(err => json(res, 500, { error: err.message }));
     return;
+  }
+
+  // --- L3 Timeline API ---
+
+  const timelineMatch = req.url.match(/^\/api\/tasks\/([^/]+)\/timeline$/);
+  if (req.method === 'GET' && timelineMatch) {
+    const taskId = decodeURIComponent(timelineMatch[1]);
+    if (!timelineTask) return json(res, 503, { error: 'Timeline module not available' });
+    const board = helpers.readBoard();
+    const task = (board.taskPlan?.tasks || []).find(t => t.id === taskId);
+    if (!task) return json(res, 404, { error: 'Task not found' });
+    const timeline = timelineTask.assembleTimeline(board, task);
+    return json(res, 200, { taskId, count: timeline.length, timeline });
+  }
+
+  const reportMatch = req.url.match(/^\/api\/tasks\/([^/]+)\/report$/);
+  if (req.method === 'GET' && reportMatch) {
+    const taskId = decodeURIComponent(reportMatch[1]);
+    if (!timelineTask) return json(res, 503, { error: 'Timeline module not available' });
+    const board = helpers.readBoard();
+    const task = (board.taskPlan?.tasks || []).find(t => t.id === taskId);
+    if (!task) return json(res, 404, { error: 'Task not found' });
+    const timeline = timelineTask.assembleTimeline(board, task);
+    const report = timelineTask.buildDeliveryReport(board, task, timeline);
+    const html = timelineTask.renderReportHTML(report);
+    res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+    return res.end(html);
   }
 
   // --- S6: High-Level Atomic APIs ---
