@@ -5,6 +5,8 @@ server/board.json
 server/board.json.bak
 server/briefs/*.json
 server/task-log.jsonl
+server/vaults/*.vault.json
+server/vaults/*.tmp
 
 # Brief panel runtime
 brief-panel/brief.json

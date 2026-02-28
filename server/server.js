@@ -20,6 +20,8 @@ const RUNTIMES = {
 let jiraIntegration = null;
 try { jiraIntegration = require('./integration-jira'); } catch { /* jira integration not available, skip */ }
 
+const vault = require('./vault').createVault({ vaultDir: path.join(__dirname, 'vaults') });
+
 function getRuntime(hint) {
   return RUNTIMES[hint] || runtime;
 }
@@ -494,7 +496,65 @@ async function processQueue(conversationId) {
 }
 
 // --- HTTP Server (built on blackboard-server core) ---
+const VALID_VAULT_ID = /^[a-zA-Z0-9_-]+$/;
+
 const server = bb.createServer(ctx, (req, res, helpers) => {
+
+  // --- Vault API ---
+
+  if (req.method === 'GET' && req.url === '/api/vault/status') {
+    return json(res, 200, { enabled: vault.isEnabled() });
+  }
+
+  if (req.url.startsWith('/api/vault/') && !vault.isEnabled()) {
+    return json(res, 503, { error: 'Vault not configured (KARVI_VAULT_KEY not set)' });
+  }
+
+  if (req.method === 'POST' && req.url === '/api/vault/store') {
+    bb.parseBody(req).then(payload => {
+      const { userId, keyName, value } = payload;
+      if (!userId || !VALID_VAULT_ID.test(userId)) return json(res, 400, { error: 'Invalid userId' });
+      if (!keyName || !VALID_VAULT_ID.test(keyName)) return json(res, 400, { error: 'Invalid keyName' });
+      if (!value) return json(res, 400, { error: 'value is required' });
+      const result = vault.store(userId, keyName, value);
+      json(res, result.ok ? 200 : 400, result);
+    }).catch(e => json(res, 400, { error: e.message }));
+    return;
+  }
+
+  if (req.method === 'POST' && req.url === '/api/vault/retrieve') {
+    bb.parseBody(req).then(payload => {
+      const { userId, keyName } = payload;
+      if (!userId || !VALID_VAULT_ID.test(userId)) return json(res, 400, { error: 'Invalid userId' });
+      if (!keyName || !VALID_VAULT_ID.test(keyName)) return json(res, 400, { error: 'Invalid keyName' });
+      const buf = vault.retrieve(userId, keyName);
+      if (!buf) return json(res, 404, { ok: false, error: 'Key not found' });
+      try {
+        json(res, 200, { ok: true, value: buf.toString('utf8') });
+      } finally {
+        buf.fill(0);
+      }
+    }).catch(e => json(res, 400, { error: e.message }));
+    return;
+  }
+
+  const vaultKeysMatch = req.url.match(/^\/api\/vault\/keys\/([a-zA-Z0-9_-]+)$/);
+  if (req.method === 'GET' && vaultKeysMatch) {
+    const userId = vaultKeysMatch[1];
+    const result = vault.list(userId);
+    json(res, result.ok ? 200 : 400, result);
+    return;
+  }
+
+  const vaultDeleteMatch = req.url.match(/^\/api\/vault\/([a-zA-Z0-9_-]+)\/([a-zA-Z0-9_-]+)$/);
+  if (req.method === 'DELETE' && vaultDeleteMatch) {
+    const [, userId, keyName] = vaultDeleteMatch;
+    const result = vault.delete(userId, keyName);
+    json(res, result.ok ? 200 : 400, result);
+    return;
+  }
+
+  // --- Conversations & Chat ---
 
   if (req.method === 'POST' && req.url === '/api/conversations') {
     let body = '';
