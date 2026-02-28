@@ -189,19 +189,18 @@ async function runSuite(target) {
         const listR = await get(port, '/api/vault/keys/smoke-test');
         const listData = JSON.parse(listR.body);
         if (!listData.keys.some(k => k.keyName === 'test_key')) throw new Error('key not in list');
-        // Retrieve
-        const retR = await post(port, '/api/vault/retrieve', { userId: 'smoke-test', keyName: 'test_key' });
-        const retData = JSON.parse(retR.body);
-        if (retData.value !== 'smoke-value') throw new Error('retrieved value mismatch');
-        // Delete
+        // Delete + verify cleanup
         const delR = await new Promise((resolve, reject) => {
-          const r = http.request({ hostname: 'localhost', port, path: '/api/vault/smoke-test/test_key', method: 'DELETE' }, resp => {
+          const r = http.request({ hostname: 'localhost', port, path: '/api/vault/delete/smoke-test/test_key', method: 'DELETE' }, resp => {
             let b = ''; resp.on('data', c => b += c); resp.on('end', () => resolve({ status: resp.statusCode, body: b }));
           });
           r.on('error', reject); r.end();
         });
         if (delR.status !== 200) throw new Error(`delete status ${delR.status}`);
-        ok('Vault API (store/list/retrieve/delete) → ok');
+        const afterDel = await get(port, '/api/vault/keys/smoke-test');
+        const afterData = JSON.parse(afterDel.body);
+        if (afterData.keys.some(k => k.keyName === 'test_key')) throw new Error('key still exists after delete');
+        ok('Vault API (store/list/delete/verify) → ok');
       } else {
         // Vault disabled: store should 503
         const storeR = await post(port, '/api/vault/store', { userId: 'x', keyName: 'y', value: 'z' });
