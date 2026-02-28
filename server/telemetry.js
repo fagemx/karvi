@@ -238,7 +238,15 @@ function init({ dataDir, readBoard }) {
   // 首次啟動提示
   printBanner();
 
-  // 定期回報
+  // 首次延遲回報（60 秒後），避免每日重啟的 server 永遠不回報
+  const initialTimer = setTimeout(async () => {
+    if (isDisabled(readBoard)) return;
+    const payload = collectPayload(installId, readBoard, startedAt);
+    await sendReport(payload);
+  }, 60 * 1000);
+  if (initialTimer.unref) initialTimer.unref();
+
+  // 定期回報（每 24 小時）
   const timer = setInterval(async () => {
     // 每次回報前重新檢查 controls toggle
     if (isDisabled(readBoard)) {
@@ -254,6 +262,7 @@ function init({ dataDir, readBoard }) {
   return {
     /** 手動停止定期回報 */
     stop() {
+      clearTimeout(initialTimer);
       clearInterval(timer);
     },
     /** 手動觸發一次回報（用於測試或 graceful shutdown） */

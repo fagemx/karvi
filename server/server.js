@@ -2268,15 +2268,20 @@ if (!Array.isArray(initBoard.lessons)) { initBoard.lessons = []; dirty = true; }
 if (dirty) writeBoard(initBoard);
 
 // --- Telemetry init ---
-const telemetryHandle = telemetry.init({
-  dataDir: DATA_DIR,
-  readBoard,
-});
+let telemetryHandle;
+try {
+  telemetryHandle = telemetry.init({
+    dataDir: DATA_DIR,
+    readBoard,
+  });
+} catch (err) {
+  console.warn(`[telemetry] init failed, continuing without telemetry: ${err.message}`);
+}
 
 // --- Graceful Shutdown ---
 function gracefulShutdown() {
   console.log('[server] shutting down...');
-  telemetryHandle.stop();
+  telemetryHandle?.stop();
   server.close(() => process.exit(0));
   setTimeout(() => process.exit(1), 5000);
 }
