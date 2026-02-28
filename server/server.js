@@ -2691,7 +2691,6 @@ const server = bb.createServer(ctx, (req, res, helpers) => {
             changeHash: result.changeHash,
           });
 
-          writeBoard(board);
           appendLog({
             ts: nowIso(),
             event: 'jira_fields_updated',
@@ -2718,6 +2717,7 @@ const server = bb.createServer(ctx, (req, res, helpers) => {
           }
 
           // If status also changed in same webhook, process it too
+          const warnings = [];
           if (result.statusChange?.newStatus) {
             const karviStatus = result.statusChange.newStatus;
             if (karviStatus) {
@@ -2725,22 +2725,28 @@ const server = bb.createServer(ctx, (req, res, helpers) => {
                 mgmt.ensureTaskTransition(task.status, karviStatus);
                 task.status = karviStatus;
                 task.history.push({ ts: nowIso(), status: karviStatus, by: 'jira-webhook' });
-                writeBoard(board);
               } catch (err) {
-                // Log but don't fail — field updates already applied
+                // Field updates still applied, but surface the error to the caller
                 console.error(`[jira] Status transition failed alongside field update: ${err.message}`);
+                warnings.push(`Status transition to '${karviStatus}' failed: ${err.message}`);
               }
             }
           }
 
-          json(res, 200, {
+          // Single writeBoard after all mutations (fields + status) are done
+          writeBoard(board);
+
+          const response = {
             ok: true,
             action: 'fields_updated',
             taskId: task.id,
             jiraKey: result.issueKey,
             fieldsChanged: result.changes.map(c => c.field),
             priorityEscalated: result.priorityEscalated || false,
-          });
+          };
+          if (warnings.length) response.warnings = warnings;
+
+          json(res, 200, response);
           return;
         }
 
