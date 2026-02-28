@@ -101,7 +101,19 @@ const deps = {
   redispatchTask: null,
 };
 
-// --- Initialize StepWorker + Kernel (order matters: worker before kernel) ---
+/**
+ * Circular dependency: kernel ↔ stepWorker
+ *
+ * kernel.onStepEvent()  calls  deps.stepWorker.executeStep()   (next_step dispatch)
+ * stepWorker.executeStep() calls  deps.kernel.onStepEvent()     (terminal-state callback via setImmediate)
+ *
+ * Both receive the shared `deps` object by reference. Init order matters:
+ * stepWorker is created first so that kernel can call deps.stepWorker immediately.
+ * kernel is created second; stepWorker's callback to deps.kernel is deferred via
+ * setImmediate, so deps.kernel is guaranteed to be set by the time it fires.
+ *
+ * Do NOT reorder these two lines.
+ */
 deps.stepWorker = require('./step-worker').createStepWorker(deps);
 deps.kernel = require('./kernel').createKernel(deps);
 

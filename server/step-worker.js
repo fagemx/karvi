@@ -10,6 +10,15 @@
  */
 const LOCK_GRACE_MS = 30_000; // 30s grace on top of step timeout
 
+/**
+ * Create the step execution worker.
+ *
+ * Depends on deps.kernel being set before any terminal-state callback fires.
+ * The callback is deferred via setImmediate, so deps.kernel is guaranteed to
+ * be set by that time. See server.js for initialization order notes.
+ *
+ * @param {object} deps - Shared dependency injection object (mutated after creation)
+ */
 function createStepWorker(deps) {
   const { artifactStore, stepSchema, mgmt } = deps;
 
@@ -132,6 +141,7 @@ function createStepWorker(deps) {
             .catch(err => console.error(`[step-worker] kernel callback error for ${envelope.step_id}:`, err.message));
         });
       }
+      // Note: deps.kernel is null during unit tests — this is expected (see server.js init order)
     }
 
     return agentOutput;

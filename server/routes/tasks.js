@@ -1012,6 +1012,7 @@ module.exports = function tasksRoutes(req, res, helpers, deps) {
         helpers.appendLog({ ts: helpers.nowIso(), event: signalType, taskId, stepId, from: oldState, to: step.state });
 
         // Trigger kernel for terminal step states (async, after response)
+        // deps.kernel — initialized in server.js; see circular dependency notes there
         const signal = { type: signalType, data: { taskId, stepId, from: oldState, to: step.state, attempt: step.attempt } };
         if (deps.kernel && (step.state === 'succeeded' || step.state === 'dead')) {
           setImmediate(() => {
@@ -1074,6 +1075,7 @@ module.exports = function tasksRoutes(req, res, helpers, deps) {
               helpers.writeBoard(currentBoard);
             }
 
+            // deps.stepWorker — initialized in server.js; see circular dependency notes there
             const output = await deps.stepWorker.executeStep(envelope, helpers.readBoard(), helpers);
             results.push({ step_id: step.step_id, status: output.status });
           } catch (err) {

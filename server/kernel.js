@@ -10,6 +10,14 @@
 const routeEngine = require('./route-engine');
 const contextCompiler = require('./context-compiler');
 
+/**
+ * Create the kernel event loop.
+ *
+ * Depends on deps.stepWorker being set before any step dispatch occurs.
+ * See server.js for initialization order and circular dependency notes.
+ *
+ * @param {object} deps - Shared dependency injection object (mutated after creation)
+ */
 function createKernel(deps) {
   const { artifactStore, stepSchema, mgmt, push, PUSH_TOKENS_PATH } = deps;
 
@@ -93,6 +101,11 @@ function createKernel(deps) {
         const nextStep = latestTask?.steps?.find(s => s.step_id === envelope.step_id);
         if (nextStep && nextStep.state === 'queued') {
           stepSchema.transitionStep(nextStep, 'running', { locked_by: 'kernel', input_ref: artifactStore.artifactPath(envelope.run_id, envelope.step_id, 'input') });
+        }
+        // Guard: stepWorker must be initialized before persisting state (see server.js init order)
+        if (!deps.stepWorker) {
+          console.error('[kernel] deps.stepWorker not initialized — check init order in server.js');
+          break;
         }
         helpers.writeBoard(latestBoard);
         // Dispatch async via StepWorker (fire-and-forget, errors logged)
