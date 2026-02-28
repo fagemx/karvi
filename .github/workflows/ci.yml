@@ -17,18 +17,19 @@ jobs:
       # Syntax check all server JS files
       - name: Syntax check
         run: |
-          for f in server/server.js \
-                   server/blackboard-server.js \
-                   server/management.js \
-                   server/process-review.js \
-                   server/retro.js \
-                   server/runtime-openclaw.js \
-                   server/runtime-codex.js \
-                   server/runtime-claude.js \
-                   server/runtime-edda.js; do
+          for f in server/*.js; do
             echo "Checking $f..."
             node --check "$f"
           done
+
+      # Standalone unit tests (no server needed)
+      - name: Unit tests
+        run: |
+          node server/test-vault.js
+          node server/test-runtime-claude-api.js
+          node server/test-usage.js
+          node server/test-gateway.js
+          node server/test-instance-manager.js
 
       # Create initial board.json (gitignored, needed for server to start)
       - name: Seed board
