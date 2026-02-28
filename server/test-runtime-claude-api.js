@@ -244,6 +244,13 @@ async function runTests() {
     'Path traversal denied'
   );
 
+  // Null byte injection
+  assertThrows(
+    () => _internal.safePath(tmpDir, 'file\0.txt'),
+    '8g. safePath rejects null byte in path',
+    'null byte'
+  );
+
   // ----------------------------------------------------------
   // 9. Tool execution — read_file
   // ----------------------------------------------------------
@@ -392,7 +399,206 @@ async function runTests() {
   assert(typeof _internal.safePath === 'function', '19f. _internal.safePath exists');
   assert(typeof _internal.executeToolCall === 'function', '19g. _internal.executeToolCall exists');
   assert(typeof _internal.runConversationLoop === 'function', '19h. _internal.runConversationLoop exists');
-  assert(typeof _internal.callClaudeAPI === 'function', '19i. _internal.callClaudeAPI exists');
+
+  // ----------------------------------------------------------
+  // 20. Conversation loop — end_turn stops loop
+  // ----------------------------------------------------------
+  console.log('\n--- Conversation Loop ---');
+
+  // Mock httpsPost to simulate a single-turn end_turn response
+  const origHttpsPost = _internal.httpsPost;
+
+  // Test: loop ends on end_turn with text response
+  {
+    let callCount = 0;
+    _internal.httpsPost = async () => {
+      callCount++;
+      return {
+        status: 200,
+        body: {
+          id: 'msg_mock_end',
+          content: [{ type: 'text', text: 'Task completed.' }],
+          stop_reason: 'end_turn',
+          usage: { input_tokens: 100, output_tokens: 50 },
+        },
+      };
+    };
+
+    const loopResult = await _internal.runConversationLoop({
+      apiKey: 'sk-test',
+      userMessage: 'do something',
+      tools: _internal.buildTools(),
+      workingDir: os.tmpdir(),
+      maxTurns: 5,
+      timeoutSec: 10,
+    });
+
+    assert(callCount === 1, '20a. end_turn stops loop after 1 API call');
+    assert(loopResult.turns === 1, '20b. turns count is 1');
+    assert(loopResult.usage.input_tokens === 100, '20c. usage.input_tokens accumulated');
+    assert(loopResult.usage.output_tokens === 50, '20d. usage.output_tokens accumulated');
+    assert(loopResult.response.id === 'msg_mock_end', '20e. last response is returned');
+  }
+
+  // Test: loop handles tool_use then end_turn (multi-turn)
+  {
+    let callCount = 0;
+    _internal.httpsPost = async () => {
+      callCount++;
+      if (callCount === 1) {
+        // First turn: tool use
+        return {
+          status: 200,
+          body: {
+            id: 'msg_mock_tool',
+            content: [
+              { type: 'tool_use', id: 'tu_1', name: 'list_directory', input: { path: '.' } },
+            ],
+            stop_reason: 'tool_use',
+            usage: { input_tokens: 80, output_tokens: 30 },
+          },
+        };
+      }
+      // Second turn: end_turn
+      return {
+        status: 200,
+        body: {
+          id: 'msg_mock_done',
+          content: [{ type: 'text', text: 'Done listing.' }],
+          stop_reason: 'end_turn',
+          usage: { input_tokens: 120, output_tokens: 40 },
+        },
+      };
+    };
+
+    const loopResult = await _internal.runConversationLoop({
+      apiKey: 'sk-test',
+      userMessage: 'list files',
+      tools: _internal.buildTools(),
+      workingDir: os.tmpdir(),
+      maxTurns: 5,
+      timeoutSec: 10,
+    });
+
+    assert(callCount === 2, '20f. multi-turn: 2 API calls for tool_use then end_turn');
+    assert(loopResult.turns === 2, '20g. multi-turn: turns count is 2');
+    assert(loopResult.usage.input_tokens === 200, '20h. multi-turn: usage accumulated across turns');
+  }
+
+  // Test: loop rejects on API error
+  {
+    _internal.httpsPost = async () => {
+      return {
+        status: 401,
+        body: { error: { type: 'authentication_error', message: 'Invalid API key' } },
+      };
+    };
+
+    await assertRejects(
+      () => _internal.runConversationLoop({
+        apiKey: 'sk-bad',
+        userMessage: 'test',
+        tools: [],
+        workingDir: os.tmpdir(),
+        maxTurns: 3,
+        timeoutSec: 10,
+      }),
+      '20i. loop rejects on API 401 error',
+      'Claude API error'
+    );
+  }
+
+  // Test: loop rejects on timeout
+  {
+    _internal.httpsPost = async () => {
+      return {
+        status: 200,
+        body: {
+          id: 'msg_timeout',
+          content: [
+            { type: 'tool_use', id: 'tu_t', name: 'bash', input: { command: 'echo hi' } },
+          ],
+          stop_reason: 'tool_use',
+          usage: { input_tokens: 10, output_tokens: 10 },
+        },
+      };
+    };
+
+    await assertRejects(
+      () => _internal.runConversationLoop({
+        apiKey: 'sk-test',
+        userMessage: 'loop forever',
+        tools: _internal.buildTools(),
+        workingDir: os.tmpdir(),
+        maxTurns: 100,
+        timeoutSec: 0, // immediate timeout
+      }),
+      '20j. loop rejects on total timeout',
+      'timed out'
+    );
+  }
+
+  // Restore original httpsPost
+  _internal.httpsPost = origHttpsPost;
+
+  // ----------------------------------------------------------
+  // 21. httpsPost error handling
+  // ----------------------------------------------------------
+  console.log('\n--- httpsPost Error Handling ---');
+
+  // Test: httpsPost returns error status from API (not a rejection)
+  // The real API responds with 401 for fake keys — verify we get { status, body }
+  {
+    const result = await _internal.httpsPost('fake-key', { model: 'x', max_tokens: 1, messages: [] }, 5000);
+    assert(typeof result.status === 'number', '21a. httpsPost returns status number');
+    assert(result.status >= 400, '21b. httpsPost returns error status for bad key');
+    assert(typeof result.body === 'object', '21c. httpsPost returns parsed error body');
+  }
+
+  // Test: httpsPost handles timeout via mock (verifying the wrapper message)
+  {
+    // Swap httpsPost with a mock that simulates a timeout rejection
+    const origFn = _internal.httpsPost;
+    _internal.httpsPost = async () => {
+      throw new Error('Claude API request timed out after 100ms');
+    };
+
+    await assertRejects(
+      () => _internal.runConversationLoop({
+        apiKey: 'sk-test',
+        userMessage: 'test',
+        tools: [],
+        workingDir: os.tmpdir(),
+        maxTurns: 1,
+        timeoutSec: 30,
+      }),
+      '21d. httpsPost timeout propagates through conversation loop',
+      'timed out'
+    );
+    _internal.httpsPost = origFn;
+  }
+
+  // Test: httpsPost handles network error via mock
+  {
+    const origFn = _internal.httpsPost;
+    _internal.httpsPost = async () => {
+      throw new Error('Claude API network error: getaddrinfo ENOTFOUND');
+    };
+
+    await assertRejects(
+      () => _internal.runConversationLoop({
+        apiKey: 'sk-test',
+        userMessage: 'test',
+        tools: [],
+        workingDir: os.tmpdir(),
+        maxTurns: 1,
+        timeoutSec: 30,
+      }),
+      '21e. httpsPost network error propagates through conversation loop',
+      'network error'
+    );
+    _internal.httpsPost = origFn;
+  }
 
   // ----------------------------------------------------------
   // Summary

@@ -171,6 +171,10 @@ function buildTools() {
  * @throws {Error} If path escapes the working directory
  */
 function safePath(workingDir, relativePath) {
+  // Defense-in-depth: reject null bytes that could truncate C-level path strings
+  if (relativePath.includes('\0')) {
+    throw new Error(`Path traversal denied: null byte in path`);
+  }
   const resolved = path.resolve(workingDir, relativePath);
   const normalizedBase = path.resolve(workingDir);
   if (!resolved.startsWith(normalizedBase + path.sep) && resolved !== normalizedBase) {
@@ -206,12 +210,17 @@ function executeToolCall(toolName, toolInput, workingDir) {
 
       case 'bash': {
         const cmd = toolInput.command;
-        const result = execSync(cmd, {
+        // Windows-first: use cmd.exe /d /s /c wrapping (see runtime-openclaw.js)
+        const shellCmd = process.platform === 'win32'
+          ? `cmd.exe /d /s /c "${cmd}"`
+          : cmd;
+        const result = execSync(shellCmd, {
           cwd: workingDir,
           timeout: TOOL_EXEC_TIMEOUT_MS,
           encoding: 'utf8',
           maxBuffer: 1024 * 1024, // 1MB
           windowsHide: true,
+          shell: process.platform !== 'win32', // Unix: use shell; Windows: already wrapped
         });
         return result || '(no output)';
       }
@@ -284,7 +293,8 @@ async function runConversationLoop(opts) {
     if (systemPrompt) requestBody.system = systemPrompt;
     if (tools && tools.length > 0) requestBody.tools = tools;
 
-    const { status, body: response } = await httpsPost(apiKey, requestBody, Math.min(remaining, 120000));
+    // Use module.exports._internal.httpsPost so tests can mock it
+    const { status, body: response } = await module.exports._internal.httpsPost(apiKey, requestBody, Math.min(remaining, 120000));
 
     // Handle API errors
     if (status !== 200) {
@@ -330,27 +340,11 @@ async function runConversationLoop(opts) {
   return { response: lastResponse, usage: totalUsage, turns };
 }
 
-// --- Claude API Call Helper ---
-
-/**
- * Call Claude Messages API (single turn, no tool loop).
- * Used internally; the conversation loop wraps this.
- */
-async function callClaudeAPI({ apiKey, model, messages, tools, maxTokens, systemPrompt }) {
-  const body = { model, max_tokens: maxTokens || DEFAULT_MAX_TOKENS, messages };
-  if (systemPrompt) body.system = systemPrompt;
-  if (tools && tools.length > 0) body.tools = tools;
-
-  const { status, body: response } = await httpsPost(apiKey, body);
-
-  if (status !== 200) {
-    const errType = response?.error?.type || 'unknown';
-    const errMsg = response?.error?.message || JSON.stringify(response);
-    throw new Error(`Claude API error (${status} ${errType}): ${errMsg}`);
-  }
-
-  return response;
-}
+// --- Phase 2/3 Deferred Features ---
+// TODO(Phase 2): Streaming — use Claude SSE streaming endpoint for real-time
+//   progress updates via server SSE broadcast. Requires chunked httpsPost variant.
+// TODO(Phase 3): Repo ops — integrate git clone/checkout for task isolation,
+//   working directory provisioning, and PR creation after task completion.
 
 // --- Factory ---
 
@@ -391,23 +385,17 @@ function create(opts = {}) {
     const workingDir = plan.workingDir || path.resolve(__dirname, '..');
 
     // 5. Run conversation loop with tools
-    let result;
-    try {
-      result = await runConversationLoop({
-        apiKey,
-        model,
-        systemPrompt,
-        userMessage: plan.message,
-        tools: buildTools(),
-        workingDir,
-        maxTurns: DEFAULT_MAX_TURNS,
-        timeoutSec: plan.timeoutSec || DEFAULT_TIMEOUT_SEC,
-        maxTokens: DEFAULT_MAX_TOKENS,
-      });
-    } finally {
-      // Wipe the API key from local scope (best effort)
-      // The string is immutable in JS, but we remove the reference
-    }
+    const result = await runConversationLoop({
+      apiKey,
+      model,
+      systemPrompt,
+      userMessage: plan.message,
+      tools: buildTools(),
+      workingDir,
+      maxTurns: DEFAULT_MAX_TURNS,
+      timeoutSec: plan.timeoutSec || DEFAULT_TIMEOUT_SEC,
+      maxTokens: DEFAULT_MAX_TOKENS,
+    });
 
     // 6. Extract text from final response
     const textBlocks = (result.response?.content || []).filter(b => b.type === 'text');
@@ -477,6 +465,5 @@ module.exports = {
     safePath,
     executeToolCall,
     runConversationLoop,
-    callClaudeAPI,
   },
 };
