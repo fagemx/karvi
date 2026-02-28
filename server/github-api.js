@@ -23,6 +23,7 @@ const API_VERSION = '2022-11-28';
 
 function request(method, path, token, body = null) {
   return new Promise((resolve, reject) => {
+    const payload = body ? JSON.stringify(body) : null;
     const options = {
       hostname: GITHUB_API,
       port: 443,
@@ -35,8 +36,7 @@ function request(method, path, token, body = null) {
         'X-GitHub-Api-Version': API_VERSION,
       },
     };
-    if (body) {
-      const payload = JSON.stringify(body);
+    if (payload) {
       options.headers['Content-Type'] = 'application/json';
       options.headers['Content-Length'] = Buffer.byteLength(payload);
     }
@@ -45,7 +45,12 @@ function request(method, path, token, body = null) {
       let data = '';
       res.on('data', chunk => data += chunk);
       res.on('end', () => {
-        const parsed = data ? JSON.parse(data) : {};
+        let parsed;
+        try {
+          parsed = data ? JSON.parse(data) : {};
+        } catch (_e) {
+          parsed = { raw: data };
+        }
         if (res.statusCode >= 200 && res.statusCode < 300) {
           resolve({ status: res.statusCode, data: parsed });
         } else {
@@ -55,7 +60,7 @@ function request(method, path, token, body = null) {
     });
 
     req.on('error', reject);
-    if (body) req.write(JSON.stringify(body));
+    if (payload) req.write(payload);
     req.end();
   });
 }
