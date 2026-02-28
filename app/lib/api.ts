@@ -71,3 +71,98 @@ export async function registerPushToken(token: string, deviceName: string) {
   if (!res.ok) throw new Error(`registerPushToken: ${res.status}`);
   return res.json();
 }
+
+// ---------------------------------------------------------------------------
+// GitHub API (proxied through Karvi server)
+// ---------------------------------------------------------------------------
+
+export async function fetchPR(owner: string, repo: string, number: string) {
+  const res = await fetch(`${getBaseUrl()}/api/github/pr/${owner}/${repo}/${number}`, {
+    headers: authHeaders(),
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({ error: `HTTP ${res.status}` }));
+    throw new Error(body.error || `fetchPR: ${res.status}`);
+  }
+  return res.json();
+}
+
+export async function approvePR(owner: string, repo: string, number: string) {
+  const res = await fetch(`${getBaseUrl()}/api/github/pr/${owner}/${repo}/${number}/approve`, {
+    method: 'POST',
+    headers: authHeaders(),
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({ error: `HTTP ${res.status}` }));
+    throw new Error(body.error || `approvePR: ${res.status}`);
+  }
+  return res.json();
+}
+
+export async function requestChangesPR(owner: string, repo: string, number: string, body: string) {
+  const res = await fetch(`${getBaseUrl()}/api/github/pr/${owner}/${repo}/${number}/request-changes`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...authHeaders() },
+    body: JSON.stringify({ body }),
+  });
+  if (!res.ok) {
+    const errBody = await res.json().catch(() => ({ error: `HTTP ${res.status}` }));
+    throw new Error(errBody.error || `requestChangesPR: ${res.status}`);
+  }
+  return res.json();
+}
+
+export async function mergePR(owner: string, repo: string, number: string) {
+  const res = await fetch(`${getBaseUrl()}/api/github/pr/${owner}/${repo}/${number}/merge`, {
+    method: 'PUT',
+    headers: authHeaders(),
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({ error: `HTTP ${res.status}` }));
+    throw new Error(body.error || `mergePR: ${res.status}`);
+  }
+  return res.json();
+}
+
+// ---------------------------------------------------------------------------
+// GitHub Token Management
+// ---------------------------------------------------------------------------
+
+export async function storeGithubToken(token: string) {
+  const res = await fetch(`${getBaseUrl()}/api/vault/store`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...authHeaders() },
+    body: JSON.stringify({ userId: 'default', keyName: 'github_pat', value: token }),
+  });
+  if (!res.ok) throw new Error(`storeGithubToken: ${res.status}`);
+  return res.json();
+}
+
+export async function checkGithubToken() {
+  const res = await fetch(`${getBaseUrl()}/api/github/token/status`, {
+    headers: authHeaders(),
+  });
+  if (!res.ok) return { configured: false };
+  return res.json();
+}
+
+export async function testGithubToken() {
+  const res = await fetch(`${getBaseUrl()}/api/github/token/test`, {
+    method: 'POST',
+    headers: authHeaders(),
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({ error: `HTTP ${res.status}` }));
+    throw new Error(body.error || `testGithubToken: ${res.status}`);
+  }
+  return res.json();
+}
+
+export async function deleteGithubToken() {
+  const res = await fetch(`${getBaseUrl()}/api/vault/delete/default/github_pat`, {
+    method: 'DELETE',
+    headers: authHeaders(),
+  });
+  if (!res.ok) throw new Error(`deleteGithubToken: ${res.status}`);
+  return res.json();
+}

@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { View, Text, ScrollView, TextInput, StyleSheet, Alert } from 'react-native';
-import { useLocalSearchParams, Stack } from 'expo-router';
+import { useLocalSearchParams, Stack, useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { useBoardStore } from '../../hooks/useBoardStore';
 import { useTheme, type Theme } from '../../hooks/useTheme';
@@ -12,6 +12,31 @@ import { BottomSheet } from '../../components/ui/BottomSheet';
 import { updateTaskStatus, dispatchTask, unblockTask } from '../../lib/api';
 import { StatusColors, Palette } from '../../theme/tokens';
 import type { Task } from '../../../shared/types';
+
+// ---------------------------------------------------------------------------
+// PR URL detection
+// ---------------------------------------------------------------------------
+
+const PR_URL_RE = /https:\/\/github\.com\/([^/]+)\/([^/]+)\/pull\/(\d+)/;
+
+function extractPrUrl(task: Task): { owner: string; repo: string; number: string; url: string } | null {
+  // Check structured field first
+  if (task.result?.prUrl) {
+    const match = task.result.prUrl.match(PR_URL_RE);
+    if (match) return { owner: match[1], repo: match[2], number: match[3], url: task.result.prUrl };
+  }
+  // Fallback: scan lastReply
+  if (task.lastReply) {
+    const match = task.lastReply.match(PR_URL_RE);
+    if (match) return { owner: match[1], repo: match[2], number: match[3], url: match[0] };
+  }
+  // Fallback: scan result.summary
+  if (task.result?.summary) {
+    const match = task.result.summary.match(PR_URL_RE);
+    if (match) return { owner: match[1], repo: match[2], number: match[3], url: match[0] };
+  }
+  return null;
+}
 
 // ---------------------------------------------------------------------------
 // Timeline item
@@ -92,8 +117,10 @@ export default function TaskDetailScreen() {
   const task = board?.taskPlan?.tasks?.find((item) => item.id === id);
   const t = useTheme();
 
+  const router = useRouter();
   const [showUnblock, setShowUnblock] = useState(false);
   const [unblockMsg, setUnblockMsg] = useState('');
+  const prInfo = task ? extractPrUrl(task) : null;
 
   if (!task) {
     return (
@@ -166,6 +193,27 @@ export default function TaskDetailScreen() {
             <InfoRow icon="time-outline" label="Started" value={new Date(task.startedAt).toLocaleString()} t={t} />
           )}
         </Card>
+
+        {/* PR Review card */}
+        {prInfo && (
+          <Card
+            onPress={() => router.push(`/pr/${prInfo.owner}/${prInfo.repo}/${prInfo.number}`)}
+            style={styles.prCard}
+          >
+            <View style={styles.prCardRow}>
+              <Ionicons name="git-pull-request" size={20} color={t.primary} />
+              <View style={{ flex: 1 }}>
+                <Text style={[styles.prCardTitle, { color: t.text }]}>
+                  Review PR #{prInfo.number}
+                </Text>
+                <Text style={[styles.prCardSub, { color: t.textSecondary }]}>
+                  {prInfo.owner}/{prInfo.repo}
+                </Text>
+              </View>
+              <Ionicons name="chevron-forward" size={18} color={t.textTertiary} />
+            </View>
+          </Card>
+        )}
 
         {/* Review results */}
         {task.review && (
@@ -311,6 +359,12 @@ const styles = StyleSheet.create({
   taskTitle: { fontSize: 24, fontWeight: '800', marginBottom: 10 },
   badgeRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 16 },
   description: { fontSize: 14, lineHeight: 20, marginBottom: 16 },
+
+  // PR card
+  prCard: { marginBottom: 16 },
+  prCardRow: { flexDirection: 'row' as const, alignItems: 'center' as const, gap: 12 },
+  prCardTitle: { fontSize: 15, fontWeight: '600' as const },
+  prCardSub: { fontSize: 12, marginTop: 2 },
 
   // Detail card
   detailCard: { marginBottom: 16 },
