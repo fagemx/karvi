@@ -9,6 +9,7 @@ const POLL_INTERVAL = 15_000; // 15s — longer than web (5s) for battery
 
 export function useSSE() {
   const serverUrl = useBoardStore((s) => s.serverUrl);
+  const apiToken = useBoardStore((s) => s.apiToken);
   const setBoard = useBoardStore((s) => s.setBoard);
   const setStatus = useBoardStore((s) => s.setConnectionStatus);
   const esRef = useRef<EventSource | null>(null);
@@ -30,7 +31,9 @@ export function useSSE() {
     setStatus('polling');
     const poll = async () => {
       try {
-        const res = await fetch(`${serverUrl}/api/board`);
+        const headers: Record<string, string> = {};
+        if (apiToken) headers['Authorization'] = `Bearer ${apiToken}`;
+        const res = await fetch(`${serverUrl}/api/board`, { headers });
         if (res.ok) setBoard(await res.json());
       } catch {
         // silent — keep polling
@@ -38,7 +41,7 @@ export function useSSE() {
     };
     poll(); // immediate first fetch
     pollingRef.current = setInterval(poll, POLL_INTERVAL);
-  }, [serverUrl, setBoard, setStatus]);
+  }, [serverUrl, apiToken, setBoard, setStatus]);
 
   const connectSSE = useCallback(() => {
     stopAll();
@@ -49,12 +52,17 @@ export function useSSE() {
 
     setStatus('reconnecting');
 
-    const es = new EventSource<KarviSSEEvents>(`${serverUrl}/api/events`);
+    const sseUrl = apiToken
+      ? `${serverUrl}/api/events?token=${encodeURIComponent(apiToken)}`
+      : `${serverUrl}/api/events`;
+    const es = new EventSource<KarviSSEEvents>(sseUrl);
 
     es.addEventListener('connected', () => {
       setStatus('connected');
       // Full sync on connect
-      fetch(`${serverUrl}/api/board`)
+      const headers: Record<string, string> = {};
+      if (apiToken) headers['Authorization'] = `Bearer ${apiToken}`;
+      fetch(`${serverUrl}/api/board`, { headers })
         .then((r) => r.json())
         .then((b) => setBoard(b))
         .catch(() => {});
@@ -77,7 +85,7 @@ export function useSSE() {
     });
 
     esRef.current = es;
-  }, [serverUrl, setBoard, setStatus, stopAll, startPolling]);
+  }, [serverUrl, apiToken, setBoard, setStatus, stopAll, startPolling]);
 
   useEffect(() => {
     if (!serverUrl) return;

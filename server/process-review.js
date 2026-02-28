@@ -60,14 +60,17 @@ function appendLog(entry) {
 }
 
 function emitSignal(signal) {
-  const port = 3461;
+  const port = Number(process.env.PORT) || 3461;
+  const token = process.env.KARVI_API_TOKEN;
   const body = JSON.stringify(signal);
+  const headers = { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body) };
+  if (token) headers['Authorization'] = `Bearer ${token}`;
   const req = require('http').request({
     hostname: 'localhost',
     port,
     path: '/api/signals',
     method: 'POST',
-    headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body) },
+    headers,
   }, () => {});
   req.on('error', () => {}); // fire-and-forget
   req.end(body);

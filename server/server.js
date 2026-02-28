@@ -1435,6 +1435,11 @@ const server = bb.createServer(ctx, (req, res, helpers) => {
       msg += `- 完成：POST http://localhost:${ctx.port}/api/tasks/{taskId}/status  body: {"status":"completed"}\n`;
       msg += `- 卡住：POST http://localhost:${ctx.port}/api/tasks/{taskId}/status  body: {"status":"blocked","reason":"原因"}\n`;
       msg += `\n用 exec 工具執行 curl 或 Invoke-WebRequest 來打這些 API。黑板 UI 會即時更新。`;
+      if (process.env.KARVI_API_TOKEN) {
+        msg += `\n\n【重要：認證】\n`;
+        msg += `所有 /api/* 請求都需要帶 header：Authorization: Bearer $KARVI_API_TOKEN\n`;
+        msg += `（token 從環境變數 KARVI_API_TOKEN 取得，已注入到你的執行環境中）\n`;
+      }
 
       if (conv) {
         pushMessage(conv, {
@@ -2100,11 +2105,15 @@ const server = bb.createServer(ctx, (req, res, helpers) => {
           const taskId = result.task.id;
           setImmediate(() => {
             const http = require('http');
+            const authToken = process.env.KARVI_API_TOKEN;
+            const headers = {};
+            if (authToken) headers['Authorization'] = `Bearer ${authToken}`;
             const dreq = http.request({
               hostname: 'localhost',
               port: ctx.port,
               path: `/api/tasks/${encodeURIComponent(taskId)}/dispatch`,
               method: 'POST',
+              headers,
             });
             dreq.on('error', err => console.error(`[jira-webhook] auto-dispatch failed for ${taskId}:`, err.message));
             dreq.end();

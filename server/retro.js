@@ -272,12 +272,15 @@ function trackEffects(board) {
 function postToApi(port, apiPath, body) {
   return new Promise((resolve, reject) => {
     const data = JSON.stringify(body);
+    const token = process.env.KARVI_API_TOKEN;
+    const headers = { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(data) };
+    if (token) headers['Authorization'] = `Bearer ${token}`;
     const req = http.request({
       hostname: 'localhost',
       port,
       path: apiPath,
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(data) },
+      headers,
     }, res => {
       let d = '';
       res.on('data', c => d += c);

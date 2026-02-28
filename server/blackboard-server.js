@@ -32,6 +32,7 @@
 const http = require('http');
 const fs = require('fs');
 const path = require('path');
+const crypto = require('crypto');
 
 const MIME = {
   '.html': 'text/html; charset=utf-8',
@@ -58,6 +59,11 @@ function createContext(opts = {}) {
   const logPath = path.resolve(dir, opts.logPath || 'log.jsonl');
   const port = Number(opts.port) || 3400;
   const boardType = opts.boardType || null;
+  const apiToken = opts.apiToken || process.env.KARVI_API_TOKEN || null;
+
+  if (apiToken) {
+    console.log('[bb] API token auth enabled');
+  }
 
   return {
     dir,
@@ -65,8 +71,37 @@ function createContext(opts = {}) {
     logPath,
     port,
     boardType,
+    apiToken,
     sseClients: new Set(),
   };
+}
+
+function tokenMatch(expected, provided) {
+  if (!expected || !provided) return false;
+  const a = Buffer.from(expected);
+  const b = Buffer.from(provided);
+  if (a.length !== b.length) return false;
+  return crypto.timingSafeEqual(a, b);
+}
+
+function checkAuth(ctx, req) {
+  if (!ctx.apiToken) return true;
+  if (req.method === 'OPTIONS') return true;
+
+  const url = new URL(req.url, 'http://localhost');
+
+  if (!url.pathname.startsWith('/api/')) return true;
+  if (url.pathname.startsWith('/api/webhooks/')) return true;
+
+  if (url.pathname === '/api/events') {
+    const qtoken = url.searchParams.get('token') || '';
+    return tokenMatch(ctx.apiToken, qtoken);
+  }
+
+  const authHeader = req.headers['authorization'] || '';
+  const match = authHeader.match(/^Bearer\s+(.+)$/i);
+  const provided = match ? match[1] : '';
+  return tokenMatch(ctx.apiToken, provided);
 }
 
 function readBoard(ctx) {
@@ -172,23 +207,31 @@ function createServer(ctx, routeHandler) {
   return http.createServer((req, res) => {
     res.setHeader('Access-Control-Allow-Origin', '*');
     res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
-    res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
 
     if (req.method === 'OPTIONS') {
       res.writeHead(204);
       return res.end();
     }
 
+    // Auth gate
+    if (!checkAuth(ctx, req)) {
+      return json(res, 401, { error: 'unauthorized' });
+    }
+
+    // Parse URL for route matching (supports query params)
+    const pathname = new URL(req.url, 'http://localhost').pathname;
+
     // Built-in routes
-    if (req.method === 'GET' && req.url === '/api/events') {
+    if (req.method === 'GET' && pathname === '/api/events') {
       return handleSSE(ctx, req, res);
     }
 
-    if (req.method === 'GET' && req.url === '/api/board') {
+    if (req.method === 'GET' && pathname === '/api/board') {
       return handleBoardGet(ctx, req, res);
     }
 
-    if (req.method === 'POST' && req.url === '/api/board') {
+    if (req.method === 'POST' && pathname === '/api/board') {
       return handleBoardPost(ctx, req, res);
     }
 
@@ -235,4 +278,6 @@ module.exports = {
   createServer,
   ensureBoardExists,
   listen,
+  checkAuth,
+  tokenMatch,
 };

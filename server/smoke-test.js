@@ -13,18 +13,23 @@
  *   node smoke-test.js 3461                         # task-engine
  *   node smoke-test.js 3456                         # brief-panel
  *   node smoke-test.js 3461 /api/controls           # custom domain route
- *   node smoke-test.js 3456 /api/brief              # custom domain route
+ *   node smoke-test.js 3461 --token my-secret       # with auth token
  *   node smoke-test.js 3461 /api/controls 3456 /api/brief   # both at once
  */
 const http = require('http');
 
 const args = process.argv.slice(2);
 const targets = [];
+let authToken = null;
 
 for (let i = 0; i < args.length; i++) {
+  if (args[i] === '--token' && args[i + 1]) {
+    authToken = args[++i];
+    continue;
+  }
   const port = Number(args[i]);
   if (port > 0) {
-    const domainRoute = args[i + 1] && !Number(args[i + 1]) ? args[++i] : null;
+    const domainRoute = args[i + 1] && !Number(args[i + 1]) && args[i + 1] !== '--token' ? args[++i] : null;
     targets.push({ port, domainRoute });
   }
 }
@@ -34,10 +39,12 @@ if (targets.length === 0) {
   targets.push({ port: 3456, domainRoute: '/api/brief' });
 }
 
-function get(port, path, timeout = 5000) {
+function get(port, urlPath, { token = authToken, timeout = 5000 } = {}) {
   return new Promise((resolve, reject) => {
-    const timer = setTimeout(() => reject(new Error(`Timeout ${path}`)), timeout);
-    const req = http.get(`http://localhost:${port}${path}`, res => {
+    const timer = setTimeout(() => reject(new Error(`Timeout ${urlPath}`)), timeout);
+    const headers = {};
+    if (token) headers['Authorization'] = `Bearer ${token}`;
+    const req = http.get({ hostname: 'localhost', port, path: urlPath, headers }, res => {
       let body = '';
       res.setEncoding('utf8');
       res.on('data', c => body += c);
@@ -50,13 +57,14 @@ function get(port, path, timeout = 5000) {
   });
 }
 
-function post(port, path, payload, timeout = 5000) {
+function post(port, urlPath, payload, { token = authToken, timeout = 5000 } = {}) {
   return new Promise((resolve, reject) => {
     const data = JSON.stringify(payload);
-    const timer = setTimeout(() => reject(new Error(`Timeout ${path}`)), timeout);
+    const timer = setTimeout(() => reject(new Error(`Timeout ${urlPath}`)), timeout);
+    const headers = { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(data) };
+    if (token) headers['Authorization'] = `Bearer ${token}`;
     const req = http.request({
-      hostname: 'localhost', port, path, method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(data) },
+      hostname: 'localhost', port, path: urlPath, method: 'POST', headers,
     }, res => {
       let body = '';
       res.setEncoding('utf8');
@@ -73,11 +81,14 @@ function post(port, path, payload, timeout = 5000) {
 
 function sseProbe(port, timeout = 3000) {
   return new Promise((resolve, reject) => {
+    const sseUrl = authToken
+      ? `/api/events?token=${encodeURIComponent(authToken)}`
+      : '/api/events';
     const timer = setTimeout(() => {
       req.destroy();
       reject(new Error('SSE timeout — no connected event'));
     }, timeout);
-    const req = http.get(`http://localhost:${port}/api/events`, res => {
+    const req = http.get(`http://localhost:${port}${sseUrl}`, res => {
       let buf = '';
       res.setEncoding('utf8');
       res.on('data', chunk => {
@@ -103,6 +114,7 @@ async function runSuite(target) {
   function fail(name, err) { failed++; console.log(`  ❌ ${name}: ${err || '(unknown error)'}`); }
 
   console.log(`\n━━━ ${label} ━━━`);
+  if (authToken) console.log(`  (auth token: ${authToken.slice(0, 4)}...)`);
 
   // 1. GET /api/board
   try {
@@ -120,9 +132,6 @@ async function runSuite(target) {
     const after = JSON.parse((await get(port, '/api/board')).body);
     if (!after._smokeTest) throw new Error('patch did not merge _smokeTest');
     ok('POST /api/board → 200 (patch merged)');
-
-    // Cleanup: remove _smokeTest by patching with explicit undefined won't work,
-    // but meta.updatedAt proves writeBoard ran. Leave _smokeTest — harmless.
   } catch (e) { fail('POST /api/board', e.message); }
 
   // 3. SSE /api/events
@@ -135,7 +144,7 @@ async function runSuite(target) {
 
   // 4. GET / (static index.html)
   try {
-    const r = await get(port, '/');
+    const r = await get(port, '/', { token: null }); // static files never need token
     if (r.status !== 200) throw new Error(`status ${r.status}`);
     if (!r.body.includes('<html') && !r.body.includes('<!doctype') && !r.body.includes('<!DOCTYPE')) {
       throw new Error('response does not look like HTML');
@@ -157,7 +166,9 @@ async function runSuite(target) {
     const r = await get(port, '/api/board');
     const cors = r.headers['access-control-allow-origin'];
     if (cors !== '*') throw new Error(`CORS header: ${cors}`);
-    ok('CORS → Access-Control-Allow-Origin: *');
+    const allowHeaders = r.headers['access-control-allow-headers'] || '';
+    if (!allowHeaders.includes('Authorization')) throw new Error(`Allow-Headers missing Authorization: ${allowHeaders}`);
+    ok('CORS → Access-Control-Allow-Origin: * + Authorization header');
   } catch (e) { fail('CORS', e.message); }
 
   // 7-10. Evolution API checks (task-engine only)
@@ -199,6 +210,41 @@ async function runSuite(target) {
       if (!all.some(l => l.by === 'smoke-test')) throw new Error('should contain smoke test lesson');
       ok('POST + GET /api/lessons → ok');
     } catch (e) { fail('POST + GET /api/lessons', e.message); }
+  }
+
+  // Auth-specific tests (only when --token is provided)
+  if (authToken) {
+    console.log('\n  ── Auth tests ──');
+
+    // 11. No token → 401
+    try {
+      const r = await get(port, '/api/board', { token: null });
+      if (r.status === 401) {
+        ok('No token → 401');
+      } else {
+        fail('No token → 401', `got status ${r.status} (auth may not be enabled on server)`);
+      }
+    } catch (e) { fail('No token → 401', e.message); }
+
+    // 12. Wrong token → 401
+    try {
+      const r = await get(port, '/api/board', { token: 'wrong-token-xxx' });
+      if (r.status === 401) {
+        ok('Wrong token → 401');
+      } else {
+        fail('Wrong token → 401', `got status ${r.status}`);
+      }
+    } catch (e) { fail('Wrong token → 401', e.message); }
+
+    // 13. Static files without token → 200
+    try {
+      const r = await get(port, '/', { token: null });
+      if (r.status === 200) {
+        ok('Static file without token → 200');
+      } else {
+        fail('Static file without token → 200', `got status ${r.status}`);
+      }
+    } catch (e) { fail('Static file without token → 200', e.message); }
   }
 
   console.log(`  ── ${passed} passed, ${failed} failed ──`);
