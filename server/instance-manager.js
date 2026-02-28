@@ -167,7 +167,7 @@ function init({ dataRoot: root }) {
   loadRegistry();
 }
 
-async function createInstance({ userId, memoryLimitMB = DEFAULT_MEMORY_LIMIT_MB }) {
+async function createInstance({ userId, memoryLimitMB = DEFAULT_MEMORY_LIMIT_MB, envExtra = {} }) {
   if (!dataRoot) throw new Error('Instance manager not initialized. Call init() first.');
   if (getInstanceByUserId(userId)) {
     throw new Error(`Instance already exists for user ${userId}`);
@@ -187,6 +187,7 @@ async function createInstance({ userId, memoryLimitMB = DEFAULT_MEMORY_LIMIT_MB 
       PORT: String(port),
       DATA_DIR: userDataDir,
       INSTANCE_ID: instanceId,
+      ...envExtra,
     },
     stdio: ['ignore', 'pipe', 'pipe'],
     windowsHide: true,
@@ -201,6 +202,7 @@ async function createInstance({ userId, memoryLimitMB = DEFAULT_MEMORY_LIMIT_MB 
     status: 'starting',
     dataDir: userDataDir,
     memoryLimitMB,
+    envExtra, // persisted so restartInstance can re-inject (e.g. KARVI_API_TOKEN)
     createdAt: new Date().toISOString(),
     lastHealthCheck: null,
     healthFailCount: 0,
@@ -274,14 +276,14 @@ async function restartInstance(instanceId) {
   const instance = registry.instances[instanceId];
   if (!instance) throw new Error(`Instance ${instanceId} not found`);
 
-  const { userId, memoryLimitMB } = instance;
+  const { userId, memoryLimitMB, envExtra } = instance;
   await destroyInstance(instanceId);
 
   // Remove old entry so createInstance doesn't throw "already exists"
   delete registry.instances[instanceId];
   saveRegistry();
 
-  return createInstance({ userId, memoryLimitMB });
+  return createInstance({ userId, memoryLimitMB, envExtra: envExtra || {} });
 }
 
 // --- Query ---
