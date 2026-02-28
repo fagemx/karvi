@@ -59,6 +59,10 @@ npm start
 
 No `npm install` needed — zero dependencies.
 
+### Remote Access
+
+Want to access Karvi from your phone or another device? See the **[Self-Hosting Guide](docs/self-hosting.md)** — set up a free Cloudflare Tunnel in under 10 minutes.
+
 ## Architecture
 
 ### Task Lifecycle

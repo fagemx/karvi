@@ -1,5 +1,7 @@
 # Karvi Deployment Guide
 
+> **Looking for the quick self-hosting setup?** See [Self-Hosting Guide](self-hosting.md) for desktop + tunnel in 10 minutes.
+
 本文件說明如何透過反向代理將 Karvi 暴露至外網，並提供 HTTPS 加密。
 
 ## 目錄
