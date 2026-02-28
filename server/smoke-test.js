@@ -174,14 +174,17 @@ async function runSuite(target) {
     ok('GET /health → 200 + valid health response');
   } catch (e) { fail('GET /health', e.message); }
 
-  // 7. CORS headers
+  // 7. CORS headers (accepts '*' or a whitelisted origin when KARVI_CORS_ORIGINS is set)
   try {
     const r = await get(port, '/api/board');
     const cors = r.headers['access-control-allow-origin'];
-    if (cors !== '*') throw new Error(`CORS header: ${cors}`);
+    if (!cors) throw new Error('CORS header missing');
+    // When KARVI_CORS_ORIGINS is unset, server returns '*'.
+    // When set, smoke test has no Origin header → server returns 'null'.
+    // Both '*' and 'null' (whitelist active, no Origin sent) are valid.
     const allowHeaders = r.headers['access-control-allow-headers'] || '';
     if (!allowHeaders.includes('Authorization')) throw new Error(`Allow-Headers missing Authorization: ${allowHeaders}`);
-    ok('CORS → Access-Control-Allow-Origin: * + Authorization header');
+    ok(`CORS → Access-Control-Allow-Origin: ${cors} + Authorization header`);
   } catch (e) { fail('CORS', e.message); }
 
   // 8. Vault API (task-engine only, graceful when disabled)
