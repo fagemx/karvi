@@ -171,7 +171,44 @@ async function runSuite(target) {
     ok('CORS → Access-Control-Allow-Origin: * + Authorization header');
   } catch (e) { fail('CORS', e.message); }
 
-  // 7-10. Evolution API checks (task-engine only)
+  // 7. Vault API (task-engine only, graceful when disabled)
+  if (port === 3461) {
+    try {
+      const statusR = await get(port, '/api/vault/status');
+      const status = JSON.parse(statusR.body);
+      if (statusR.status !== 200) throw new Error(`status ${statusR.status}`);
+      if (typeof status.enabled !== 'boolean') throw new Error('missing enabled field');
+
+      if (status.enabled) {
+        // Store
+        const storeR = await post(port, '/api/vault/store', { userId: 'smoke-test', keyName: 'test_key', value: 'smoke-value' });
+        if (storeR.status !== 200) throw new Error(`store status ${storeR.status}`);
+        // List
+        const listR = await get(port, '/api/vault/keys/smoke-test');
+        const listData = JSON.parse(listR.body);
+        if (!listData.keys.some(k => k.keyName === 'test_key')) throw new Error('key not in list');
+        // Delete + verify cleanup
+        const delR = await new Promise((resolve, reject) => {
+          const r = http.request({ hostname: 'localhost', port, path: '/api/vault/delete/smoke-test/test_key', method: 'DELETE' }, resp => {
+            let b = ''; resp.on('data', c => b += c); resp.on('end', () => resolve({ status: resp.statusCode, body: b }));
+          });
+          r.on('error', reject); r.end();
+        });
+        if (delR.status !== 200) throw new Error(`delete status ${delR.status}`);
+        const afterDel = await get(port, '/api/vault/keys/smoke-test');
+        const afterData = JSON.parse(afterDel.body);
+        if (afterData.keys.some(k => k.keyName === 'test_key')) throw new Error('key still exists after delete');
+        ok('Vault API (store/list/delete/verify) → ok');
+      } else {
+        // Vault disabled: store should 503
+        const storeR = await post(port, '/api/vault/store', { userId: 'x', keyName: 'y', value: 'z' });
+        if (storeR.status !== 503) throw new Error(`expected 503 when disabled, got ${storeR.status}`);
+        ok('Vault API → 503 (disabled, KARVI_VAULT_KEY not set)');
+      }
+    } catch (e) { fail('Vault API', e.message); }
+  }
+
+  // 8-11. Evolution API checks (task-engine only)
   if (port === 3461) {
     try {
       const r = await get(port, '/api/signals');
