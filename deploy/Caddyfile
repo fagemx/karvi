@@ -1,0 +1,39 @@
+# Caddyfile — Karvi reverse proxy (production)
+#
+# Caddy auto-provisions TLS via Let's Encrypt.
+# Replace "karvi.example.com" with your actual domain.
+#
+# Usage:
+#   1. Install Caddy: https://caddyserver.com/docs/install
+#   2. Point your domain's DNS A record to this server's public IP
+#   3. Copy this file: cp Caddyfile /etc/caddy/Caddyfile
+#   4. sudo systemctl restart caddy
+#
+# Env vars on the Node.js side:
+#   KARVI_API_TOKEN=<your-secret>
+#   KARVI_CORS_ORIGINS=https://karvi.example.com
+
+karvi.example.com {
+	# Security headers
+	header {
+		X-Content-Type-Options nosniff
+		X-Frame-Options DENY
+		Referrer-Policy strict-origin-when-cross-origin
+		-Server
+	}
+
+	# SSE endpoint — immediate flush, long timeout
+	handle /api/events {
+		reverse_proxy localhost:3461 {
+			flush_interval -1
+			transport http {
+				read_timeout 0
+			}
+		}
+	}
+
+	# All other traffic
+	handle {
+		reverse_proxy localhost:3461
+	}
+}

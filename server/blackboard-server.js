@@ -61,9 +61,13 @@ function createContext(opts = {}) {
   const port = Number(opts.port) || 3400;
   const boardType = opts.boardType || null;
   const apiToken = opts.apiToken || process.env.KARVI_API_TOKEN || null;
+  const corsOrigins = opts.corsOrigins || process.env.KARVI_CORS_ORIGINS || null;
 
   if (apiToken) {
     console.log('[bb] API token auth enabled');
+  }
+  if (corsOrigins) {
+    console.log(`[bb] CORS whitelist: ${corsOrigins}`);
   }
 
   return {
@@ -73,6 +77,7 @@ function createContext(opts = {}) {
     port,
     boardType,
     apiToken,
+    corsOrigins,
     sseClients: new Set(),
   };
 }
@@ -103,6 +108,18 @@ function checkAuth(ctx, req) {
   const match = authHeader.match(/^Bearer\s+(.+)$/i);
   const provided = match ? match[1] : '';
   return tokenMatch(ctx.apiToken, provided);
+}
+
+/**
+ * Resolve the CORS origin for a given request.
+ * When ctx.corsOrigins is set (comma-separated whitelist), only matching
+ * origins are reflected back. When unset, returns '*' for backward compat.
+ */
+function getCorsOrigin(ctx, req) {
+  if (!ctx.corsOrigins) return '*';
+  const origin = req.headers['origin'] || '';
+  const allowed = ctx.corsOrigins.split(',').map(s => s.trim());
+  return allowed.includes(origin) ? origin : 'null';
 }
 
 function readBoard(ctx) {
@@ -168,13 +185,24 @@ function serveStatic(ctx, req, res) {
 function handleSSE(ctx, req, res) {
   res.writeHead(200, {
     'Content-Type': 'text/event-stream',
-    'Cache-Control': 'no-cache',
+    'Cache-Control': 'no-cache, no-transform',
     'Connection': 'keep-alive',
-    'Access-Control-Allow-Origin': '*',
+    'Access-Control-Allow-Origin': getCorsOrigin(ctx, req),
+    'X-Accel-Buffering': 'no',
   });
   res.write(`event: connected\ndata: ${JSON.stringify({ ts: nowIso() })}\n\n`);
   ctx.sseClients.add(res);
-  req.on('close', () => ctx.sseClients.delete(res));
+
+  // 30s heartbeat to prevent reverse proxy timeout on idle connections
+  const heartbeat = setInterval(() => {
+    try { res.write(': heartbeat\n\n'); }
+    catch { clearInterval(heartbeat); ctx.sseClients.delete(res); }
+  }, 30000);
+
+  req.on('close', () => {
+    clearInterval(heartbeat);
+    ctx.sseClients.delete(res);
+  });
 }
 
 function handleBoardGet(ctx, _req, res) {
@@ -206,7 +234,7 @@ function createServer(ctx, routeHandler) {
   };
 
   return http.createServer((req, res) => {
-    res.setHeader('Access-Control-Allow-Origin', '*');
+    res.setHeader('Access-Control-Allow-Origin', getCorsOrigin(ctx, req));
     res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
     res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
 
@@ -280,6 +308,7 @@ module.exports = {
   nowIso,
   uid,
   createContext,
+  getCorsOrigin,
   readBoard,
   writeBoard,
   appendLog,

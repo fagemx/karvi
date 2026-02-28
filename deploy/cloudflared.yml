@@ -1,0 +1,29 @@
+# cloudflared.yml — Cloudflare Tunnel config (named tunnel)
+#
+# This is a template for a named tunnel. For quick anonymous tunnels,
+# use tunnel-quick.sh instead.
+#
+# Setup:
+#   1. Install cloudflared: https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/downloads/
+#   2. Authenticate: cloudflared tunnel login
+#   3. Create tunnel: cloudflared tunnel create karvi
+#   4. Route DNS: cloudflared tunnel route dns karvi karvi.example.com
+#   5. Copy this file: cp cloudflared.yml ~/.cloudflared/config.yml
+#   6. Edit the tunnel ID and hostname below
+#   7. Run: cloudflared tunnel run karvi
+#
+# The tunnel UUID is printed when you run "cloudflared tunnel create".
+# Replace <TUNNEL-UUID> with that value.
+
+tunnel: <TUNNEL-UUID>
+credentials-file: ~/.cloudflared/<TUNNEL-UUID>.json
+
+ingress:
+  - hostname: karvi.example.com
+    service: http://localhost:3461
+    originRequest:
+      # Disable buffering for SSE
+      noTLSVerify: false
+      keepAliveTimeout: 90s
+  # Catch-all (required by cloudflared)
+  - service: http_status:404
