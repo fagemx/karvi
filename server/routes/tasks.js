@@ -984,9 +984,8 @@ module.exports = function tasksRoutes(req, res, helpers, deps) {
         const step = (task.steps || []).find(s => s.step_id === stepId);
         if (!step) return json(res, 404, { error: `Step ${stepId} not found` });
 
-        const stepSchema = require('../step-schema');
         const oldState = step.state;
-        stepSchema.transitionStep(step, newState, {
+        deps.stepSchema.transitionStep(step, newState, {
           error: payload.error,
           output_ref: payload.output_ref,
           input_ref: payload.input_ref,
@@ -997,7 +996,7 @@ module.exports = function tasksRoutes(req, res, helpers, deps) {
         // Emit signal
         const signalType = (step.state === 'succeeded') ? 'step_completed'
           : (step.state === 'dead') ? 'step_dead'
-          : (step.state === 'failed' || step.state === 'queued' && oldState === 'running') ? 'step_failed'
+          : (step.state === 'queued' && oldState === 'running') ? 'step_failed'
           : `step_${step.state}`;
         mgmt.ensureEvolutionFields(board);
         board.signals.push({

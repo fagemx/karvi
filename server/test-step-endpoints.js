@@ -163,9 +163,13 @@ async function runTests() {
   {
     const board = await get('/api/tasks');
     const tasks = board.tasks || board.taskPlan?.tasks || [];
-    const regularTask = tasks.find(t => t.id !== 'T-STEP-TEST' && !t.steps);
-    // Just verify it exists and has no steps — backward compatible
-    ok('Backward compatible — tasks without steps unaffected');
+    const testTask = tasks.find(t => t.id === 'T-STEP-TEST');
+    const otherTasks = tasks.filter(t => t.id !== 'T-STEP-TEST');
+    if (testTask && Array.isArray(testTask.steps) && otherTasks.every(t => !t.steps)) {
+      ok('Backward compatible — only step-enabled task has steps array');
+    } else {
+      fail('Backward compatible', `testTask.steps=${JSON.stringify(testTask?.steps)}, others with steps=${otherTasks.filter(t => t.steps).length}`);
+    }
   }
 }
 
