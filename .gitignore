@@ -8,6 +8,8 @@ server/task-log.jsonl
 server/vaults/*.vault.json
 server/vaults/*.tmp
 .karvi-telemetry-id
+push-tokens.json
+push-tokens.json.tmp
 
 # Brief panel runtime
 brief-panel/brief.json

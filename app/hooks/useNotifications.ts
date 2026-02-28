@@ -1,9 +1,12 @@
 import { useEffect, useRef } from 'react';
 import * as Notifications from 'expo-notifications';
+import Constants from 'expo-constants';
+import { router } from 'expo-router';
+import { Platform } from 'react-native';
 import { useBoardStore } from './useBoardStore';
 import type { Task, TaskStatus } from '../../shared/types';
 
-// Configure notification behavior
+// Configure notification behavior (foreground display)
 Notifications.setNotificationHandler({
   handleNotification: async () => ({
     shouldShowAlert: true,
@@ -19,16 +22,82 @@ const NOTIFY_STATUSES: TaskStatus[] = ['completed', 'needs_revision', 'blocked',
 export function useNotifications() {
   const board = useBoardStore((s) => s.board);
   const prevTasksRef = useRef<Map<string, TaskStatus>>(new Map());
+  const pushTokenRegistered = useRef(false);
 
+  // --- Push token registration (runs once on mount) ---
   useEffect(() => {
+    if (pushTokenRegistered.current) return;
+
     (async () => {
+      // Request permissions
       const { status } = await Notifications.getPermissionsAsync();
+      let finalStatus = status;
       if (status !== 'granted') {
-        await Notifications.requestPermissionsAsync();
+        const { status: newStatus } = await Notifications.requestPermissionsAsync();
+        finalStatus = newStatus;
+      }
+      if (finalStatus !== 'granted') return;
+
+      // Android requires a notification channel
+      if (Platform.OS === 'android') {
+        await Notifications.setNotificationChannelAsync('default', {
+          name: 'Default',
+          importance: Notifications.AndroidImportance.HIGH,
+          sound: 'default',
+        });
+      }
+
+      try {
+        // Get Expo push token
+        const projectId = Constants.expoConfig?.extra?.eas?.projectId;
+        const tokenData = await Notifications.getExpoPushTokenAsync({
+          projectId: projectId || undefined,
+        });
+        const pushToken = tokenData.data;
+
+        // Send to server
+        const serverUrl = useBoardStore.getState().serverUrl;
+        const apiToken = useBoardStore.getState().apiToken;
+        if (serverUrl && pushToken) {
+          const headers: Record<string, string> = {
+            'Content-Type': 'application/json',
+          };
+          if (apiToken) headers['Authorization'] = `Bearer ${apiToken}`;
+
+          fetch(`${serverUrl}/api/push-token`, {
+            method: 'POST',
+            headers,
+            body: JSON.stringify({
+              token: pushToken,
+              deviceName: `${Platform.OS} device`,
+            }),
+          }).catch(() => {
+            // Silent fail — push token registration is best-effort
+          });
+
+          pushTokenRegistered.current = true;
+        }
+      } catch (err) {
+        // Push token acquisition can fail on simulators / web
+        console.log('[notifications] Push token acquisition failed:', err);
       }
     })();
   }, []);
 
+  // --- Handle notification tap -> deep link navigation ---
+  useEffect(() => {
+    const subscription = Notifications.addNotificationResponseReceivedListener(
+      (response) => {
+        const data = response.notification.request.content.data;
+        if (data?.taskId) {
+          router.push(`/task/${data.taskId}`);
+        }
+      }
+    );
+    return () => subscription.remove();
+  }, []);
+
+  // --- Local notification diffing (existing logic) ---
   useEffect(() => {
     if (!board?.taskPlan?.tasks) return;
 
@@ -80,7 +149,11 @@ function notify(task: Task) {
   if (!msg) return;
 
   Notifications.scheduleNotificationAsync({
-    content: { title: msg.title, body: msg.body },
+    content: {
+      title: msg.title,
+      body: msg.body,
+      data: { taskId: task.id },
+    },
     trigger: null,
   });
 }

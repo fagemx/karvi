@@ -21,6 +21,7 @@ let jiraIntegration = null;
 try { jiraIntegration = require('./integration-jira'); } catch { /* jira integration not available, skip */ }
 
 const telemetry = require('./telemetry');
+const push = require('./push');
 
 const vault = require('./vault').createVault({ vaultDir: path.join(__dirname, 'vaults') });
 
@@ -31,6 +32,7 @@ function getRuntime(hint) {
 const DIR = __dirname;
 const ROOT = path.resolve(DIR, '..');
 const DATA_DIR = process.env.DATA_DIR || DIR;
+const PUSH_TOKENS_PATH = path.join(DATA_DIR, 'push-tokens.json');
 
 const ctx = bb.createContext({
   dir: ROOT,
@@ -308,6 +310,11 @@ function redispatchTask(board, task) {
     });
     if (latestBoard.signals.length > 500) latestBoard.signals = latestBoard.signals.slice(-500);
     writeBoard(latestBoard);
+    // Push notification: redispatch failed (fire-and-forget)
+    if (latestTask) {
+      push.notifyTaskEvent(PUSH_TOKENS_PATH, latestTask, 'dispatch.failed')
+        .catch(err2 => console.error('[push] redispatch-failed notify failed:', err2.message));
+    }
     console.error(`[redispatch:${task.id}] error: ${err.message}`);
   });
 }
@@ -502,6 +509,33 @@ async function processQueue(conversationId) {
 const VALID_VAULT_ID = /^[a-zA-Z0-9_-]+$/;
 
 const server = bb.createServer(ctx, (req, res, helpers) => {
+
+  // --- Push Token API ---
+
+  const pathname = new URL(req.url, 'http://localhost').pathname;
+
+  if (req.method === 'POST' && pathname === '/api/push-token') {
+    bb.parseBody(req).then(payload => {
+      const token = String(payload.token || '').trim();
+      if (!token || !token.startsWith('ExponentPushToken[')) {
+        return json(res, 400, { error: 'Invalid Expo push token' });
+      }
+      const deviceName = String(payload.deviceName || 'Unknown').trim();
+      push.registerToken(PUSH_TOKENS_PATH, token, deviceName);
+      json(res, 200, { ok: true });
+    }).catch(e => json(res, 400, { error: e.message }));
+    return;
+  }
+
+  if (req.method === 'DELETE' && pathname === '/api/push-token') {
+    bb.parseBody(req).then(payload => {
+      const token = String(payload.token || '').trim();
+      if (!token) return json(res, 400, { error: 'token required' });
+      push.removeToken(PUSH_TOKENS_PATH, token);
+      json(res, 200, { ok: true });
+    }).catch(e => json(res, 400, { error: e.message }));
+    return;
+  }
 
   // --- Vault API ---
 
@@ -1057,6 +1091,12 @@ const server = bb.createServer(ctx, (req, res, helpers) => {
             .catch(err => console.error('[jira] notify failed:', err.message));
         }
 
+        // Push notification: fire-and-forget
+        if (payload.status && ['completed', 'blocked', 'needs_revision', 'approved'].includes(task.status)) {
+          push.notifyTaskEvent(PUSH_TOKENS_PATH, task, `task.${task.status}`)
+            .catch(err => console.error('[push] notify failed:', err.message));
+        }
+
         if (payload.status === 'completed') {
           const ctrl = mgmt.getControls(board);
           if (ctrl.auto_review) setImmediate(() => runtime.spawnReview(taskId, {
@@ -1233,6 +1273,17 @@ const server = bb.createServer(ctx, (req, res, helpers) => {
         if (jiraIntegration?.isEnabled(board)) {
           jiraIntegration.notifyJira(board, task, { type: 'status_change', newStatus })
             .catch(err => console.error('[jira] notify failed:', err.message));
+        }
+
+        // Push notification: fire-and-forget
+        if (['completed', 'blocked', 'needs_revision', 'approved'].includes(newStatus)) {
+          push.notifyTaskEvent(PUSH_TOKENS_PATH, task, `task.${newStatus}`)
+            .catch(err => console.error('[push] notify failed:', err.message));
+        }
+        // Push: all tasks approved
+        if (allApproved) {
+          push.notifyTaskEvent(PUSH_TOKENS_PATH, task, 'all.approved')
+            .catch(err => console.error('[push] all-approved notify failed:', err.message));
         }
 
         if (newStatus === 'completed') {
@@ -1420,6 +1471,11 @@ const server = bb.createServer(ctx, (req, res, helpers) => {
         });
         if (latestBoard.signals.length > 500) latestBoard.signals = latestBoard.signals.slice(-500);
         writeBoard(latestBoard);
+        // Push notification: dispatch failed (fire-and-forget)
+        if (latestTask) {
+          push.notifyTaskEvent(PUSH_TOKENS_PATH, latestTask, 'dispatch.failed')
+            .catch(err2 => console.error('[push] dispatch-failed notify failed:', err2.message));
+        }
         console.error(`[task dispatch error] ${taskId}: ${err.message}`);
       });
 
