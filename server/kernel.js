@@ -167,10 +167,21 @@ function createKernel(deps) {
           latestTask.completedAt = helpers.nowIso();
           latestTask.result = { status: 'completed', summary: `All ${task.steps.length} steps succeeded` };
         }
+
+        // Unlock dependent tasks and auto-dispatch them
+        const unlocked = mgmt.autoUnlockDependents(latestBoard);
         helpers.writeBoard(latestBoard);
+
         if (push && PUSH_TOKENS_PATH && latestTask) {
           push.notifyTaskEvent(PUSH_TOKENS_PATH, latestTask, 'task.completed')
             .catch(err => console.error('[kernel] push error:', err.message));
+        }
+
+        // Auto-dispatch newly unblocked tasks (deferred to avoid deep recursion)
+        if (unlocked.length > 0 && deps.tryAutoDispatch) {
+          for (const id of unlocked) {
+            setImmediate(() => deps.tryAutoDispatch(id));
+          }
         }
         return;
       }

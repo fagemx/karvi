@@ -18,6 +18,7 @@ const DEFAULT_CONTROLS = {
   review_timeout_sec: 180,
   review_agent: 'engineer_lite',
   auto_apply_insights: true,
+  use_step_pipeline: false,       // when true, tryAutoDispatch creates steps instead of legacy single-shot dispatch
   telemetry_enabled: true,
   usage_limits: null,            // { dispatches_per_month, runtime_sec_per_month, tokens_per_month }
   usage_alert_threshold: 0.8,    // Alert when usage > 80% of limit
