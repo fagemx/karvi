@@ -161,7 +161,20 @@ async function runSuite(target) {
     } catch (e) { fail(`GET ${domainRoute} (domain)`, e.message); }
   }
 
-  // 6. CORS headers
+  // 6. GET /health
+  try {
+    const r = await get(port, '/health', { token: null }); // health is pre-auth
+    if (r.status !== 200) throw new Error(`status ${r.status}`);
+    const health = JSON.parse(r.body);
+    if (health.status !== 'ok') throw new Error(`health status: ${health.status}`);
+    if (typeof health.uptime !== 'number') throw new Error('missing uptime');
+    if (typeof health.pid !== 'number') throw new Error('missing pid');
+    if (typeof health.port !== 'number') throw new Error('missing port');
+    if (typeof health.memoryMB !== 'number') throw new Error('missing memoryMB');
+    ok('GET /health → 200 + valid health response');
+  } catch (e) { fail('GET /health', e.message); }
+
+  // 7. CORS headers
   try {
     const r = await get(port, '/api/board');
     const cors = r.headers['access-control-allow-origin'];
@@ -171,7 +184,7 @@ async function runSuite(target) {
     ok('CORS → Access-Control-Allow-Origin: * + Authorization header');
   } catch (e) { fail('CORS', e.message); }
 
-  // 7. Vault API (task-engine only, graceful when disabled)
+  // 8. Vault API (task-engine only, graceful when disabled)
   if (port === 3461) {
     try {
       const statusR = await get(port, '/api/vault/status');
@@ -208,7 +221,7 @@ async function runSuite(target) {
     } catch (e) { fail('Vault API', e.message); }
   }
 
-  // 8-11. Evolution API checks (task-engine only)
+  // 9-12. Evolution API checks (task-engine only)
   if (port === 3461) {
     try {
       const r = await get(port, '/api/signals');
