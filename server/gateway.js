@@ -48,10 +48,20 @@ function json(res, code, payload) {
   res.end(JSON.stringify(payload));
 }
 
+const MAX_BODY_BYTES = 1 * 1024 * 1024; // 1 MB
+
 function parseBody(req) {
   return new Promise((resolve, reject) => {
     let body = '';
-    req.on('data', c => (body += c));
+    let bytes = 0;
+    req.on('data', c => {
+      bytes += c.length;
+      if (bytes > MAX_BODY_BYTES) {
+        req.destroy();
+        return reject(Object.assign(new Error('Request body too large'), { statusCode: 413 }));
+      }
+      body += c;
+    });
     req.on('end', () => {
       try { resolve(JSON.parse(body || '{}')); }
       catch { reject(new Error('Invalid JSON body')); }
@@ -133,6 +143,11 @@ function requireAdmin(req) {
 // --- Instance Token Management ---
 // Per-instance API tokens stored alongside the instance registry.
 // Generated on instance creation, injected on every proxy request.
+//
+// IMPORTANT: instanceTokens is in-memory only. On gateway restart, tokens are
+// regenerated but running instances still hold old tokens. To fix this,
+// recoverRunningInstances() restarts any instances that were marked 'running'
+// in the registry so they receive fresh tokens via envExtra.
 const instanceTokens = new Map(); // instanceId → token
 
 function generateInstanceToken() {
@@ -146,11 +161,36 @@ function getOrCreateInstanceToken(instanceId) {
   return token;
 }
 
+/**
+ * On gateway restart, any instances previously marked as 'running' in the
+ * registry still hold stale KARVI_API_TOKEN values (since instanceTokens is
+ * in-memory only). We restart them so they receive a fresh token via envExtra.
+ */
+async function recoverRunningInstances() {
+  const instances = mgr.listInstances();
+  const stale = instances.filter(i => i.status === 'running' || i.status === 'starting');
+  if (stale.length === 0) return;
+
+  console.log(`[gateway] Recovering ${stale.length} stale instance(s) with fresh tokens...`);
+  for (const inst of stale) {
+    try {
+      const token = generateInstanceToken();
+      instanceTokens.set(inst.instanceId, token);
+      // Update envExtra with the fresh token before restarting
+      inst.envExtra = { ...(inst.envExtra || {}), KARVI_API_TOKEN: token };
+      await mgr.restartInstance(inst.instanceId);
+      console.log(`[gateway] Recovered instance ${inst.instanceId}`);
+    } catch (err) {
+      console.error(`[gateway] Failed to recover instance ${inst.instanceId}: ${err.message}`);
+    }
+  }
+}
+
 // --- Route Handlers ---
 
 async function handleRegister(req, res) {
   let body;
-  try { body = await parseBody(req); } catch { return json(res, 400, { error: 'Invalid JSON' }); }
+  try { body = await parseBody(req); } catch (e) { return json(res, e.statusCode || 400, { error: e.statusCode === 413 ? 'Request body too large' : 'Invalid JSON' }); }
 
   const { username, email, password } = body;
   const result = await store.createUser({ username, email, password });
@@ -187,7 +227,7 @@ async function handleRegister(req, res) {
 
 async function handleLogin(req, res) {
   let body;
-  try { body = await parseBody(req); } catch { return json(res, 400, { error: 'Invalid JSON' }); }
+  try { body = await parseBody(req); } catch (e) { return json(res, e.statusCode || 400, { error: e.statusCode === 413 ? 'Request body too large' : 'Invalid JSON' }); }
 
   const { username, password } = body;
   if (!username || !password) {
@@ -456,6 +496,11 @@ function start() {
 
   // Initialize instance manager
   mgr.init({ dataRoot: DATA_ROOT });
+
+  // Restart stale instances so they get fresh API tokens (see S3 comment above)
+  recoverRunningInstances().catch(err => {
+    console.error('[gateway] Instance recovery failed:', err.message);
+  });
 
   // Periodic session cleanup
   sessionCleanupTimer = setInterval(() => {
