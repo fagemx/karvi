@@ -34,6 +34,7 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 const storage = require('./storage');
+const { createLimiter } = require('./rate-limiter');
 
 const MIME = {
   '.html': 'text/html; charset=utf-8',
@@ -54,6 +55,25 @@ function uid(prefix) {
   return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 }
 
+// ── Rate Limit + Body Size defaults ──
+const DEFAULT_RATE_LIMIT  = 120;   // requests per minute per IP
+const DEFAULT_MAX_BODY    = 1048576; // 1 MB in bytes
+const DEFAULT_SSE_LIMIT   = 50;    // max concurrent SSE connections
+
+/**
+ * Parse KARVI_RATE_LIMIT env var.
+ *   "0" or "off" => disabled
+ *   "240"        => 240 req/min (capacity=240, refillRate=4)
+ *   unset        => DEFAULT_RATE_LIMIT
+ */
+function parseRateLimitEnv(val) {
+  if (!val) return DEFAULT_RATE_LIMIT;
+  const lower = val.trim().toLowerCase();
+  if (lower === 'off' || lower === '0' || lower === 'false') return 0;
+  const n = Number(val);
+  return (Number.isFinite(n) && n > 0) ? n : DEFAULT_RATE_LIMIT;
+}
+
 function createContext(opts = {}) {
   const dir = opts.dir || __dirname;
   const boardPath = path.resolve(dir, opts.boardPath || 'board.json');
@@ -63,11 +83,35 @@ function createContext(opts = {}) {
   const apiToken = opts.apiToken || process.env.KARVI_API_TOKEN || null;
   const corsOrigins = opts.corsOrigins || process.env.KARVI_CORS_ORIGINS || null;
 
+  // Rate limiting config
+  const rateLimitPerMin = opts.rateLimit != null
+    ? (opts.rateLimit === false ? 0 : Number(opts.rateLimit) || DEFAULT_RATE_LIMIT)
+    : parseRateLimitEnv(process.env.KARVI_RATE_LIMIT);
+
+  const maxBodyBytes = opts.maxBodyBytes || Number(process.env.KARVI_MAX_BODY) || DEFAULT_MAX_BODY;
+  const sseLimit = opts.sseLimit || Number(process.env.KARVI_SSE_LIMIT) || DEFAULT_SSE_LIMIT;
+  const trustProxy = opts.trustProxy || (process.env.KARVI_TRUST_PROXY || '').toLowerCase() === 'true';
+
+  // Create limiter (null if disabled)
+  const rateLimiter = rateLimitPerMin > 0
+    ? createLimiter({ capacity: rateLimitPerMin, refillRate: rateLimitPerMin / 60 })
+    : null;
+
   if (apiToken) {
     console.log('[bb] API token auth enabled');
   }
   if (corsOrigins) {
     console.log(`[bb] CORS whitelist: ${corsOrigins}`);
+  }
+  if (rateLimiter) {
+    console.log(`[bb] Rate limit: ${rateLimitPerMin} req/min per IP (token bucket)`);
+  } else {
+    console.log('[bb] Rate limiting disabled');
+  }
+  console.log(`[bb] Max body size: ${Math.round(maxBodyBytes / 1024)}KB`);
+  console.log(`[bb] SSE connection limit: ${sseLimit}`);
+  if (trustProxy) {
+    console.log('[bb] Trust proxy headers enabled (X-Forwarded-For / CF-Connecting-IP)');
   }
 
   return {
@@ -79,6 +123,11 @@ function createContext(opts = {}) {
     apiToken,
     corsOrigins,
     sseClients: new Set(),
+    rateLimiter,
+    rateLimitPerMin,
+    maxBodyBytes,
+    sseLimit,
+    trustProxy,
   };
 }
 
@@ -108,6 +157,24 @@ function checkAuth(ctx, req) {
   const match = authHeader.match(/^Bearer\s+(.+)$/i);
   const provided = match ? match[1] : '';
   return tokenMatch(ctx.apiToken, provided);
+}
+
+/**
+ * Extract client IP from request.
+ * When trustProxy is enabled, checks X-Forwarded-For and CF-Connecting-IP
+ * headers (set by reverse proxies / Cloudflare). Otherwise uses socket IP.
+ */
+function getClientIP(ctx, req) {
+  if (ctx.trustProxy) {
+    // Cloudflare specific header (most reliable when behind CF)
+    const cfIP = req.headers['cf-connecting-ip'];
+    if (cfIP) return cfIP.trim();
+
+    // Standard proxy header — leftmost entry is the original client
+    const xff = req.headers['x-forwarded-for'];
+    if (xff) return xff.split(',')[0].trim();
+  }
+  return req.socket.remoteAddress || '127.0.0.1';
 }
 
 /**
@@ -151,10 +218,19 @@ function json(res, code, payload) {
   res.end(JSON.stringify(payload));
 }
 
-function parseBody(req) {
+function parseBody(req, maxBytes) {
+  const limit = maxBytes || DEFAULT_MAX_BODY;
   return new Promise((resolve, reject) => {
     let body = '';
-    req.on('data', c => (body += c));
+    let received = 0;
+    req.on('data', c => {
+      received += c.length;
+      if (received > limit) {
+        req.destroy();
+        return reject(Object.assign(new Error('Payload too large'), { statusCode: 413 }));
+      }
+      body += c;
+    });
     req.on('end', () => {
       try { resolve(JSON.parse(body || '{}')); }
       catch (e) { reject(new Error('Invalid JSON body')); }
@@ -183,6 +259,14 @@ function serveStatic(ctx, req, res) {
 }
 
 function handleSSE(ctx, req, res) {
+  // SSE connection limit guard
+  if (ctx.sseClients.size >= ctx.sseLimit) {
+    return json(res, 429, {
+      error: 'too_many_sse_connections',
+      message: `SSE connection limit reached (${ctx.sseLimit})`,
+    });
+  }
+
   res.writeHead(200, {
     'Content-Type': 'text/event-stream',
     'Cache-Control': 'no-cache, no-transform',
@@ -211,7 +295,7 @@ function handleBoardGet(ctx, _req, res) {
 }
 
 function handleBoardPost(ctx, req, res) {
-  parseBody(req)
+  parseBody(req, ctx.maxBodyBytes)
     .then(payload => {
       const board = readBoard(ctx);
       Object.assign(board, payload);
@@ -222,9 +306,12 @@ function handleBoardPost(ctx, req, res) {
 }
 
 function createServer(ctx, routeHandler) {
+  // Wrap parseBody to inject ctx.maxBodyBytes as default limit
+  const boundParseBody = (req, maxBytes) => parseBody(req, maxBytes || ctx.maxBodyBytes);
+
   const helpers = {
     json,
-    parseBody,
+    parseBody: boundParseBody,
     readBoard: () => readBoard(ctx),
     writeBoard: (b) => writeBoard(ctx, b),
     appendLog: (e) => appendLog(ctx, e),
@@ -243,8 +330,46 @@ function createServer(ctx, routeHandler) {
       return res.end();
     }
 
-    // Parse URL for route matching (supports query params)
+    // ── Body size fast-reject (Content-Length header check) ──
+    // Catches obviously-too-large requests before reading any data.
+    // The stream-level guard in parseBody() handles cases where
+    // Content-Length is missing or spoofed.
+    if (req.method === 'POST' || req.method === 'PUT') {
+      const contentLength = parseInt(req.headers['content-length'], 10);
+      if (contentLength > ctx.maxBodyBytes) {
+        res.writeHead(413, { 'Content-Type': 'application/json; charset=utf-8' });
+        return res.end(JSON.stringify({
+          error: 'payload_too_large',
+          message: `Body exceeds ${Math.round(ctx.maxBodyBytes / 1024)}KB limit`,
+          maxBytes: ctx.maxBodyBytes,
+        }));
+      }
+    }
+
+    // ── Rate limit guard ──
+    // Applied before auth to prevent brute-force attacks on the token.
+    // Health endpoint is exempt (monitoring systems need reliable access).
     const pathname = new URL(req.url, 'http://localhost').pathname;
+
+    if (ctx.rateLimiter && pathname !== '/health') {
+      const clientIP = getClientIP(ctx, req);
+      const result = ctx.rateLimiter.consume(clientIP);
+
+      // Always set rate limit headers for API transparency
+      res.setHeader('X-RateLimit-Limit', result.limit);
+      res.setHeader('X-RateLimit-Remaining', result.remaining);
+
+      if (!result.allowed) {
+        res.setHeader('Retry-After', result.retryAfter);
+        res.setHeader('X-RateLimit-Reset', result.retryAfter);
+        res.writeHead(429, { 'Content-Type': 'application/json; charset=utf-8' });
+        return res.end(JSON.stringify({
+          error: 'rate_limit_exceeded',
+          retryAfter: result.retryAfter,
+          message: `Rate limit exceeded. Try again in ${result.retryAfter}s`,
+        }));
+      }
+    }
 
     // Health check (before auth — instance manager needs unauthenticated access)
     if (req.method === 'GET' && pathname === '/health') {
@@ -257,6 +382,11 @@ function createServer(ctx, routeHandler) {
         memoryMB: Math.round(mem.rss / 1024 / 1024),
         boardType: ctx.boardType,
         instanceId: process.env.INSTANCE_ID || null,
+        rateLimiter: ctx.rateLimiter ? {
+          enabled: true,
+          limitPerMin: ctx.rateLimitPerMin,
+          trackedIPs: ctx.rateLimiter.size(),
+        } : { enabled: false },
       });
     }
 
@@ -308,6 +438,7 @@ module.exports = {
   nowIso,
   uid,
   createContext,
+  getClientIP,
   getCorsOrigin,
   readBoard,
   writeBoard,
@@ -323,4 +454,7 @@ module.exports = {
   checkAuth,
   tokenMatch,
   storage,
+  DEFAULT_RATE_LIMIT,
+  DEFAULT_MAX_BODY,
+  DEFAULT_SSE_LIMIT,
 };

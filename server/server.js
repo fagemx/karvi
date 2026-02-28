@@ -652,7 +652,7 @@ const server = bb.createServer(ctx, (req, res, helpers) => {
   // --- Push Token API ---
 
   if (req.method === 'POST' && req.url === '/api/push-token') {
-    bb.parseBody(req).then(payload => {
+    helpers.parseBody(req).then(payload => {
       const token = String(payload.token || '').trim();
       if (!token || !token.startsWith('ExponentPushToken[')) {
         return json(res, 400, { error: 'Invalid Expo push token' });
@@ -665,7 +665,7 @@ const server = bb.createServer(ctx, (req, res, helpers) => {
   }
 
   if (req.method === 'DELETE' && req.url === '/api/push-token') {
-    bb.parseBody(req).then(payload => {
+    helpers.parseBody(req).then(payload => {
       const token = String(payload.token || '').trim();
       if (!token) return json(res, 400, { error: 'token required' });
       push.removeToken(PUSH_TOKENS_PATH, token);
@@ -685,7 +685,7 @@ const server = bb.createServer(ctx, (req, res, helpers) => {
   }
 
   if (req.method === 'POST' && req.url === '/api/vault/store') {
-    bb.parseBody(req).then(payload => {
+    helpers.parseBody(req).then(payload => {
       const { userId, keyName, value } = payload;
       if (!userId || !VALID_VAULT_ID.test(userId)) return json(res, 400, { error: 'Invalid userId' });
       if (!keyName || !VALID_VAULT_ID.test(keyName)) return json(res, 400, { error: 'Invalid keyName' });

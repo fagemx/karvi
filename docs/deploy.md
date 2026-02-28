@@ -123,6 +123,10 @@ curl https://karvi.example.com/health
 | `PORT` | HTTP 監聽 port | `3461` |
 | `KARVI_API_TOKEN` | Bearer token 驗證（建議必設） | 無（停用驗證） |
 | `KARVI_CORS_ORIGINS` | CORS 允許來源白名單，逗號分隔 | 無（允許所有 `*`） |
+| `KARVI_RATE_LIMIT` | 每 IP 每分鐘最大請求數 | `120`（設 `0` 或 `off` 停用） |
+| `KARVI_MAX_BODY` | POST/PUT body 大小上限（bytes） | `1048576`（1MB） |
+| `KARVI_SSE_LIMIT` | SSE 最大同時連線數 | `50` |
+| `KARVI_TRUST_PROXY` | 信任反向代理 IP headers | `false` |
 
 ### CORS 白名單範例
 
@@ -135,6 +139,45 @@ KARVI_CORS_ORIGINS=https://karvi.example.com,http://localhost:3461
 
 # 未設定 → 向後相容，回傳 Access-Control-Allow-Origin: *
 ```
+
+### Rate Limiting 設定
+
+Karvi 內建 Token Bucket rate limiter，預設每 IP 每分鐘 120 次請求。
+Token Bucket 允許短期突發流量（burst），但長期平均不超過設定限制。
+
+```bash
+# 預設值（每 IP 120 req/min）
+KARVI_RATE_LIMIT=120
+
+# 寬鬆設定（每 IP 300 req/min）
+KARVI_RATE_LIMIT=300
+
+# 停用 rate limiting（不建議用於公網）
+KARVI_RATE_LIMIT=off
+
+# 自訂 body 大小上限（2MB）
+KARVI_MAX_BODY=2097152
+
+# 自訂 SSE 連線上限
+KARVI_SSE_LIMIT=100
+```
+
+### 反向代理 IP 信任
+
+在 Caddy / nginx / Cloudflare 後面時，需要啟用 proxy header 信任才能正確辨識客戶端 IP：
+
+```bash
+# 啟用後會讀取 X-Forwarded-For 和 CF-Connecting-IP headers
+KARVI_TRUST_PROXY=true
+```
+
+> **安全提醒**: 僅在確定 server 在反向代理後面時才啟用。直接暴露時啟用此選項，攻擊者可偽造 IP 繞過 rate limit。
+
+Rate limit 回應會包含以下 headers：
+- `X-RateLimit-Limit`: 每分鐘最大請求數
+- `X-RateLimit-Remaining`: 剩餘可用請求數
+- `Retry-After`: 限流時，需等待的秒數
+- `X-RateLimit-Reset`: 同 Retry-After
 
 ---
 
