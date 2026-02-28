@@ -267,6 +267,7 @@ function handleSSE(ctx, req, res) {
     });
   }
 
+  const connectTime = Date.now();
   res.writeHead(200, {
     'Content-Type': 'text/event-stream',
     'Cache-Control': 'no-cache, no-transform',
@@ -286,6 +287,11 @@ function handleSSE(ctx, req, res) {
   req.on('close', () => {
     clearInterval(heartbeat);
     ctx.sseClients.delete(res);
+    // Usage tracking callback
+    if (ctx.onSSEDisconnect) {
+      const minutes = Math.round((Date.now() - connectTime) / 60000 * 100) / 100;
+      ctx.onSSEDisconnect({ minutes, req });
+    }
   });
 }
 

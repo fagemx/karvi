@@ -17,6 +17,7 @@ try { jiraIntegration = require('./integration-jira'); } catch { /* jira integra
 const telemetry = require('./telemetry');
 const push = require('./push');
 const githubApi = require('./github-api');
+const usage = require('./usage');
 
 const vault = require('./vault').createVault({ vaultDir: path.join(__dirname, 'vaults') });
 
@@ -122,6 +123,18 @@ function summarizeBriefAsSignal(taskId) {
 
 function normalizeText(input) {
   return String(input || '').replace(/\r\n/g, '\n').trim();
+}
+
+// --- Usage tracking helpers ---
+function getUserId(req) {
+  const url = new URL(req.url, 'http://localhost');
+  return req.headers['x-karvi-user']
+    || url.searchParams.get('userId')
+    || 'default';
+}
+
+function getUserIdForTask(board) {
+  return board.controls?.owner_user_id || 'default';
 }
 
 function conversationById(board, id) {
@@ -283,6 +296,31 @@ function redispatchTask(board, task) {
     writeBoard(latestBoard);
     appendLog({ ts: nowIso(), event: 'auto_redispatch_reply', taskId: task.id, reply: replyText.slice(0, 500) });
     if (result.usage) appendLog({ ts: nowIso(), event: 'token_usage', taskId: task.id, usage: result.usage });
+
+    // --- Usage tracking: auto re-dispatch (Path C) ---
+    const redispatchUserId = getUserIdForTask(latestBoard);
+    const redispatchDuration = latestTask?.dispatch?.startedAt
+      ? Math.round((Date.now() - new Date(latestTask.dispatch.startedAt).getTime()) / 1000)
+      : 0;
+    usage.record(redispatchUserId, 'dispatch', {
+      taskId: task.id,
+      runtime: plan.runtimeHint,
+      assignee: task.assignee,
+    });
+    usage.record(redispatchUserId, 'agent.runtime', {
+      taskId: task.id,
+      durationSec: redispatchDuration,
+      runtime: plan.runtimeHint,
+    });
+    const redispatchTokenUsage = rt.extractUsage?.(result.parsed, result.stdout);
+    if (redispatchTokenUsage) {
+      usage.record(redispatchUserId, 'api.tokens', {
+        taskId: task.id,
+        input: redispatchTokenUsage.inputTokens,
+        output: redispatchTokenUsage.outputTokens,
+        cost: redispatchTokenUsage.totalCost,
+      });
+    }
   }).catch(err => {
     const latestBoard = readBoard();
     const latestTask = (latestBoard.taskPlan?.tasks || []).find(t => t.id === task.id);
@@ -558,6 +596,22 @@ async function processQueue(conversationId) {
           to: turn.from,
           sessionId: newSessionId || sessionId || null,
           text: replyText,
+        });
+
+        // --- Usage tracking: conversation queue (Path D) ---
+        const turnDuration = turn.startedAt
+          ? Math.round((Date.now() - new Date(turn.startedAt).getTime()) / 1000)
+          : 0;
+        usage.record('default', 'dispatch', {
+          conversationId,
+          turnId: turn.id,
+          runtime: 'openclaw',
+          assignee: target.id,
+        });
+        usage.record('default', 'agent.runtime', {
+          conversationId,
+          turnId: turn.id,
+          durationSec: turnDuration,
         });
 
         if (latestTurn.loop?.enabled && latestTurn.loop.remaining > 0) {
@@ -1139,6 +1193,8 @@ const server = bb.createServer(ctx, (req, res, helpers) => {
             else if (key === 'quality_threshold' && Number.isFinite(val)) board.controls[key] = Math.max(0, Math.min(100, val));
             else if (key === 'review_timeout_sec' && Number.isFinite(val)) board.controls[key] = Math.max(30, Math.min(600, val));
             else if (key === 'review_agent' && typeof val === 'string') board.controls[key] = val.trim();
+            else if (key === 'usage_limits' && (val === null || typeof val === 'object')) board.controls[key] = val;
+            else if (key === 'usage_alert_threshold' && Number.isFinite(val)) board.controls[key] = Math.max(0, Math.min(1, val));
           }
         }
         writeBoard(board);
@@ -1706,6 +1762,31 @@ const server = bb.createServer(ctx, (req, res, helpers) => {
         writeBoard(latestBoard);
         appendLog({ ts: nowIso(), event: 'task_dispatch_reply', taskId, agent: task.assignee, model: preferredModel || null, reply: replyText.slice(0, 500) });
         if (result.usage) appendLog({ ts: nowIso(), event: 'token_usage', taskId, usage: result.usage });
+
+        // --- Usage tracking: per-task dispatch (Path A) ---
+        const dispatchUserId = getUserIdForTask(latestBoard);
+        const dispatchDuration = latestTask?.dispatch?.startedAt
+          ? Math.round((Date.now() - new Date(latestTask.dispatch.startedAt).getTime()) / 1000)
+          : 0;
+        usage.record(dispatchUserId, 'dispatch', {
+          taskId,
+          runtime: plan.runtimeHint,
+          assignee: task.assignee,
+        });
+        usage.record(dispatchUserId, 'agent.runtime', {
+          taskId,
+          durationSec: dispatchDuration,
+          runtime: plan.runtimeHint,
+        });
+        const tokenUsage = rt2.extractUsage?.(result.parsed, result.stdout);
+        if (tokenUsage) {
+          usage.record(dispatchUserId, 'api.tokens', {
+            taskId,
+            input: tokenUsage.inputTokens,
+            output: tokenUsage.outputTokens,
+            cost: tokenUsage.totalCost,
+          });
+        }
       }).catch(err => {
         const latestBoard = readBoard();
         const latestTask = (latestBoard.taskPlan?.tasks || []).find(t => t.id === taskId);
@@ -2010,6 +2091,31 @@ const server = bb.createServer(ctx, (req, res, helpers) => {
         broadcastSSE('board', latestBoard);
         appendLog({ ts: nowIso(), event: 'dispatch_next_reply', taskId: task.id, agent: task.assignee, reply: replyText.slice(0, 500) });
         if (result.usage) appendLog({ ts: nowIso(), event: 'token_usage', taskId: task.id, usage: result.usage });
+
+        // --- Usage tracking: dispatch-next ---
+        const dnUserId = getUserIdForTask(latestBoard);
+        const dnDuration = latestTask?.dispatch?.startedAt
+          ? Math.round((Date.now() - new Date(latestTask.dispatch.startedAt).getTime()) / 1000)
+          : 0;
+        usage.record(dnUserId, 'dispatch', {
+          taskId: task.id,
+          runtime: plan.runtimeHint,
+          assignee: task.assignee,
+        });
+        usage.record(dnUserId, 'agent.runtime', {
+          taskId: task.id,
+          durationSec: dnDuration,
+          runtime: plan.runtimeHint,
+        });
+        const dnTokenUsage = rt3.extractUsage?.(result.parsed, result.stdout);
+        if (dnTokenUsage) {
+          usage.record(dnUserId, 'api.tokens', {
+            taskId: task.id,
+            input: dnTokenUsage.inputTokens,
+            output: dnTokenUsage.outputTokens,
+            cost: dnTokenUsage.totalCost,
+          });
+        }
       }).catch(err => {
         const latestBoard = readBoard();
         const latestTask = (latestBoard.taskPlan?.tasks || []).find(t => t.id === task.id);
@@ -2182,6 +2288,31 @@ const server = bb.createServer(ctx, (req, res, helpers) => {
               writeBoard(lb);
               if (r.usage) appendLog({ ts: nowIso(), event: 'token_usage', taskId: nextTask.id, usage: r.usage });
               broadcastSSE('board', lb);
+
+              // --- Usage tracking: project autoStart ---
+              const asUserId = getUserIdForTask(lb);
+              const asDuration = lt?.dispatch?.startedAt
+                ? Math.round((Date.now() - new Date(lt.dispatch.startedAt).getTime()) / 1000)
+                : 0;
+              usage.record(asUserId, 'dispatch', {
+                taskId: nextTask.id,
+                runtime: plan.runtimeHint,
+                assignee: nextTask.assignee,
+              });
+              usage.record(asUserId, 'agent.runtime', {
+                taskId: nextTask.id,
+                durationSec: asDuration,
+                runtime: plan.runtimeHint,
+              });
+              const asTokenUsage = rt4.extractUsage?.(r.parsed, r.stdout);
+              if (asTokenUsage) {
+                usage.record(asUserId, 'api.tokens', {
+                  taskId: nextTask.id,
+                  input: asTokenUsage.inputTokens,
+                  output: asTokenUsage.outputTokens,
+                  cost: asTokenUsage.totalCost,
+                });
+              }
             }).catch(err => {
               const lb = readBoard();
               const lt = (lb.taskPlan?.tasks || []).find(t => t.id === nextTask.id);
@@ -2613,6 +2744,31 @@ const server = bb.createServer(ctx, (req, res, helpers) => {
     return;
   }
 
+  // --- Usage Tracking API ---
+
+  if (req.method === 'GET' && (req.url === '/api/usage/summary' || req.url.startsWith('/api/usage/summary?'))) {
+    try {
+      const url = new URL(req.url, 'http://localhost');
+      const month = url.searchParams.get('month') || usage.currentMonth();
+      const result = usage.summary(month);
+      return json(res, 200, result);
+    } catch (error) {
+      return json(res, 500, { error: error.message });
+    }
+  }
+
+  if (req.method === 'GET' && (req.url === '/api/usage' || req.url.startsWith('/api/usage?'))) {
+    try {
+      const url = new URL(req.url, 'http://localhost');
+      const userId = getUserId(req);
+      const month = url.searchParams.get('month') || usage.currentMonth();
+      const result = usage.query(userId, month);
+      return json(res, 200, result);
+    } catch (error) {
+      return json(res, 500, { error: error.message });
+    }
+  }
+
   // POST /api/shutdown — graceful shutdown (critical for Windows where SIGTERM kills immediately)
   if (req.method === 'POST' && req.url === '/api/shutdown') {
     json(res, 200, { ok: true, message: 'shutting down' });
@@ -2661,10 +2817,27 @@ try {
   console.warn(`[telemetry] init failed, continuing without telemetry: ${err.message}`);
 }
 
+// --- Usage tracking init ---
+let usageHandle;
+try {
+  usageHandle = usage.init({
+    dataDir: DATA_DIR,
+    broadcastSSE,
+    readBoard,
+  });
+  // SSE connection tracking callback
+  ctx.onSSEDisconnect = ({ minutes }) => {
+    usage.record('default', 'sse.connect', { sessionMinutes: minutes });
+  };
+} catch (err) {
+  console.warn(`[usage] init failed, continuing without usage tracking: ${err.message}`);
+}
+
 // --- Graceful Shutdown ---
 function gracefulShutdown() {
   console.log('[server] shutting down...');
   telemetryHandle?.stop();
+  usageHandle?.stop();
   server.close(() => process.exit(0));
   setTimeout(() => process.exit(1), 5000);
 }

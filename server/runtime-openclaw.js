@@ -148,6 +148,14 @@ function capabilities() {
   };
 }
 
+/**
+ * Extract token usage from openclaw output.
+ * Openclaw CLI does not report token usage — returns null.
+ */
+function extractUsage(parsed, stdout) {
+  return null;
+}
+
 module.exports = {
   dispatch,
   capabilities,
@@ -155,4 +163,5 @@ module.exports = {
   spawnReview,
   extractReplyText,
   extractSessionId,
+  extractUsage,
 };

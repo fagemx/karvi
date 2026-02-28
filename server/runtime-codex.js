@@ -96,4 +96,12 @@ function capabilities() {
   };
 }
 
-module.exports = { dispatch, extractReplyText, extractSessionId, capabilities };
+/**
+ * Extract token usage from codex output.
+ * Codex CLI does not report token usage — returns null.
+ */
+function extractUsage(parsed, stdout) {
+  return null;
+}
+
+module.exports = { dispatch, extractReplyText, extractSessionId, extractUsage, capabilities };

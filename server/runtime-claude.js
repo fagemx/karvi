@@ -89,4 +89,19 @@ function capabilities() {
   };
 }
 
-module.exports = { dispatch, extractReplyText, extractSessionId, capabilities };
+/**
+ * Extract token usage from Claude CLI JSON output.
+ * @param {object} parsed - parsed JSON from stdout
+ * @param {string} stdout - raw stdout
+ * @returns {object|null} { inputTokens, outputTokens, totalCost } or null
+ */
+function extractUsage(parsed, stdout) {
+  if (!parsed) return null;
+  const inputTokens = parsed.input_tokens ?? parsed.usage?.input_tokens ?? null;
+  const outputTokens = parsed.output_tokens ?? parsed.usage?.output_tokens ?? null;
+  const totalCost = parsed.total_cost ?? parsed.usage?.total_cost ?? null;
+  if (inputTokens == null && outputTokens == null && totalCost == null) return null;
+  return { inputTokens, outputTokens, totalCost };
+}
+
+module.exports = { dispatch, extractReplyText, extractSessionId, extractUsage, capabilities };
