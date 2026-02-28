@@ -127,6 +127,18 @@ test('buildEnvelope returns null for missing target step', () => {
   assert.strictEqual(env, null);
 });
 
+test('buildEnvelope returns null for null task', () => {
+  const decision = { action: 'next_step', next_step: { step_id: 'T-1:implement' } };
+  const runState = { task: null, steps: [], run_id: testRunId };
+  assert.strictEqual(contextCompiler.buildEnvelope(decision, runState, { artifactStore, stepSchema }), null);
+});
+
+test('buildEnvelope returns null for null steps', () => {
+  const decision = { action: 'next_step', next_step: { step_id: 'T-1:implement' } };
+  const runState = { task: { id: 'T-1' }, steps: null, run_id: testRunId };
+  assert.strictEqual(contextCompiler.buildEnvelope(decision, runState, { artifactStore, stepSchema }), null);
+});
+
 // Cleanup
 try {
   fs.rmSync(path.join(artifactStore.ARTIFACT_DIR, testRunId), { recursive: true, force: true });
