@@ -295,7 +295,7 @@ function handleBoardGet(ctx, _req, res) {
 }
 
 function handleBoardPost(ctx, req, res) {
-  parseBody(req)
+  parseBody(req, ctx.maxBodyBytes)
     .then(payload => {
       const board = readBoard(ctx);
       Object.assign(board, payload);
