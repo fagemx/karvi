@@ -16,6 +16,7 @@ const DEFAULT_CONTROLS = {
   review_timeout_sec: 180,
   review_agent: 'engineer_lite',
   auto_apply_insights: true,
+  telemetry_enabled: true,
 };
 
 // --- Evolution Layer: Schema validation ---
