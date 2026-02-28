@@ -90,7 +90,6 @@ server/
   runtime-openclaw.js    OpenClaw runtime adapter
   runtime-claude.js      Claude Code runtime adapter
   runtime-codex.js       Codex runtime adapter
-  runtime-edda.js        Edda conductor runtime adapter
   skills/                Agent knowledge base
 shared/
   types.ts               Type definitions (Board, Task, DispatchPlan, etc.)
