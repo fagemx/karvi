@@ -463,6 +463,32 @@ async function runSuite(target) {
         throw new Error(`expected 400 or 503, got ${r.status}`);
       }
     } catch (e) { fail('GET /api/github/pr (no token)', e.message); }
+
+    // 19. GET /api/tasks/:id/digest → 404 (no digest on nonexistent task or no digest yet)
+    try {
+      const r = await get(port, '/api/tasks/SMOKE-NOEXIST/digest');
+      if (r.status === 404) {
+        const body = JSON.parse(r.body);
+        if (!body.error) throw new Error('missing error message');
+        ok(`GET /api/tasks/:id/digest (no task) → 404`);
+      } else {
+        throw new Error(`expected 404, got ${r.status}`);
+      }
+    } catch (e) { fail('GET /api/tasks/:id/digest', e.message); }
+
+    // 20. POST /api/tasks/:id/digest → 503 (no API key) or 404 (no task)
+    try {
+      const r = await post(port, '/api/tasks/SMOKE-NOEXIST/digest', {});
+      // 503 = no ANTHROPIC_API_KEY
+      // 404 = task not found (if key is set)
+      if (r.status === 503 || r.status === 404) {
+        const body = JSON.parse(r.body);
+        if (!body.error) throw new Error('missing error message');
+        ok(`POST /api/tasks/:id/digest → ${r.status} (expected without API key or task)`);
+      } else {
+        throw new Error(`expected 503 or 404, got ${r.status}`);
+      }
+    } catch (e) { fail('POST /api/tasks/:id/digest', e.message); }
   }
 
   // Auth-specific tests (only when --token is provided)
