@@ -214,13 +214,27 @@ function createServer(ctx, routeHandler) {
       return res.end();
     }
 
+    // Parse URL for route matching (supports query params)
+    const pathname = new URL(req.url, 'http://localhost').pathname;
+
+    // Health check (before auth — instance manager needs unauthenticated access)
+    if (req.method === 'GET' && pathname === '/health') {
+      const mem = process.memoryUsage();
+      return json(res, 200, {
+        status: 'ok',
+        uptime: Math.floor(process.uptime()),
+        pid: process.pid,
+        port: ctx.port,
+        memoryMB: Math.round(mem.rss / 1024 / 1024),
+        boardType: ctx.boardType,
+        instanceId: process.env.INSTANCE_ID || null,
+      });
+    }
+
     // Auth gate
     if (!checkAuth(ctx, req)) {
       return json(res, 401, { error: 'unauthorized' });
     }
-
-    // Parse URL for route matching (supports query params)
-    const pathname = new URL(req.url, 'http://localhost').pathname;
 
     // Built-in routes
     if (req.method === 'GET' && pathname === '/api/events') {
