@@ -283,7 +283,7 @@ function fallbackDigest(task) {
     version: 'task_digest.v1',
     task_id: task.id,
     generated_at: new Date().toISOString(),
-    one_liner: (task.title || '').slice(0, 40),
+    one_liner: (task.title || '(no title)').slice(0, 40),
     risk: { level: 'unknown', reasons: ['LLM 不可用'] },
     bullets: {
       what: [task.title || '(no title)'],

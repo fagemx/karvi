@@ -211,7 +211,7 @@ assert(fb2.one_liner.length <= 40, 'fallback truncates long title');
 // --- fallbackDigest with no title ---
 const noTitleTask = { id: 'T3' };
 const fb3 = digest.fallbackDigest(noTitleTask);
-assert(fb3.one_liner === '', 'fallback handles missing title');
+assert(fb3.one_liner === '(no title)', 'fallback handles missing title');
 assert(fb3.bullets.what[0] === '(no title)', 'fallback what says no title');
 
 // --- gatherDigestContext ---
