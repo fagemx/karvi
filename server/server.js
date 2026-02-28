@@ -14,6 +14,9 @@ try { runtimeClaude = require('./runtime-claude'); } catch { /* claude not insta
 let jiraIntegration = null;
 try { jiraIntegration = require('./integration-jira'); } catch { /* jira integration not available, skip */ }
 
+let digestTask = null;
+try { digestTask = require('./digest-task'); } catch { /* digest-task not available, skip */ }
+
 const telemetry = require('./telemetry');
 const push = require('./push');
 const githubApi = require('./github-api');
@@ -1504,11 +1507,28 @@ const server = bb.createServer(ctx, (req, res, helpers) => {
                   console.log(`[review:${taskId}] auto-redispatch triggered`);
                   setImmediate(() => redispatchTask(updatedBoard, t));
                 }
+                // L2 Digest: trigger after review completion
+                if (digestTask?.isDigestEnabled()) {
+                  setImmediate(() => {
+                    digestTask.triggerDigest(taskId, 'review_completed', {
+                      readBoard, writeBoard, broadcastSSE, appendLog,
+                    }).catch(err => console.error(`[digest:${taskId}] error:`, err.message));
+                  });
+                }
               } catch (err) {
                 console.error(`[review:${taskId}] post-review error: ${err.message}`);
               }
             },
           }));
+        }
+
+        // L2 Digest: trigger after task approved
+        if (payload.status === 'approved' && digestTask?.isDigestEnabled()) {
+          setImmediate(() => {
+            digestTask.triggerDigest(taskId, 'approved', {
+              readBoard, writeBoard, broadcastSSE, appendLog,
+            }).catch(err => console.error(`[digest:${taskId}] error:`, err.message));
+          });
         }
 
         json(res, 200, { ok: true, task });
@@ -1697,11 +1717,28 @@ const server = bb.createServer(ctx, (req, res, helpers) => {
                   console.log(`[review:${taskId}] auto-redispatch triggered`);
                   setImmediate(() => redispatchTask(updatedBoard, t));
                 }
+                // L2 Digest: trigger after review completion
+                if (digestTask?.isDigestEnabled()) {
+                  setImmediate(() => {
+                    digestTask.triggerDigest(taskId, 'review_completed', {
+                      readBoard, writeBoard, broadcastSSE, appendLog,
+                    }).catch(err => console.error(`[digest:${taskId}] error:`, err.message));
+                  });
+                }
               } catch (err) {
                 console.error(`[review:${taskId}] post-review error: ${err.message}`);
               }
             },
           }));
+        }
+
+        // L2 Digest: trigger after task approved
+        if (newStatus === 'approved' && digestTask?.isDigestEnabled()) {
+          setImmediate(() => {
+            digestTask.triggerDigest(taskId, 'approved', {
+              readBoard, writeBoard, broadcastSSE, appendLog,
+            }).catch(err => console.error(`[digest:${taskId}] error:`, err.message));
+          });
         }
 
         json(res, 200, { ok: true, task });
@@ -2024,6 +2061,33 @@ const server = bb.createServer(ctx, (req, res, helpers) => {
     } catch (error) {
       json(res, 500, { error: error.message });
     }
+    return;
+  }
+
+  // --- L2 Digest API ---
+
+  const digestMatch = req.url.match(/^\/api\/tasks\/([^/]+)\/digest$/);
+  if (req.method === 'GET' && digestMatch) {
+    const taskId = decodeURIComponent(digestMatch[1]);
+    const board = readBoard();
+    const task = (board.taskPlan?.tasks || []).find(t => t.id === taskId);
+    if (!task) return json(res, 404, { error: 'Task not found' });
+    if (!task.digest) return json(res, 404, { error: 'No digest available' });
+    return json(res, 200, task.digest);
+  }
+
+  if (req.method === 'POST' && digestMatch) {
+    const taskId = decodeURIComponent(digestMatch[1]);
+    if (!digestTask?.isDigestEnabled()) {
+      return json(res, 503, { error: 'Digest not enabled (ANTHROPIC_API_KEY not set)' });
+    }
+    const board = readBoard();
+    const task = (board.taskPlan?.tasks || []).find(t => t.id === taskId);
+    if (!task) return json(res, 404, { error: 'Task not found' });
+    digestTask.triggerDigest(taskId, 'manual', {
+      readBoard, writeBoard, broadcastSSE, appendLog,
+    }).then(() => json(res, 200, { ok: true, taskId }))
+      .catch(err => json(res, 500, { error: err.message }));
     return;
   }
 
