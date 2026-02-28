@@ -152,7 +152,20 @@ async function runSuite(target) {
     } catch (e) { fail(`GET ${domainRoute} (domain)`, e.message); }
   }
 
-  // 6. CORS headers
+  // 6. GET /health
+  try {
+    const r = await get(port, '/health');
+    if (r.status !== 200) throw new Error(`status ${r.status}`);
+    const health = JSON.parse(r.body);
+    if (health.status !== 'ok') throw new Error(`health status: ${health.status}`);
+    if (typeof health.uptime !== 'number') throw new Error('missing uptime');
+    if (typeof health.pid !== 'number') throw new Error('missing pid');
+    if (typeof health.port !== 'number') throw new Error('missing port');
+    if (typeof health.memoryMB !== 'number') throw new Error('missing memoryMB');
+    ok('GET /health → 200 + valid health response');
+  } catch (e) { fail('GET /health', e.message); }
+
+  // CORS headers
   try {
     const r = await get(port, '/api/board');
     const cors = r.headers['access-control-allow-origin'];

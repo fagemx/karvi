@@ -180,6 +180,21 @@ function createServer(ctx, routeHandler) {
     }
 
     // Built-in routes
+    const pathname = req.url.split('?')[0];
+
+    if (req.method === 'GET' && pathname === '/health') {
+      const mem = process.memoryUsage();
+      return json(res, 200, {
+        status: 'ok',
+        uptime: Math.floor(process.uptime()),
+        pid: process.pid,
+        port: ctx.port,
+        memoryMB: Math.round(mem.rss / 1024 / 1024),
+        boardType: ctx.boardType,
+        instanceId: process.env.INSTANCE_ID || null,
+      });
+    }
+
     if (req.method === 'GET' && req.url === '/api/events') {
       return handleSSE(ctx, req, res);
     }

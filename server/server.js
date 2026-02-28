@@ -28,11 +28,12 @@ function getRuntime(hint) {
 
 const DIR = __dirname;
 const ROOT = path.resolve(DIR, '..');
+const DATA_DIR = process.env.DATA_DIR || DIR;
 
 const ctx = bb.createContext({
   dir: ROOT,
-  boardPath: path.join(DIR, 'board.json'),
-  logPath: path.join(DIR, 'task-log.jsonl'),
+  boardPath: path.join(DATA_DIR, 'board.json'),
+  logPath: path.join(DATA_DIR, 'task-log.jsonl'),
   port: Number(process.env.PORT || 3461),
   boardType: 'task-engine',
 });
@@ -46,7 +47,7 @@ const broadcastSSE = (ev, d) => bb.broadcastSSE(ctx, ev, d);
 const processing = new Map();
 
 // --- S8: Scoped Boards (briefs) ---
-const BRIEFS_DIR = path.join(DIR, 'briefs');
+const BRIEFS_DIR = path.join(DATA_DIR, 'briefs');
 const SKILLS_NEEDING_BRIEF = new Set(['conversapix-storyboard']);
 
 function ensureBriefsDir() {
@@ -2234,6 +2235,13 @@ const server = bb.createServer(ctx, (req, res, helpers) => {
     return;
   }
 
+  // POST /api/shutdown — graceful shutdown (critical for Windows where SIGTERM kills immediately)
+  if (req.method === 'POST' && req.url === '/api/shutdown') {
+    json(res, 200, { ok: true, message: 'shutting down' });
+    setImmediate(gracefulShutdown);
+    return;
+  }
+
   return false; // fall through to bb static file serving
 });
 
@@ -2263,5 +2271,14 @@ if (!Array.isArray(initBoard.signals)) { initBoard.signals = []; dirty = true; }
 if (!Array.isArray(initBoard.insights)) { initBoard.insights = []; dirty = true; }
 if (!Array.isArray(initBoard.lessons)) { initBoard.lessons = []; dirty = true; }
 if (dirty) writeBoard(initBoard);
+
+// --- Graceful Shutdown ---
+function gracefulShutdown() {
+  console.log('[server] shutting down...');
+  server.close(() => process.exit(0));
+  setTimeout(() => process.exit(1), 5000);
+}
+process.on('SIGTERM', gracefulShutdown);
+process.on('SIGINT', gracefulShutdown);
 
 bb.listen(server, ctx);
