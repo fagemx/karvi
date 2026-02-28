@@ -18,6 +18,8 @@ const DEFAULT_CONTROLS = {
   review_agent: 'engineer_lite',
   auto_apply_insights: true,
   telemetry_enabled: true,
+  usage_limits: null,            // { dispatches_per_month, runtime_sec_per_month, tokens_per_month }
+  usage_alert_threshold: 0.8,    // Alert when usage > 80% of limit
 };
 
 // --- Evolution Layer: Schema validation ---
