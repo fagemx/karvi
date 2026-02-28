@@ -439,6 +439,32 @@ async function runSuite(target) {
     ok('Health endpoint → exempt from rate limit');
   } catch (e) { fail('Health rate limit exempt', e.message); }
 
+  // 17-18. GitHub API proxy tests (task-engine only)
+  if (port === 3461) {
+    // 17. GET /api/github/token/status → 200 (always works, even without token configured)
+    try {
+      const r = await get(port, '/api/github/token/status');
+      if (r.status !== 200) throw new Error(`status ${r.status}`);
+      const body = JSON.parse(r.body);
+      if (typeof body.configured !== 'boolean') throw new Error('missing configured field');
+      ok(`GET /api/github/token/status → 200 (configured: ${body.configured})`);
+    } catch (e) { fail('GET /api/github/token/status', e.message); }
+
+    // 18. GET /api/github/pr without token → 400 or 503 (depending on vault config)
+    try {
+      const r = await get(port, '/api/github/pr/octocat/hello-world/1');
+      // 400 = vault enabled but no github_pat stored
+      // 503 = vault not configured (KARVI_VAULT_KEY not set)
+      if (r.status === 400 || r.status === 503) {
+        const body = JSON.parse(r.body);
+        if (!body.error) throw new Error('missing error message');
+        ok(`GET /api/github/pr/:o/:r/:n (no token) → ${r.status} + error message`);
+      } else {
+        throw new Error(`expected 400 or 503, got ${r.status}`);
+      }
+    } catch (e) { fail('GET /api/github/pr (no token)', e.message); }
+  }
+
   // Auth-specific tests (only when --token is provided)
   if (authToken) {
     console.log('\n  ── Auth tests ──');

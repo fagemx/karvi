@@ -81,6 +81,36 @@ export interface TaskResult {
   status?: string;
   summary?: string;
   reason?: string;
+  prUrl?: string;
+}
+
+// ---------------------------------------------------------------------------
+// GitHub PR Types
+// ---------------------------------------------------------------------------
+
+export interface GitHubPRSummary {
+  number: number;
+  title: string;
+  body: string;
+  state: 'open' | 'closed';
+  merged: boolean;
+  mergeable: boolean | null;
+  user: { login: string; avatar_url: string };
+  head: { ref: string; sha: string };
+  base: { ref: string };
+  additions: number;
+  deletions: number;
+  changed_files: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface GitHubPRFile {
+  filename: string;
+  status: 'added' | 'removed' | 'modified' | 'renamed';
+  additions: number;
+  deletions: number;
+  patch?: string;
 }
 
 export interface DispatchState {

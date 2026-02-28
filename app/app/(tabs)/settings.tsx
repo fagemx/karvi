@@ -1,5 +1,5 @@
-import { useState } from 'react';
-import { View, Text, TextInput, ScrollView, StyleSheet, Alert } from 'react-native';
+import { useState, useEffect, useCallback } from 'react';
+import { View, Text, TextInput, ScrollView, Pressable, StyleSheet, Alert } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useBoardStore } from '../../hooks/useBoardStore';
@@ -8,7 +8,14 @@ import { Card } from '../../components/ui/Card';
 import { Button } from '../../components/ui/Button';
 import { SectionHeader } from '../../components/ui/SectionHeader';
 import { Badge } from '../../components/ui/Badge';
+import { BottomSheet } from '../../components/ui/BottomSheet';
 import { ConnectionIndicator } from '../../components/ConnectionIndicator';
+import {
+  storeGithubToken,
+  checkGithubToken,
+  testGithubToken,
+  deleteGithubToken,
+} from '../../lib/api';
 
 export default function SettingsScreen() {
   const serverUrl = useBoardStore((s) => s.serverUrl);
@@ -22,6 +29,84 @@ export default function SettingsScreen() {
   const [draftToken, setDraftToken] = useState(apiToken);
   const [testing, setTesting] = useState(false);
   const t = useTheme();
+
+  // GitHub token management state
+  const [showGitHub, setShowGitHub] = useState(false);
+  const [ghTokenDraft, setGhTokenDraft] = useState('');
+  const [ghConfigured, setGhConfigured] = useState(false);
+  const [ghUsername, setGhUsername] = useState<string | null>(null);
+  const [ghSaving, setGhSaving] = useState(false);
+  const [ghTesting, setGhTesting] = useState(false);
+
+  const refreshGhStatus = useCallback(async () => {
+    try {
+      const status = await checkGithubToken();
+      setGhConfigured(status.configured === true);
+    } catch {
+      setGhConfigured(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    refreshGhStatus();
+  }, [refreshGhStatus]);
+
+  const handleGhSaveAndTest = async () => {
+    const token = ghTokenDraft.trim();
+    if (!token) {
+      Alert.alert('Error', 'Please enter a GitHub Personal Access Token.');
+      return;
+    }
+    setGhSaving(true);
+    try {
+      await storeGithubToken(token);
+      setGhConfigured(true);
+      setGhTokenDraft('');
+      // Test the token
+      setGhTesting(true);
+      const result = await testGithubToken();
+      setGhUsername(result.username || null);
+      Alert.alert('Connected', `GitHub token saved and verified.\nLogged in as: ${result.username}`);
+    } catch (err: any) {
+      Alert.alert('Error', err.message);
+    } finally {
+      setGhSaving(false);
+      setGhTesting(false);
+    }
+  };
+
+  const handleGhTest = async () => {
+    setGhTesting(true);
+    try {
+      const result = await testGithubToken();
+      setGhUsername(result.username || null);
+      Alert.alert('Token Valid', `Logged in as: ${result.username}`);
+    } catch (err: any) {
+      Alert.alert('Test Failed', err.message);
+    } finally {
+      setGhTesting(false);
+    }
+  };
+
+  const handleGhRemove = async () => {
+    Alert.alert('Remove Token', 'Remove your GitHub Personal Access Token?', [
+      { text: 'Cancel', style: 'cancel' },
+      {
+        text: 'Remove',
+        style: 'destructive',
+        onPress: async () => {
+          try {
+            await deleteGithubToken();
+            setGhConfigured(false);
+            setGhUsername(null);
+            Alert.alert('Removed', 'GitHub token has been removed.');
+          } catch (err: any) {
+            Alert.alert('Error', err.message);
+          }
+        },
+      },
+    ]);
+  };
 
   const isUsingDefault = defaultApiUrl !== '' && draft === defaultApiUrl;
   const hasOverridden = defaultApiUrl !== '' && draft !== defaultApiUrl;
@@ -135,14 +220,20 @@ export default function SettingsScreen() {
         {/* Integrations (future) */}
         <SectionHeader label="Integrations" />
         <Card>
-          <View style={styles.integrationRow}>
+          <Pressable style={styles.integrationRow} onPress={() => setShowGitHub(true)}>
             <Ionicons name="logo-github" size={24} color={t.text} />
             <View style={styles.integrationInfo}>
               <Text style={[styles.integrationName, { color: t.text }]}>GitHub</Text>
-              <Text style={[styles.integrationStatus, { color: t.textSecondary }]}>Not connected</Text>
+              <Text style={[styles.integrationStatus, { color: ghConfigured ? t.success : t.textSecondary }]}>
+                {ghConfigured ? (ghUsername ? `Connected as ${ghUsername}` : 'Connected') : 'Not connected'}
+              </Text>
             </View>
-            <Badge label="Soon" bg={t.bgSubtle} color={t.textTertiary} size="sm" />
-          </View>
+            {ghConfigured ? (
+              <Badge label="Connected" bg={t.successBg} color={t.success} size="sm" />
+            ) : (
+              <Ionicons name="chevron-forward" size={18} color={t.textTertiary} />
+            )}
+          </Pressable>
           <View style={[styles.divider, { backgroundColor: t.border }]} />
           <View style={styles.integrationRow}>
             <Ionicons name="cube-outline" size={24} color={t.text} />
@@ -176,6 +267,73 @@ export default function SettingsScreen() {
 
         <View style={{ height: 40 }} />
       </ScrollView>
+
+      {/* GitHub Token BottomSheet */}
+      <BottomSheet visible={showGitHub} onClose={() => setShowGitHub(false)} title="GitHub Integration">
+        {ghConfigured ? (
+          <>
+            <View style={styles.ghConnectedRow}>
+              <Ionicons name="checkmark-circle" size={20} color={t.success} />
+              <Text style={[styles.ghConnectedText, { color: t.text }]}>
+                {ghUsername ? `Connected as ${ghUsername}` : 'Token configured'}
+              </Text>
+            </View>
+            <View style={{ gap: 10, marginTop: 16 }}>
+              <Button
+                label="Test Connection"
+                variant="secondary"
+                onPress={handleGhTest}
+                loading={ghTesting}
+                fullWidth
+                icon={<Ionicons name="wifi-outline" size={16} color={t.primary} />}
+              />
+              <Button
+                label="Remove Token"
+                variant="danger"
+                onPress={handleGhRemove}
+                fullWidth
+                icon={<Ionicons name="trash-outline" size={16} color="#fff" />}
+              />
+            </View>
+          </>
+        ) : (
+          <>
+            <Text style={[styles.ghHint, { color: t.textSecondary }]}>
+              Enter a GitHub Personal Access Token with the <Text style={{ fontWeight: '700' }}>repo</Text> scope.
+              Your token is encrypted and stored securely on the server.
+            </Text>
+            <Text style={[styles.inputLabel, { color: t.textSecondary }]}>Personal Access Token</Text>
+            <View style={[styles.inputBox, { backgroundColor: t.bgSubtle, borderColor: t.border }]}>
+              <Ionicons name="key-outline" size={16} color={t.textTertiary} />
+              <TextInput
+                style={[styles.input, { color: t.text }]}
+                value={ghTokenDraft}
+                onChangeText={setGhTokenDraft}
+                placeholder="ghp_xxxxxxxxxxxx"
+                placeholderTextColor={t.placeholder}
+                autoCapitalize="none"
+                autoCorrect={false}
+                secureTextEntry
+              />
+            </View>
+            <View style={{ gap: 10, marginTop: 4 }}>
+              <Button
+                label="Save & Test"
+                onPress={handleGhSaveAndTest}
+                loading={ghSaving}
+                fullWidth
+                icon={<Ionicons name="save-outline" size={16} color="#fff" />}
+              />
+              <Button
+                label="Cancel"
+                variant="ghost"
+                onPress={() => setShowGitHub(false)}
+                fullWidth
+              />
+            </View>
+          </>
+        )}
+      </BottomSheet>
     </SafeAreaView>
   );
 }
@@ -223,4 +381,9 @@ const styles = StyleSheet.create({
   gestureInfo: { flex: 1 },
   gestureName: { fontSize: 15, fontWeight: '600' },
   gestureDesc: { fontSize: 12, marginTop: 1 },
+
+  // GitHub BottomSheet
+  ghConnectedRow: { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 4 },
+  ghConnectedText: { fontSize: 15, fontWeight: '600' },
+  ghHint: { fontSize: 13, lineHeight: 19, marginBottom: 16 },
 });
