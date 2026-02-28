@@ -102,7 +102,8 @@ console.log('\n-- validateAllRuntimes --');
   try { validateAllRuntimes({ openclaw: validRuntime(), codex: validRuntime() }); } catch { threw = true; }
   assert(!threw, 'validateAllRuntimes passes with all valid runtimes');
 })();
-assertThrows(() => { validateAllRuntimes({ openclaw: validRuntime(), broken: { dispatch: () => {} } }); }, 'validateAllRuntimes throws on first invalid runtime', '"broken"');
+assertThrows(() => { validateAllRuntimes({ openclaw: validRuntime(), broken: { dispatch: () => {} } }); }, 'validateAllRuntimes throws on invalid runtime', '"broken"');
+assertThrows(() => { validateAllRuntimes({ bad1: null, bad2: 42 }); }, 'validateAllRuntimes aggregates multiple failures', '2 runtime(s) failed');
 
 console.log('\n=== Results: ' + passed + ' passed, ' + failed + ' failed ===');
 if (errors.length > 0) {

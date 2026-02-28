@@ -72,13 +72,18 @@ function validateRuntime(name, rt) {
 
 /**
  * Validate all runtimes in a RUNTIMES map.
+ * Collects all failures and throws a single aggregated error.
  *
  * @param {Object<string, RuntimeAdapter>} runtimes - Map of name -> runtime adapter
- * @throws {Error} On first invalid runtime found
+ * @throws {Error} If any runtime fails validation (lists all failures)
  */
 function validateAllRuntimes(runtimes) {
+  const errors = [];
   for (const [name, rt] of Object.entries(runtimes)) {
-    validateRuntime(name, rt);
+    try { validateRuntime(name, rt); } catch (err) { errors.push(err.message); }
+  }
+  if (errors.length > 0) {
+    throw new Error(`[runtime-contract] ${errors.length} runtime(s) failed validation:\n  ${errors.join('\n  ')}`);
   }
 }
 
