@@ -1437,7 +1437,8 @@ const server = bb.createServer(ctx, (req, res, helpers) => {
       msg += `\n用 exec 工具執行 curl 或 Invoke-WebRequest 來打這些 API。黑板 UI 會即時更新。`;
       if (process.env.KARVI_API_TOKEN) {
         msg += `\n\n【重要：認證】\n`;
-        msg += `所有 /api/* 請求都需要帶 header：Authorization: Bearer ${process.env.KARVI_API_TOKEN}\n`;
+        msg += `所有 /api/* 請求都需要帶 header：Authorization: Bearer $KARVI_API_TOKEN\n`;
+        msg += `（token 從環境變數 KARVI_API_TOKEN 取得，已注入到你的執行環境中）\n`;
       }
 
       if (conv) {
