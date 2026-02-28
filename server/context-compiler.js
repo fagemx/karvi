@@ -16,6 +16,7 @@ const STEP_OBJECTIVES = {
 
 function buildEnvelope(decision, runState, deps) {
   const { task, steps } = runState;
+  if (!task || !steps) return null;
   const { artifactStore, stepSchema } = deps;
 
   const targetStepId = decision.next_step?.step_id;
