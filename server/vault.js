@@ -39,7 +39,6 @@ function createVault(opts = {}) {
   function deriveKey(userId) {
     const master = Buffer.from(masterKeyHex, 'hex');
     const derived = crypto.hkdfSync('sha256', master, userId, HKDF_INFO, 32);
-    master.fill(0);
     return Buffer.from(derived);
   }
 

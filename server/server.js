@@ -523,6 +523,22 @@ const server = bb.createServer(ctx, (req, res, helpers) => {
     return;
   }
 
+  if (req.method === 'POST' && req.url === '/api/vault/retrieve') {
+    bb.parseBody(req).then(payload => {
+      const { userId, keyName } = payload;
+      if (!userId || !VALID_VAULT_ID.test(userId)) return json(res, 400, { error: 'Invalid userId' });
+      if (!keyName || !VALID_VAULT_ID.test(keyName)) return json(res, 400, { error: 'Invalid keyName' });
+      const buf = vault.retrieve(userId, keyName);
+      if (!buf) return json(res, 404, { ok: false, error: 'Key not found' });
+      try {
+        json(res, 200, { ok: true, value: buf.toString('utf8') });
+      } finally {
+        buf.fill(0);
+      }
+    }).catch(e => json(res, 400, { error: e.message }));
+    return;
+  }
+
   const vaultKeysMatch = req.url.match(/^\/api\/vault\/keys\/([a-zA-Z0-9_-]+)$/);
   if (req.method === 'GET' && vaultKeysMatch) {
     const userId = vaultKeysMatch[1];
@@ -531,7 +547,7 @@ const server = bb.createServer(ctx, (req, res, helpers) => {
     return;
   }
 
-  const vaultDeleteMatch = req.url.match(/^\/api\/vault\/delete\/([a-zA-Z0-9_-]+)\/([a-zA-Z0-9_-]+)$/);
+  const vaultDeleteMatch = req.url.match(/^\/api\/vault\/([a-zA-Z0-9_-]+)\/([a-zA-Z0-9_-]+)$/);
   if (req.method === 'DELETE' && vaultDeleteMatch) {
     const [, userId, keyName] = vaultDeleteMatch;
     const result = vault.delete(userId, keyName);
