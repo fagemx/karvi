@@ -183,15 +183,15 @@ function createKernelStack(runtimeOverrides = {}) {
     // Wait for the full pipeline to settle (implement → test → review, 3 hops)
     await settleUntil(() => {
       const t = currentBoard.taskPlan.tasks[0];
-      return t.status === 'completed';
+      return t.status === 'approved';
     }, { maxMs: 5000, intervalMs: 40 });
 
-    // Verify: task is completed
+    // Verify: task is approved (step pipeline includes review → done = approved)
     const finalTask = currentBoard.taskPlan.tasks[0];
-    assert.strictEqual(finalTask.status, 'completed', `task status should be completed, got ${finalTask.status}`);
+    assert.strictEqual(finalTask.status, 'approved', `task status should be approved, got ${finalTask.status}`);
     assert.ok(finalTask.completedAt, 'completedAt should be set');
     assert.ok(finalTask.result, 'result should be set');
-    assert.strictEqual(finalTask.result.status, 'completed');
+    assert.strictEqual(finalTask.result.status, 'approved');
 
     // Verify: all 4 steps are succeeded
     for (const step of finalTask.steps) {
@@ -399,7 +399,7 @@ function createKernelStack(runtimeOverrides = {}) {
     // Wait for pipeline to complete
     await settleUntil(() => {
       const t = currentBoard.taskPlan.tasks[0];
-      return t.status === 'completed';
+      return t.status === 'approved';
     }, { maxMs: 5000, intervalMs: 40 });
 
     // Verify: output artifact exists and is readable for each step

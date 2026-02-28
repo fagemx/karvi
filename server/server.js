@@ -219,6 +219,38 @@ if (recoveredLocks > 0) {
   writeBoard(initBoard);
 }
 
+// --- Retry poller: re-dispatch steps stuck in queued with past scheduled_at ---
+const RETRY_POLL_MS = 10_000;
+const retryPoller = setInterval(() => {
+  try {
+    const board = readBoard();
+    const now = new Date().toISOString();
+    for (const task of board.taskPlan?.tasks || []) {
+      if (!task.steps || task.status === 'completed' || task.status === 'approved') continue;
+      for (const step of task.steps) {
+        if (step.state === 'queued' && step.attempt > 0 && step.scheduled_at && step.scheduled_at <= now) {
+          console.log(`[retry-poller] re-dispatching ${step.step_id} (attempt ${step.attempt})`);
+          const runState = { task, steps: task.steps, run_id: step.run_id, budget: task.budget };
+          const decision = { action: 'next_step', next_step: { step_id: step.step_id, step_type: step.type } };
+          const envelope = deps.contextCompiler.buildEnvelope(decision, runState, deps);
+          if (!envelope) continue;
+          deps.artifactStore.writeArtifact(envelope.run_id, envelope.step_id, 'input', envelope);
+          deps.stepSchema.transitionStep(step, 'running', {
+            locked_by: 'retry-poller',
+            input_ref: deps.artifactStore.artifactPath(envelope.run_id, envelope.step_id, 'input'),
+          });
+          writeBoard(board);
+          deps.stepWorker.executeStep(envelope, readBoard(), routeHelpers).catch(err =>
+            console.error(`[retry-poller] error for ${step.step_id}:`, err.message));
+          return; // one step per poll cycle to avoid races
+        }
+      }
+    }
+  } catch (err) {
+    console.error('[retry-poller] error:', err.message);
+  }
+}, RETRY_POLL_MS);
+
 // --- Telemetry init ---
 let telemetryHandle;
 try {
@@ -249,6 +281,7 @@ try {
 // --- Graceful Shutdown ---
 function gracefulShutdown() {
   console.log('[server] shutting down...');
+  clearInterval(retryPoller);
   telemetryHandle?.stop();
   usageHandle?.stop();
   server.close(() => process.exit(0));

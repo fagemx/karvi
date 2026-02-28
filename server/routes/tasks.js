@@ -22,6 +22,7 @@ const path = require('path');
 const bb = require('../blackboard-server');
 const { json } = bb;
 const { participantById, pushMessage, getUserIdForTask } = require('./_shared');
+const routeEngine = require('../route-engine');
 
 // --- Preflight logging: lessons injection + runtime selection ---
 function logDispatchPreflight(plan, task, deps, helpers) {
@@ -272,6 +273,53 @@ function tryAutoDispatch(taskId, deps, helpers) {
     return;
   }
 
+  // --- Step-level dispatch (opt-in via controls.use_step_pipeline) ---
+  if (ctrl.use_step_pipeline && deps.stepWorker) {
+    console.log(`[auto-dispatch] step-pipeline for ${taskId}`);
+    const runId = helpers.uid('run');
+    task.steps = mgmt.generateStepsForTask(task, runId);
+    task.status = 'in_progress';
+    task.startedAt = task.startedAt || helpers.nowIso();
+    task.history = task.history || [];
+    task.history.push({ ts: helpers.nowIso(), status: 'in_progress', by: 'auto-dispatch-steps', runtime: 'step-pipeline' });
+    if (board.taskPlan) board.taskPlan.phase = 'executing';
+
+    // Initialize budget
+    task.budget = { limits: { ...routeEngine.BUDGET_DEFAULTS }, used: { llm_calls: 0, tokens: 0, wall_clock_ms: 0, steps: 0 } };
+
+    // Emit steps_created signal
+    mgmt.ensureEvolutionFields(board);
+    board.signals.push({
+      id: helpers.uid('sig'), ts: helpers.nowIso(), by: 'auto-dispatch',
+      type: 'steps_created', content: `${taskId} steps created (${task.steps.length})`,
+      refs: [taskId], data: { taskId, runId, count: task.steps.length },
+    });
+    if (board.signals.length > 500) board.signals = board.signals.slice(-500);
+
+    // Build envelope for step[0] and dispatch
+    const firstStep = task.steps[0];
+    const runState = { task, steps: task.steps, run_id: runId, budget: task.budget };
+    const decision = { action: 'next_step', next_step: { step_id: firstStep.step_id, step_type: firstStep.type } };
+    const envelope = deps.contextCompiler.buildEnvelope(decision, runState, deps);
+
+    if (envelope) {
+      deps.artifactStore.writeArtifact(envelope.run_id, envelope.step_id, 'input', envelope);
+      deps.stepSchema.transitionStep(firstStep, 'running', {
+        locked_by: 'auto-dispatch',
+        input_ref: deps.artifactStore.artifactPath(envelope.run_id, envelope.step_id, 'input'),
+      });
+      helpers.writeBoard(board);
+      helpers.appendLog({ ts: helpers.nowIso(), event: 'step_pipeline_started', taskId, runId, firstStep: firstStep.step_id });
+      deps.stepWorker.executeStep(envelope, helpers.readBoard(), helpers).catch(err =>
+        console.error(`[auto-dispatch:${taskId}] step execution error:`, err.message));
+    } else {
+      helpers.writeBoard(board);
+      console.error(`[auto-dispatch:${taskId}] failed to build envelope for first step`);
+    }
+    return;  // skip legacy dispatch
+  }
+
+  // --- Legacy single-shot dispatch ---
   console.log(`[auto-dispatch] dispatching ${taskId} to ${task.assignee}`);
 
   const sessionId = board.conversations?.[0]?.sessionIds?.[task.assignee] || null;
@@ -1067,13 +1115,16 @@ module.exports = function tasksRoutes(req, res, helpers, deps) {
             // Write input artifact and transition to running
             const currentStep = currentTask.steps.find(s => s.step_id === step.step_id);
             deps.artifactStore.writeArtifact(envelope.run_id, envelope.step_id, 'input', envelope);
-            if (currentStep && currentStep.state === 'queued') {
-              deps.stepSchema.transitionStep(currentStep, 'running', {
-                locked_by: 'batch-dispatch',
-                input_ref: deps.artifactStore.artifactPath(envelope.run_id, envelope.step_id, 'input'),
-              });
-              helpers.writeBoard(currentBoard);
+            if (!currentStep || currentStep.state !== 'queued') {
+              // Step already picked up by kernel or retry-poller — skip to avoid double execution
+              results.push({ step_id: step.step_id, status: 'skipped', reason: `state is ${currentStep?.state}` });
+              continue;
             }
+            deps.stepSchema.transitionStep(currentStep, 'running', {
+              locked_by: 'batch-dispatch',
+              input_ref: deps.artifactStore.artifactPath(envelope.run_id, envelope.step_id, 'input'),
+            });
+            helpers.writeBoard(currentBoard);
 
             // deps.stepWorker — initialized in server.js; see circular dependency notes there
             const output = await deps.stepWorker.executeStep(envelope, helpers.readBoard(), helpers);

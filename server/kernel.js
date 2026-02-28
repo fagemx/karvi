@@ -163,14 +163,26 @@ function createKernel(deps) {
 
       case 'done': {
         if (latestTask) {
-          latestTask.status = 'completed';
+          // Step pipeline includes review as step[3] — all steps succeeded means approved
+          latestTask.status = 'approved';
           latestTask.completedAt = helpers.nowIso();
-          latestTask.result = { status: 'completed', summary: `All ${task.steps.length} steps succeeded` };
+          latestTask.result = { status: 'approved', summary: `All ${task.steps.length} steps succeeded (including review)` };
         }
+
+        // Unlock dependent tasks (autoUnlockDependents checks for 'approved')
+        const unlocked = mgmt.autoUnlockDependents(latestBoard);
         helpers.writeBoard(latestBoard);
+
         if (push && PUSH_TOKENS_PATH && latestTask) {
           push.notifyTaskEvent(PUSH_TOKENS_PATH, latestTask, 'task.completed')
             .catch(err => console.error('[kernel] push error:', err.message));
+        }
+
+        // Auto-dispatch newly unblocked tasks (deferred to avoid deep recursion)
+        if (unlocked.length > 0 && deps.tryAutoDispatch) {
+          for (const id of unlocked) {
+            setImmediate(() => deps.tryAutoDispatch(id));
+          }
         }
         return;
       }
