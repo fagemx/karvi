@@ -75,7 +75,7 @@ function startServer() {
       }
     });
     proc.stderr.on('data', d => { buf += d.toString(); });
-    setTimeout(() => reject(new Error('Server start timeout: ' + buf)), 8000);
+    setTimeout(() => reject(new Error('Server start timeout (port regex did not match). Output: ' + buf)), 8000);
   });
 }
 
