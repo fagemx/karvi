@@ -420,6 +420,105 @@ function gatherUpstreamArtifacts(board, task) {
   return results;
 }
 
+/**
+ * Match relevant lessons for a given task.
+ * Returns lessons in three relevance tiers:
+ *   1. agent-specific (insight data.agent matches task.assignee)
+ *   2. skill/type-specific (insight data matches task skill/type)
+ *   3. universal (all validated lessons)
+ */
+function matchLessonsForTask(board, task) {
+  const allLessons = (board.lessons || [])
+    .filter(l => l.status === 'active' || l.status === 'validated');
+
+  if (allLessons.length === 0) return { matched: [], ids: [] };
+
+  const insights = board.insights || [];
+  const matched = [];
+  const seen = new Set();
+
+  const getInsight = (l) => l.fromInsight ? insights.find(i => i.id === l.fromInsight) : null;
+
+  // Tier 1: Agent-specific lessons
+  for (const l of allLessons) {
+    if (seen.has(l.id)) continue;
+    const ins = getInsight(l);
+    if (ins?.data?.agent === task.assignee) {
+      matched.push({ id: l.id, rule: l.rule, relevance: 'agent', status: l.status });
+      seen.add(l.id);
+    }
+  }
+
+  // Tier 2: Skill/type-specific lessons
+  const taskSkill = task.skill || task.type || task.track || null;
+  if (taskSkill) {
+    for (const l of allLessons) {
+      if (seen.has(l.id)) continue;
+      const ins = getInsight(l);
+      if (ins?.data?.taskType === taskSkill) {
+        matched.push({ id: l.id, rule: l.rule, relevance: 'skill', status: l.status });
+        seen.add(l.id);
+      }
+    }
+  }
+
+  // Tier 3: Universal (validated only)
+  for (const l of allLessons) {
+    if (seen.has(l.id)) continue;
+    if (l.status === 'validated') {
+      matched.push({ id: l.id, rule: l.rule, relevance: 'universal', status: l.status });
+      seen.add(l.id);
+    }
+  }
+
+  return { matched, ids: matched.map(l => l.id) };
+}
+
+/**
+ * Build the Preflight Checklist section for agent briefs.
+ * Shared by buildTaskDispatchMessage() and buildRedispatchMessage().
+ */
+function buildPreflightSection(board, task, options = {}) {
+  const lessonResult = options.lessonResult || matchLessonsForTask(board, task);
+  if (lessonResult.matched.length === 0) return { lines: [], lessonResult };
+
+  const lines = [];
+  lines.push('');
+  lines.push('## Preflight Checklist');
+  lines.push('執行前先確認以下 lessons 是否適用：');
+  lines.push('');
+
+  let charCount = 0;
+  const MAX_CHARS = 1500;
+
+  const byRelevance = { agent: [], skill: [], universal: [] };
+  for (const l of lessonResult.matched) {
+    (byRelevance[l.relevance] || []).push(l);
+  }
+
+  for (const [tier, lessons] of Object.entries(byRelevance)) {
+    if (lessons.length === 0) continue;
+    const tierLabel = tier === 'agent' ? task.assignee + ' 專屬'
+                    : tier === 'skill' ? (task.skill || task.type || 'task') + ' 相關'
+                    : '通用規則';
+    lines.push('[' + tierLabel + ']');
+    for (const l of lessons) {
+      const line = '- ' + l.rule;
+      if (charCount + line.length > MAX_CHARS) {
+        lines.push('  ... (更多規則省略)');
+        break;
+      }
+      lines.push(line);
+      charCount += line.length;
+    }
+  }
+
+  lines.push('');
+  lines.push('執行前先逐條確認，不適用的可跳過。');
+
+  return { lines, lessonResult };
+}
+
 function buildTaskDispatchMessage(board, task, options = {}) {
   const lines = [];
 
@@ -506,29 +605,16 @@ function buildTaskDispatchMessage(board, task, options = {}) {
     }
   }
 
-  // --- Evolution Layer: Active Lessons ---
-  const activeLessons = (board.lessons || [])
-    .filter(l => l.status === 'active' || l.status === 'validated');
-  if (activeLessons.length > 0) {
-    lines.push('');
-    lines.push('=== 經驗規則（請遵守）===');
-    let charCount = 0;
-    for (const l of activeLessons) {
-      const line = `- ${l.rule}`;
-      if (charCount + line.length > 500) {
-        lines.push('  ... (更多規則省略)');
-        break;
-      }
-      lines.push(line);
-      charCount += line.length;
-    }
-    lines.push('=== 規則結束 ===');
+  // --- Preflight Checklist: Relevant Lessons ---
+  const preflight = buildPreflightSection(board, task, options);
+  if (preflight.lines.length > 0) {
+    lines.push(...preflight.lines);
   }
 
   return lines.join('\n');
 }
 
-function buildRedispatchMessage(board, task) {
+function buildRedispatchMessage(board, task, options = {}) {
   const review = task.review || {};
   const lines = [];
 
@@ -569,23 +655,10 @@ function buildRedispatchMessage(board, task) {
     lines.push('=== SPEC 結束 ===');
   }
 
-  // --- Evolution Layer: Active Lessons ---
-  const activeLessons = (board.lessons || [])
-    .filter(l => l.status === 'active' || l.status === 'validated');
-  if (activeLessons.length > 0) {
-    lines.push('');
-    lines.push('=== 經驗規則（請遵守）===');
-    let charCount = 0;
-    for (const l of activeLessons) {
-      const line = `- ${l.rule}`;
-      if (charCount + line.length > 500) {
-        lines.push('  ... (更多規則省略)');
-        break;
-      }
-      lines.push(line);
-      charCount += line.length;
-    }
-    lines.push('=== 規則結束 ===');
+  // --- Preflight Checklist: Relevant Lessons ---
+  const preflight = buildPreflightSection(board, task, options);
+  if (preflight.lines.length > 0) {
+    lines.push(...preflight.lines);
   }
 
   return lines.join('\n');
@@ -604,15 +677,29 @@ function resolveOwnerId(board) {
 
 function buildDispatchPlan(board, task, options = {}) {
   const mode = options.mode === 'redispatch' ? 'redispatch' : 'dispatch';
+
+  // Compute lesson matching once, pass to message builders
+  const lessonResult = matchLessonsForTask(board, task);
+
   const message = mode === 'redispatch'
-    ? buildRedispatchMessage(board, task)
-    : buildTaskDispatchMessage(board, task, { requireTaskResult: options.requireTaskResult || false });
+    ? buildRedispatchMessage(board, task, { lessonResult })
+    : buildTaskDispatchMessage(board, task, {
+        requireTaskResult: options.requireTaskResult || false,
+        lessonResult,
+      });
 
   const controls = getControls(board);
 
   const runtimeHint = options.runtimeHint
     || board.controls?.preferred_runtime
     || 'openclaw';
+
+  // Runtime selection rationale
+  const runtimeRationale = options.runtimeHint
+    ? 'caller_specified: ' + options.runtimeHint
+    : board.controls?.preferred_runtime
+      ? 'board_preferred: ' + board.controls.preferred_runtime
+      : 'default: openclaw';
 
   // Skill / Role inference
   const taskSkill = task.skill || null;
@@ -645,6 +732,13 @@ function buildDispatchPlan(board, task, options = {}) {
       auto_review: controls.auto_review,
       auto_redispatch: controls.auto_redispatch,
       max_review_attempts: controls.max_review_attempts,
+    },
+    // Preflight metadata
+    injectedLessons: lessonResult.ids,
+    injectedLessonCount: lessonResult.ids.length,
+    runtimeSelection: {
+      chosen: runtimeHint,
+      rationale: runtimeRationale,
     },
   };
 }
@@ -715,6 +809,8 @@ module.exports = {
   parseTaskResultFromLastLine,
   readSpecContent,
   gatherUpstreamArtifacts,
+  matchLessonsForTask,
+  buildPreflightSection,
   buildTaskDispatchMessage,
   buildRedispatchMessage,
   buildDispatchPlan,
