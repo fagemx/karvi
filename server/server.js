@@ -20,6 +20,8 @@ const RUNTIMES = {
 let jiraIntegration = null;
 try { jiraIntegration = require('./integration-jira'); } catch { /* jira integration not available, skip */ }
 
+const telemetry = require('./telemetry');
+
 const vault = require('./vault').createVault({ vaultDir: path.join(__dirname, 'vaults') });
 
 function getRuntime(hint) {
@@ -845,7 +847,7 @@ const server = bb.createServer(ctx, (req, res, helpers) => {
         for (const key of allowed) {
           if (key in patch) {
             const val = patch[key];
-            if ((key === 'auto_review' || key === 'auto_redispatch' || key === 'auto_apply_insights') && typeof val === 'boolean') board.controls[key] = val;
+            if ((key === 'auto_review' || key === 'auto_redispatch' || key === 'auto_apply_insights' || key === 'telemetry_enabled') && typeof val === 'boolean') board.controls[key] = val;
             else if (key === 'max_review_attempts' && Number.isFinite(val)) board.controls[key] = Math.max(1, Math.min(10, val));
             else if (key === 'quality_threshold' && Number.isFinite(val)) board.controls[key] = Math.max(0, Math.min(100, val));
             else if (key === 'review_timeout_sec' && Number.isFinite(val)) board.controls[key] = Math.max(30, Math.min(600, val));
@@ -2265,9 +2267,16 @@ if (!Array.isArray(initBoard.insights)) { initBoard.insights = []; dirty = true;
 if (!Array.isArray(initBoard.lessons)) { initBoard.lessons = []; dirty = true; }
 if (dirty) writeBoard(initBoard);
 
+// --- Telemetry init ---
+const telemetryHandle = telemetry.init({
+  dataDir: DATA_DIR,
+  readBoard,
+});
+
 // --- Graceful Shutdown ---
 function gracefulShutdown() {
   console.log('[server] shutting down...');
+  telemetryHandle.stop();
   server.close(() => process.exit(0));
   setTimeout(() => process.exit(1), 5000);
 }
