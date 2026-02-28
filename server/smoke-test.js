@@ -536,6 +536,30 @@ async function runSuite(target) {
         throw new Error(`expected 503 or 404, got ${r.status}`);
       }
     } catch (e) { fail('POST /api/tasks/:id/digest', e.message); }
+
+    // 21. GET /api/tasks/:id/timeline → 404 (nonexistent task)
+    try {
+      const r = await get(port, '/api/tasks/SMOKE-NOEXIST/timeline');
+      if (r.status === 404) {
+        const body = JSON.parse(r.body);
+        if (!body.error) throw new Error('missing error message');
+        ok(`GET /api/tasks/:id/timeline (no task) → 404`);
+      } else {
+        throw new Error(`expected 404, got ${r.status}`);
+      }
+    } catch (e) { fail('GET /api/tasks/:id/timeline', e.message); }
+
+    // 22. GET /api/tasks/:id/report → 404 (nonexistent task)
+    try {
+      const r = await get(port, '/api/tasks/SMOKE-NOEXIST/report');
+      if (r.status === 404) {
+        const body = JSON.parse(r.body);
+        if (!body.error) throw new Error('missing error message');
+        ok(`GET /api/tasks/:id/report (no task) → 404`);
+      } else {
+        throw new Error(`expected 404, got ${r.status}`);
+      }
+    } catch (e) { fail('GET /api/tasks/:id/report', e.message); }
   }
 
   // ── Uncovered Endpoint Tests (issue #77) ──

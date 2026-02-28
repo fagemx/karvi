@@ -423,3 +423,54 @@ export interface RuntimeResult {
   parsed: Record<string, unknown> | null;
   sessionId?: string | null;
 }
+
+// ---------------------------------------------------------------------------
+// L3 Timeline Types
+// ---------------------------------------------------------------------------
+
+export type TimelineNodeType =
+  | 'dispatch'    // agent dispatched
+  | 'status'      // status transition
+  | 'decision'    // automated decision (insight applied)
+  | 'supersede'   // decision/lesson superseded or rolled back
+  | 'policy'      // lesson validated / policy extracted
+  | 'review'      // review result
+  | 'note'        // general note / log entry
+  | 'error';      // error event
+
+export interface TimelineNodeRefs {
+  supersedes?: string | null;
+  supersededBy?: string | null;
+  insightId?: string | null;
+  lessonId?: string | null;
+}
+
+/** TimelineNode — unified timeline entry for L3 deep timeline */
+export interface TimelineNode {
+  id: string;
+  ts: string;
+  type: TimelineNodeType;
+  title: string;
+  detail?: string;
+  source: 'history' | 'signal' | 'insight' | 'lesson' | 'dispatch' | 'review';
+  refs: TimelineNodeRefs;
+  meta?: Record<string, unknown>;
+}
+
+/** DeliveryReport — exportable task delivery report */
+export interface DeliveryReport {
+  version: 'delivery_report.v1';
+  taskId: string;
+  generatedAt: string;
+  summary: {
+    title: string;
+    status: string;
+    score: number | null;
+    durationMin: number | null;
+    decisionCount: number;
+    supersededCount: number;
+    lessonsApplied: number;
+  };
+  timeline: TimelineNode[];
+  digest?: object | null;
+}
