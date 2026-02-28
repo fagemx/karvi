@@ -1,0 +1,44 @@
+# Karvi — fly.io deployment configuration
+# Usage: fly launch (first time) or fly deploy (subsequent)
+
+app = "karvi"
+primary_region = "nrt"  # Tokyo — change to your preferred region
+
+[build]
+  dockerfile = "Dockerfile"
+
+[env]
+  PORT = "3461"
+  DATA_DIR = "/data"
+  KARVI_TRUST_PROXY = "true"
+  NODE_ENV = "production"
+
+[http_service]
+  internal_port = 3461
+  force_https = true
+  auto_stop_machines = "off"    # SSE requires always-on
+  auto_start_machines = true
+  min_machines_running = 1
+
+  [http_service.concurrency]
+    type = "connections"
+    hard_limit = 100
+    soft_limit = 80
+
+[[vm]]
+  memory = "512mb"
+  cpu_kind = "shared"
+  cpus = 1
+
+[mounts]
+  source = "karvi_data"
+  destination = "/data"
+
+[[checks]]
+  grace_period = "10s"
+  interval = "15s"
+  method = "GET"
+  path = "/health"
+  port = 3461
+  timeout = "5s"
+  type = "http"
