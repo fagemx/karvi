@@ -146,11 +146,11 @@ const kernel = deps.kernel;
     assert.ok(routeSignals.length >= 1);
     assert.strictEqual(routeSignals[0].data.decision.action, 'done');
 
-    // Verify: task is completed
-    assert.strictEqual(task.status, 'completed');
+    // Verify: task is approved (step pipeline includes review → done = approved)
+    assert.strictEqual(task.status, 'approved');
     assert.ok(task.completedAt);
     assert.ok(task.result);
-    assert.strictEqual(task.result.status, 'completed');
+    assert.strictEqual(task.result.status, 'approved');
   });
 
   // Test 3: Permission failure → human_review signal

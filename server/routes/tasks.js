@@ -22,6 +22,7 @@ const path = require('path');
 const bb = require('../blackboard-server');
 const { json } = bb;
 const { participantById, pushMessage, getUserIdForTask } = require('./_shared');
+const routeEngine = require('../route-engine');
 
 // --- Preflight logging: lessons injection + runtime selection ---
 function logDispatchPreflight(plan, task, deps, helpers) {
@@ -284,7 +285,6 @@ function tryAutoDispatch(taskId, deps, helpers) {
     if (board.taskPlan) board.taskPlan.phase = 'executing';
 
     // Initialize budget
-    const routeEngine = require('../route-engine');
     task.budget = { limits: { ...routeEngine.BUDGET_DEFAULTS }, used: { llm_calls: 0, tokens: 0, wall_clock_ms: 0, steps: 0 } };
 
     // Emit steps_created signal

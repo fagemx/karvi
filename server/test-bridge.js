@@ -198,11 +198,11 @@ function createFullDeps(runtimeOverrides = {}) {
     await settleUntil(() => {
       const b = helpers.readBoard();
       const tk = b.taskPlan.tasks[0];
-      return tk.status === 'completed';
+      return tk.status === 'approved';
     }, { maxMs: 5000 });
 
     const finalTask = currentBoard.taskPlan.tasks[0];
-    assert.strictEqual(finalTask.status, 'completed', `expected completed, got ${finalTask.status}`);
+    assert.strictEqual(finalTask.status, 'approved', `expected approved, got ${finalTask.status}`);
     assert.ok(finalTask.steps.every(s => s.state === 'succeeded'), 'all steps should be succeeded');
     assert.ok(finalTask.completedAt, 'completedAt should be set');
   });
@@ -247,15 +247,13 @@ function createFullDeps(runtimeOverrides = {}) {
     };
     await deps.kernel.onStepEvent(signal, helpers.readBoard(), helpers);
 
-    // Verify: task1 completed
+    // Verify: task1 approved (step pipeline includes review step → done = approved)
     const finalT1 = currentBoard.taskPlan.tasks[0];
-    assert.strictEqual(finalT1.status, 'completed');
+    assert.strictEqual(finalT1.status, 'approved');
 
-    // Note: autoUnlockDependents requires 'approved' status, not 'completed'.
-    // The kernel sets 'completed'. In the real flow, a review process transitions
-    // completed → approved, which then unlocks dependents.
-    // For this test, we verify the kernel sets completed correctly.
-    // The unlock chain works when status is approved (tested in existing tests).
+    // Verify: task2 unlocked (pending → dispatched) by autoUnlockDependents
+    const finalT2 = currentBoard.taskPlan.tasks[1];
+    assert.strictEqual(finalT2.status, 'dispatched', `expected task2 dispatched, got ${finalT2.status}`);
   });
 
   // ------------------------------------------------------------------

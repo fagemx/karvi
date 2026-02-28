@@ -163,12 +163,13 @@ function createKernel(deps) {
 
       case 'done': {
         if (latestTask) {
-          latestTask.status = 'completed';
+          // Step pipeline includes review as step[3] — all steps succeeded means approved
+          latestTask.status = 'approved';
           latestTask.completedAt = helpers.nowIso();
-          latestTask.result = { status: 'completed', summary: `All ${task.steps.length} steps succeeded` };
+          latestTask.result = { status: 'approved', summary: `All ${task.steps.length} steps succeeded (including review)` };
         }
 
-        // Unlock dependent tasks and auto-dispatch them
+        // Unlock dependent tasks (autoUnlockDependents checks for 'approved')
         const unlocked = mgmt.autoUnlockDependents(latestBoard);
         helpers.writeBoard(latestBoard);
 
