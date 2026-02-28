@@ -1043,43 +1043,44 @@ module.exports = function tasksRoutes(req, res, helpers, deps) {
         if (!task) return json(res, 404, { error: `Task ${taskId} not found` });
         if (!task.steps?.length) return json(res, 400, { error: 'Task has no steps' });
 
-        // Filter steps: by step_ids or all queued
-        let targets = task.steps;
+        // Filter steps: by step_ids (must be queued) or all queued
+        let targets;
         if (Array.isArray(payload.step_ids) && payload.step_ids.length > 0) {
-          targets = task.steps.filter(s => payload.step_ids.includes(s.step_id));
+          targets = task.steps.filter(s => payload.step_ids.includes(s.step_id) && s.state === 'queued');
         } else {
           targets = task.steps.filter(s => s.state === 'queued');
         }
-        if (targets.length === 0) return json(res, 400, { error: 'No dispatchable steps found' });
+        if (targets.length === 0) return json(res, 400, { error: 'No dispatchable steps found (only queued steps can be dispatched)' });
 
-        // Build envelopes and dispatch in parallel
-        const runState = { task, steps: task.steps, run_id: targets[0].run_id, budget: task.budget };
-        const results = await Promise.allSettled(targets.map(async (step) => {
-          const decision = { action: 'next_step', next_step: { step_id: step.step_id, step_type: step.type } };
-          const envelope = deps.contextCompiler.buildEnvelope(decision, runState, deps);
-          if (!envelope) throw new Error(`Cannot build envelope for ${step.step_id}`);
+        // Build envelopes and dispatch sequentially (board is single-file, parallel writes race)
+        const results = [];
+        for (const step of targets) {
+          try {
+            const currentBoard = helpers.readBoard();
+            const currentTask = (currentBoard.taskPlan?.tasks || []).find(t => t.id === taskId);
+            const runState = { task: currentTask, steps: currentTask.steps, run_id: step.run_id, budget: currentTask.budget };
+            const decision = { action: 'next_step', next_step: { step_id: step.step_id, step_type: step.type } };
+            const envelope = deps.contextCompiler.buildEnvelope(decision, runState, deps);
+            if (!envelope) throw new Error(`Cannot build envelope for ${step.step_id}`);
 
-          // Write input artifact and transition to running
-          deps.artifactStore.writeArtifact(envelope.run_id, envelope.step_id, 'input', envelope);
-          if (step.state === 'queued') {
-            deps.stepSchema.transitionStep(step, 'running', {
-              locked_by: 'batch-dispatch',
-              input_ref: deps.artifactStore.artifactPath(envelope.run_id, envelope.step_id, 'input'),
-            });
+            // Write input artifact and transition to running
+            const currentStep = currentTask.steps.find(s => s.step_id === step.step_id);
+            deps.artifactStore.writeArtifact(envelope.run_id, envelope.step_id, 'input', envelope);
+            if (currentStep && currentStep.state === 'queued') {
+              deps.stepSchema.transitionStep(currentStep, 'running', {
+                locked_by: 'batch-dispatch',
+                input_ref: deps.artifactStore.artifactPath(envelope.run_id, envelope.step_id, 'input'),
+              });
+              helpers.writeBoard(currentBoard);
+            }
+
+            const output = await deps.stepWorker.executeStep(envelope, helpers.readBoard(), helpers);
+            results.push({ step_id: step.step_id, status: output.status });
+          } catch (err) {
+            results.push({ step_id: step.step_id, status: 'error', error: err.message });
           }
-
-          const output = await deps.stepWorker.executeStep(envelope, helpers.readBoard(), helpers);
-          return { step_id: step.step_id, status: output.status };
-        }));
-
-        helpers.writeBoard(helpers.readBoard());
-        const summary = results.map((r, i) => ({
-          step_id: targets[i].step_id,
-          status: r.status === 'fulfilled' ? r.value.status : 'error',
-          error: r.status === 'rejected' ? r.reason.message : undefined,
-        }));
-
-        json(res, 200, { ok: true, taskId, dispatched: targets.length, results: summary });
+        }
+        json(res, 200, { ok: true, taskId, dispatched: targets.length, results });
       } catch (error) {
         json(res, 500, { error: error.message });
       }

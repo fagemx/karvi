@@ -8,8 +8,6 @@
  * Extracted from kernel.js:dispatchStep() (issue #92).
  * Kernel = routing decisions, StepWorker = execution.
  */
-const routeEngine = require('./route-engine');
-
 const LOCK_GRACE_MS = 30_000; // 30s grace on top of step timeout
 
 function createStepWorker(deps) {

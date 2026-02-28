@@ -299,6 +299,24 @@ function createMockEnvelope(overrides = {}) {
     assert.ok(message.includes('Test objective'), 'should include objective');
   });
 
+  // Test 11: batch dispatch filters out non-queued steps (blocker fix validation)
+  await test('batch dispatch only dispatches queued steps when step_ids provided', () => {
+    // Simulate the batch endpoint's filtering logic
+    const steps = [
+      { step_id: 'T-B1:plan', state: 'succeeded' },
+      { step_id: 'T-B1:impl', state: 'queued' },
+      { step_id: 'T-B1:test', state: 'dead' },
+      { step_id: 'T-B1:review', state: 'running' },
+    ];
+    const requestedIds = ['T-B1:plan', 'T-B1:impl', 'T-B1:test', 'T-B1:review'];
+
+    // Same filter logic as routes/tasks.js batch dispatch
+    const targets = steps.filter(s => requestedIds.includes(s.step_id) && s.state === 'queued');
+
+    assert.strictEqual(targets.length, 1, 'should only include queued steps');
+    assert.strictEqual(targets[0].step_id, 'T-B1:impl');
+  });
+
   // Cleanup
   try {
     fs.rmSync(path.join(artifactStore.ARTIFACT_DIR, testRunId), { recursive: true, force: true });
