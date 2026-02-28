@@ -6,13 +6,16 @@ import Animated, {
   withSpring,
   runOnJS,
 } from 'react-native-reanimated';
+import { Ionicons } from '@expo/vector-icons';
 import type { Task } from '../../shared/types';
 import { TaskCard } from './TaskCard';
 import { updateTaskStatus, dispatchTask } from '../lib/api';
+import { useTheme } from '../hooks/useTheme';
 
 const SWIPE_THRESHOLD = 100;
 
 export function SwipeableTaskCard({ task }: { task: Task }) {
+  const t = useTheme();
   const translateX = useSharedValue(0);
 
   const canApprove = task.status === 'completed' || task.status === 'reviewing' || task.status === 'needs_revision';
@@ -55,21 +58,21 @@ export function SwipeableTaskCard({ task }: { task: Task }) {
 
   return (
     <View style={styles.wrapper}>
-      {/* Background actions */}
       <View style={styles.backgroundActions}>
         {canDispatch && (
-          <View style={[styles.action, styles.actionRight]}>
+          <View style={[styles.action, styles.actionRight, { backgroundColor: t.primary }]}>
+            <Ionicons name="rocket-outline" size={20} color="#fff" />
             <Text style={styles.actionText}>Dispatch</Text>
           </View>
         )}
         {canApprove && (
-          <View style={[styles.action, styles.actionLeft]}>
+          <View style={[styles.action, styles.actionLeft, { backgroundColor: t.success }]}>
+            <Ionicons name="checkmark-circle-outline" size={20} color="#fff" />
             <Text style={styles.actionText}>Approve</Text>
           </View>
         )}
       </View>
 
-      {/* Swipeable card */}
       <GestureDetector gesture={gesture}>
         <Animated.View style={animatedStyle}>
           <TaskCard task={task} />
@@ -86,7 +89,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    borderRadius: 8,
+    borderRadius: 16,
     overflow: 'hidden',
   },
   action: {
@@ -94,8 +97,9 @@ const styles = StyleSheet.create({
     height: '100%',
     justifyContent: 'center',
     alignItems: 'center',
+    gap: 4,
   },
-  actionRight: { backgroundColor: '#42a5f5' },
-  actionLeft: { backgroundColor: '#66bb6a', position: 'absolute', right: 0 },
-  actionText: { color: '#fff', fontWeight: '700', fontSize: 13 },
+  actionRight: {},
+  actionLeft: { position: 'absolute', right: 0 },
+  actionText: { color: '#fff', fontWeight: '700', fontSize: 12 },
 });
