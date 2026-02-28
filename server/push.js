@@ -132,6 +132,12 @@ function buildNotification(task, eventType) {
       title: 'All Tasks Complete',
       body: 'All tasks have been approved',
     },
+    // TODO: pr.created — 當 PR review 功能 (#27) 落地後，加入 PR 建立通知。
+    // 屆時需在 server.js 的 PR 建立流程中呼叫 notifyTaskEvent(path, task, 'pr.created')。
+    'pr.created': {
+      title: `PR Created: ${task.id}`,
+      body: task.pr?.url || task.title,
+    },
   };
 
   const msg = map[eventType];

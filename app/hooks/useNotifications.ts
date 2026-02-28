@@ -4,6 +4,7 @@ import Constants from 'expo-constants';
 import { router } from 'expo-router';
 import { Platform } from 'react-native';
 import { useBoardStore } from './useBoardStore';
+import { registerPushToken } from '../lib/api';
 import type { Task, TaskStatus } from '../../shared/types';
 
 // Configure notification behavior (foreground display)
@@ -55,26 +56,11 @@ export function useNotifications() {
         });
         const pushToken = tokenData.data;
 
-        // Send to server
-        const serverUrl = useBoardStore.getState().serverUrl;
-        const apiToken = useBoardStore.getState().apiToken;
-        if (serverUrl && pushToken) {
-          const headers: Record<string, string> = {
-            'Content-Type': 'application/json',
-          };
-          if (apiToken) headers['Authorization'] = `Bearer ${apiToken}`;
-
-          fetch(`${serverUrl}/api/push-token`, {
-            method: 'POST',
-            headers,
-            body: JSON.stringify({
-              token: pushToken,
-              deviceName: `${Platform.OS} device`,
-            }),
-          }).catch(() => {
+        // Send to server via shared api helper
+        if (pushToken) {
+          registerPushToken(pushToken, `${Platform.OS} device`).catch(() => {
             // Silent fail — push token registration is best-effort
           });
-
           pushTokenRegistered.current = true;
         }
       } catch (err) {

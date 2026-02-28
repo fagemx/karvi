@@ -512,9 +512,7 @@ const server = bb.createServer(ctx, (req, res, helpers) => {
 
   // --- Push Token API ---
 
-  const pathname = new URL(req.url, 'http://localhost').pathname;
-
-  if (req.method === 'POST' && pathname === '/api/push-token') {
+  if (req.method === 'POST' && req.url === '/api/push-token') {
     bb.parseBody(req).then(payload => {
       const token = String(payload.token || '').trim();
       if (!token || !token.startsWith('ExponentPushToken[')) {
@@ -527,7 +525,7 @@ const server = bb.createServer(ctx, (req, res, helpers) => {
     return;
   }
 
-  if (req.method === 'DELETE' && pathname === '/api/push-token') {
+  if (req.method === 'DELETE' && req.url === '/api/push-token') {
     bb.parseBody(req).then(payload => {
       const token = String(payload.token || '').trim();
       if (!token) return json(res, 400, { error: 'token required' });
