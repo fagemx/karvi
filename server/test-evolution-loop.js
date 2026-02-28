@@ -10,10 +10,11 @@
  */
 
 const http = require('http');
+const fs = require('fs');
 const { spawn, spawnSync } = require('child_process');
 const path = require('path');
 
-const PORT = Number(process.env.TEST_PORT) || 3461;
+const PORT = Number(process.env.TEST_PORT) || 13461;
 let serverProc = null;
 
 function post(urlPath, body) {
@@ -89,37 +90,22 @@ function stopServer() {
   }
 }
 
-async function resetBoard() {
-  await post('/api/board', {
-    taskPlan: { goal: 'Evolution Loop Test', phase: 'idle', tasks: [] },
-    conversations: [],
-    participants: [],
-    signals: [],
-    insights: [],
-    lessons: [],
-    controls: {
-      auto_review: true,
-      auto_redispatch: false,
-      max_review_attempts: 3,
-      quality_threshold: 70,
-      review_timeout_sec: 180,
-      review_agent: 'engineer_lite',
-      auto_apply_insights: true,
-    },
-  });
+function cleanState() {
+  // Delete board.json so server's ensureBoardExists() creates a fresh default.
+  // This avoids duplicating the default board definition and ensures full replace (not merge).
+  for (const f of ['board.json', 'board.json.bak', 'task-log.jsonl']) {
+    try { fs.unlinkSync(path.join(__dirname, f)); } catch {}
+  }
 }
 
 async function main() {
-  // --- Start server ---
+  // --- Clean state & start server ---
+  cleanState();
   console.log('Starting server...');
   serverProc = await startServer();
   console.log(`Server started on port ${PORT}`);
   process.on('exit', stopServer);
-
-  // --- Reset board to clean state ---
-  console.log('Resetting board to clean state...');
-  await resetBoard();
-  ok('Board reset');
+  ok('Clean board created by server');
 
   console.log('\n=== Evolution Loop Test ===\n');
 
