@@ -117,10 +117,6 @@ const deps = {
 deps.stepWorker = require('./step-worker').createStepWorker(deps);
 deps.kernel = require('./kernel').createKernel(deps);
 
-// Post-init assertion — fail fast if wiring is broken
-if (!deps.stepWorker) throw new Error('[server] deps.stepWorker not initialized — check step-worker.js');
-if (!deps.kernel) throw new Error('[server] deps.kernel not initialized — check kernel.js');
-
 // --- Route modules ---
 const pushRoutes = require('./routes/push');
 const vaultRoutes = require('./routes/vault');
