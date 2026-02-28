@@ -30,7 +30,9 @@ $Port = if ($env:PORT) { $env:PORT } else { "3461" }
 # Auto-generate token if not set
 if (-not $env:KARVI_API_TOKEN) {
     $bytes = New-Object byte[] 16
-    [System.Security.Cryptography.RandomNumberGenerator]::Fill($bytes)
+    $rng = New-Object System.Security.Cryptography.RNGCryptoServiceProvider
+    $rng.GetBytes($bytes)
+    $rng.Dispose()
     $env:KARVI_API_TOKEN = ($bytes | ForEach-Object { $_.ToString("x2") }) -join ""
     Write-Host "========================================" -ForegroundColor Cyan
     Write-Host "  Generated API token:" -ForegroundColor Cyan
