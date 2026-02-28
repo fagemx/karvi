@@ -16,10 +16,15 @@ export default function SettingsScreen() {
   const apiToken = useBoardStore((s) => s.apiToken);
   const setApiToken = useBoardStore((s) => s.setApiToken);
   const connectionStatus = useBoardStore((s) => s.connectionStatus);
+  const defaultApiUrl = useBoardStore((s) => s.defaultApiUrl);
+  const resetServerUrl = useBoardStore((s) => s.resetServerUrl);
   const [draft, setDraft] = useState(serverUrl);
   const [draftToken, setDraftToken] = useState(apiToken);
   const [testing, setTesting] = useState(false);
   const t = useTheme();
+
+  const isUsingDefault = defaultApiUrl !== '' && draft === defaultApiUrl;
+  const hasOverridden = defaultApiUrl !== '' && draft !== defaultApiUrl;
 
   const handleSave = () => {
     const url = draft.replace(/\/+$/, '');
@@ -77,13 +82,29 @@ export default function SettingsScreen() {
               style={[styles.input, { color: t.text }]}
               value={draft}
               onChangeText={setDraft}
-              placeholder="http://192.168.1.100:3461"
+              placeholder={defaultApiUrl || 'http://192.168.1.100:3461'}
               placeholderTextColor={t.placeholder}
               autoCapitalize="none"
               autoCorrect={false}
               keyboardType="url"
             />
           </View>
+          {isUsingDefault && (
+            <Text style={[styles.defaultHint, { color: t.success }]}>
+              Using default: {defaultApiUrl}
+            </Text>
+          )}
+          {hasOverridden && (
+            <Button
+              label="Reset to default"
+              variant="secondary"
+              onPress={() => {
+                resetServerUrl();
+                setDraft(defaultApiUrl);
+              }}
+              style={styles.resetBtn}
+            />
+          )}
           <Text style={[styles.inputLabel, { color: t.textSecondary }]}>API Token</Text>
           <View style={[styles.inputBox, { backgroundColor: t.bgSubtle, borderColor: t.border }]}>
             <Ionicons name="key-outline" size={16} color={t.textTertiary} />
@@ -181,6 +202,10 @@ const styles = StyleSheet.create({
     marginBottom: 12,
   },
   input: { flex: 1, fontSize: 15, padding: 0 },
+
+  // Default URL hint + reset
+  defaultHint: { fontSize: 12, marginBottom: 12, fontStyle: 'italic' },
+  resetBtn: { marginBottom: 12 },
 
   // Buttons
   btnRow: { flexDirection: 'row', gap: 10 },
