@@ -137,6 +137,65 @@ function getUserIdForTask() {
   return 'default';
 }
 
+// --- Preflight logging: lessons injection + runtime selection ---
+function logDispatchPreflight(plan, task) {
+  if (plan.injectedLessons?.length > 0) {
+    appendLog({
+      ts: nowIso(),
+      event: 'lessons_injected',
+      taskId: task.id,
+      assignee: task.assignee,
+      lessonIds: plan.injectedLessons,
+      count: plan.injectedLessonCount,
+    });
+  }
+  appendLog({
+    ts: nowIso(),
+    event: 'runtime_selected',
+    taskId: task.id,
+    runtime: plan.runtimeHint,
+    rationale: plan.runtimeSelection?.rationale || 'default',
+    available: Object.keys(RUNTIMES),
+  });
+  tryEddaSync(plan);
+}
+
+function tryEddaSync(plan) {
+  const eddaCmd = process.env.EDDA_CMD;
+  if (!eddaCmd) return;
+
+  const { spawn } = require('child_process');
+  const spawnCmd = process.platform === 'win32' ? 'cmd.exe' : eddaCmd;
+
+  try {
+    const decideArgs = ['decide',
+      'dispatch.' + plan.taskId + '.runtime=' + plan.runtimeHint,
+      '--reason', plan.runtimeSelection?.rationale || 'default'];
+    const spawnDecideArgs = process.platform === 'win32'
+      ? ['/d', '/s', '/c', eddaCmd, ...decideArgs]
+      : decideArgs;
+    const p1 = spawn(spawnCmd, spawnDecideArgs, {
+      detached: true, stdio: 'ignore', windowsHide: true
+    });
+    p1.unref();
+
+    if (plan.injectedLessons?.length > 0) {
+      const noteArgs = ['note',
+        'dispatch ' + plan.taskId + ' with lessons: ' + plan.injectedLessons.join(', '),
+        '--tag', 'dispatch'];
+      const spawnNoteArgs = process.platform === 'win32'
+        ? ['/d', '/s', '/c', eddaCmd, ...noteArgs]
+        : noteArgs;
+      const p2 = spawn(spawnCmd, spawnNoteArgs, {
+        detached: true, stdio: 'ignore', windowsHide: true
+      });
+      p2.unref();
+    }
+  } catch (err) {
+    console.error('[edda-sync] fire-and-forget error:', err.message);
+  }
+}
+
 function conversationById(board, id) {
   return (board.conversations || []).find(c => c.id === id);
 }
@@ -220,12 +279,13 @@ function redispatchTask(board, task) {
   const sessionId = task.childSessionKey || board.conversations?.[0]?.sessionIds?.[task.assignee] || null;
   const plan = mgmt.buildDispatchPlan(board, task, { mode: 'redispatch' });
   plan.sessionId = plan.sessionId || sessionId;
+  logDispatchPreflight(plan, task);
 
   const preferredModel = plan.modelHint;
 
   task.status = 'in_progress';
   task.history = task.history || [];
-  task.history.push({ ts: nowIso(), status: 'in_progress', by: 'auto-redispatch', attempt: task.reviewAttempts, model: preferredModel || undefined });
+  task.history.push({ ts: nowIso(), status: 'in_progress', by: 'auto-redispatch', attempt: task.reviewAttempts, model: preferredModel || undefined, runtime: plan.runtimeHint, runtimeRationale: plan.runtimeSelection?.rationale, injectedLessons: plan.injectedLessonCount || 0 });
   task.lastDispatchModel = preferredModel || null;
 
   // S5: Write dispatch state — prepared
@@ -397,6 +457,7 @@ function tryAutoDispatch(taskId) {
   const sessionId = board.conversations?.[0]?.sessionIds?.[task.assignee] || null;
   const plan = mgmt.buildDispatchPlan(board, task, { mode: 'dispatch' });
   plan.sessionId = plan.sessionId || sessionId;
+  logDispatchPreflight(plan, task);
 
   // Transition dispatched → in_progress
   task.status = 'in_progress';
@@ -407,6 +468,9 @@ function tryAutoDispatch(taskId) {
     status: 'in_progress',
     by: 'auto-dispatch',
     model: plan.modelHint || undefined,
+    runtime: plan.runtimeHint,
+    runtimeRationale: plan.runtimeSelection?.rationale,
+    injectedLessons: plan.injectedLessonCount || 0,
   });
   task.lastDispatchModel = plan.modelHint || null;
   if (board.taskPlan) board.taskPlan.phase = 'executing';
@@ -1676,6 +1740,7 @@ const server = bb.createServer(ctx, (req, res, helpers) => {
       // S5: Build dispatch plan via management layer
       const plan = mgmt.buildDispatchPlan(board, task, { mode: 'dispatch', requireTaskResult: false });
       plan.sessionId = plan.sessionId || sessionId;
+      logDispatchPreflight(plan, task);
 
       const preferredModel = plan.modelHint;
 
@@ -1683,7 +1748,7 @@ const server = bb.createServer(ctx, (req, res, helpers) => {
       task.status = 'in_progress';
       task.startedAt = task.startedAt || nowIso();
       task.history = task.history || [];
-      task.history.push({ ts: nowIso(), status: 'in_progress', by: 'dispatch', model: preferredModel || undefined });
+      task.history.push({ ts: nowIso(), status: 'in_progress', by: 'dispatch', model: preferredModel || undefined, runtime: plan.runtimeHint, runtimeRationale: plan.runtimeSelection?.rationale, injectedLessons: plan.injectedLessonCount || 0 });
       task.lastDispatchModel = preferredModel || null;
       board.taskPlan.phase = 'executing';
 
@@ -2036,12 +2101,13 @@ const server = bb.createServer(ctx, (req, res, helpers) => {
       const sessionId = board.conversations?.[0]?.sessionIds?.[task.assignee] || null;
       const plan = mgmt.buildDispatchPlan(board, task, { mode: 'dispatch' });
       plan.sessionId = plan.sessionId || sessionId;
+      logDispatchPreflight(plan, task);
 
       // Update task status
       task.status = 'in_progress';
       task.startedAt = task.startedAt || nowIso();
       task.history = task.history || [];
-      task.history.push({ ts: nowIso(), status: 'in_progress', by: 'dispatch-next', model: plan.modelHint || undefined });
+      task.history.push({ ts: nowIso(), status: 'in_progress', by: 'dispatch-next', model: plan.modelHint || undefined, runtime: plan.runtimeHint, runtimeRationale: plan.runtimeSelection?.rationale, injectedLessons: plan.injectedLessonCount || 0 });
       task.lastDispatchModel = plan.modelHint || null;
       if (board.taskPlan) board.taskPlan.phase = 'executing';
 
@@ -2252,11 +2318,12 @@ const server = bb.createServer(ctx, (req, res, helpers) => {
             const plan = mgmt.buildDispatchPlan(board, nextTask, { mode: 'dispatch' });
             const sid = board.conversations?.[0]?.sessionIds?.[nextTask.assignee] || null;
             plan.sessionId = plan.sessionId || sid;
+            logDispatchPreflight(plan, nextTask);
 
             nextTask.status = 'in_progress';
             nextTask.startedAt = nowIso();
             nextTask.history = nextTask.history || [];
-            nextTask.history.push({ ts: nowIso(), status: 'in_progress', by: 'project-autostart' });
+            nextTask.history.push({ ts: nowIso(), status: 'in_progress', by: 'project-autostart', runtime: plan.runtimeHint, runtimeRationale: plan.runtimeSelection?.rationale, injectedLessons: plan.injectedLessonCount || 0 });
 
             nextTask.dispatch = {
               version: mgmt.DISPATCH_PLAN_VERSION,
