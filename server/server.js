@@ -40,12 +40,17 @@ const vault = require('./vault').createVault({ vaultDir: path.join(__dirname, 'v
 let runtimeClaudeApi = null;
 try { runtimeClaudeApi = require('./runtime-claude-api').create({ vault }); } catch { /* claude-api not configured, skip */ }
 
+const { validateAllRuntimes } = require('./runtime-contract');
+
 const RUNTIMES = {
   openclaw: runtime,
   ...(runtimeCodex ? { codex: runtimeCodex } : {}),
   ...(runtimeClaude ? { claude: runtimeClaude } : {}),
   ...(runtimeClaudeApi ? { 'claude-api': runtimeClaudeApi } : {}),
 };
+
+// Validate all registered runtimes at startup
+validateAllRuntimes(RUNTIMES);
 
 function getRuntime(hint) {
   return RUNTIMES[hint] || runtime;
