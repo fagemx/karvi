@@ -588,6 +588,17 @@ function buildRedispatchMessage(board, task) {
   return lines.join('\n');
 }
 
+/**
+ * Resolve the owner (human) participant's ID from the board.
+ * Used by API-key-based runtimes (e.g. claude-api) to retrieve per-user credentials from vault.
+ * @param {object} board - The board object
+ * @returns {string} userId (defaults to 'default' if no human participant found)
+ */
+function resolveOwnerId(board) {
+  const humans = (board.participants || []).filter(p => p.type === 'human');
+  return humans[0]?.id || 'default';
+}
+
 function buildDispatchPlan(board, task, options = {}) {
   const mode = options.mode === 'redispatch' ? 'redispatch' : 'dispatch';
   const message = mode === 'redispatch'
@@ -604,6 +615,9 @@ function buildDispatchPlan(board, task, options = {}) {
   const taskSkill = task.skill || null;
   const profile = (taskSkill && SKILL_ROLE_MAP[taskSkill]) || null;
 
+  // Resolve owner userId for API-key-based runtimes (e.g. claude-api)
+  const userId = resolveOwnerId(board);
+
   return {
     kind: 'task_dispatch',
     version: DISPATCH_PLAN_VERSION,
@@ -611,6 +625,7 @@ function buildDispatchPlan(board, task, options = {}) {
     taskId: task.id,
     mode,
     runtimeHint,
+    userId,
     agentId: task.assignee,
     modelHint: preferredModelFor(task.assignee),
     timeoutSec: options.timeoutSec || 300,
@@ -696,6 +711,7 @@ module.exports = {
   buildTaskDispatchMessage,
   buildRedispatchMessage,
   buildDispatchPlan,
+  resolveOwnerId,
   DISPATCH_PLAN_VERSION,
   VALID_DISPATCH_STATES,
   SKILL_ROLE_MAP,

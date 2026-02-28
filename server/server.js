@@ -11,12 +11,6 @@ try { runtimeCodex = require('./runtime-codex'); } catch { /* codex not installe
 let runtimeClaude = null;
 try { runtimeClaude = require('./runtime-claude'); } catch { /* claude not installed, skip */ }
 
-const RUNTIMES = {
-  openclaw: runtime,
-  ...(runtimeCodex ? { codex: runtimeCodex } : {}),
-  ...(runtimeClaude ? { claude: runtimeClaude } : {}),
-};
-
 let jiraIntegration = null;
 try { jiraIntegration = require('./integration-jira'); } catch { /* jira integration not available, skip */ }
 
@@ -24,6 +18,17 @@ const telemetry = require('./telemetry');
 const push = require('./push');
 
 const vault = require('./vault').createVault({ vaultDir: path.join(__dirname, 'vaults') });
+
+// Claude API runtime — factory pattern, injects vault for per-user API key retrieval
+let runtimeClaudeApi = null;
+try { runtimeClaudeApi = require('./runtime-claude-api').create({ vault }); } catch { /* claude-api not configured, skip */ }
+
+const RUNTIMES = {
+  openclaw: runtime,
+  ...(runtimeCodex ? { codex: runtimeCodex } : {}),
+  ...(runtimeClaude ? { claude: runtimeClaude } : {}),
+  ...(runtimeClaudeApi ? { 'claude-api': runtimeClaudeApi } : {}),
+};
 
 function getRuntime(hint) {
   return RUNTIMES[hint] || runtime;
@@ -271,10 +276,12 @@ function redispatchTask(board, task) {
       latestTask.dispatch.finishedAt = nowIso();
       latestTask.dispatch.sessionId = newSessionId || latestTask.dispatch.sessionId || null;
       latestTask.dispatch.lastError = null;
+      if (result.usage) latestTask.dispatch.usage = result.usage;
     }
 
     writeBoard(latestBoard);
     appendLog({ ts: nowIso(), event: 'auto_redispatch_reply', taskId: task.id, reply: replyText.slice(0, 500) });
+    if (result.usage) appendLog({ ts: nowIso(), event: 'token_usage', taskId: task.id, usage: result.usage });
   }).catch(err => {
     const latestBoard = readBoard();
     const latestTask = (latestBoard.taskPlan?.tasks || []).find(t => t.id === task.id);
@@ -1426,10 +1433,12 @@ const server = bb.createServer(ctx, (req, res, helpers) => {
           latestTask.dispatch.finishedAt = nowIso();
           latestTask.dispatch.sessionId = newSessionId || latestTask.dispatch.sessionId || null;
           latestTask.dispatch.lastError = null;
+          if (result.usage) latestTask.dispatch.usage = result.usage;
         }
 
         writeBoard(latestBoard);
         appendLog({ ts: nowIso(), event: 'task_dispatch_reply', taskId, agent: task.assignee, model: preferredModel || null, reply: replyText.slice(0, 500) });
+        if (result.usage) appendLog({ ts: nowIso(), event: 'token_usage', taskId, usage: result.usage });
       }).catch(err => {
         const latestBoard = readBoard();
         const latestTask = (latestBoard.taskPlan?.tasks || []).find(t => t.id === taskId);
@@ -1724,6 +1733,7 @@ const server = bb.createServer(ctx, (req, res, helpers) => {
           latestTask.dispatch.lastError = null;
           latestTask.lastReply = replyText;
           latestTask.lastReplyAt = nowIso();
+          if (result.usage) latestTask.dispatch.usage = result.usage;
         }
         if (latestConv && newSessionId) {
           latestConv.sessionIds = latestConv.sessionIds || {};
@@ -1732,6 +1742,7 @@ const server = bb.createServer(ctx, (req, res, helpers) => {
         writeBoard(latestBoard);
         broadcastSSE('board', latestBoard);
         appendLog({ ts: nowIso(), event: 'dispatch_next_reply', taskId: task.id, agent: task.assignee, reply: replyText.slice(0, 500) });
+        if (result.usage) appendLog({ ts: nowIso(), event: 'token_usage', taskId: task.id, usage: result.usage });
       }).catch(err => {
         const latestBoard = readBoard();
         const latestTask = (latestBoard.taskPlan?.tasks || []).find(t => t.id === task.id);
@@ -1889,8 +1900,10 @@ const server = bb.createServer(ctx, (req, res, helpers) => {
                 lt.dispatch.sessionId = rt4.extractSessionId(r.parsed) || null;
                 lt.lastReply = rt4.extractReplyText(r.parsed, r.stdout);
                 lt.lastReplyAt = nowIso();
+                if (r.usage) lt.dispatch.usage = r.usage;
               }
               writeBoard(lb);
+              if (r.usage) appendLog({ ts: nowIso(), event: 'token_usage', taskId: nextTask.id, usage: r.usage });
               broadcastSSE('board', lb);
             }).catch(err => {
               const lb = readBoard();
