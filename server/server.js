@@ -89,11 +89,19 @@ const deps = {
   // Step-level modules
   stepSchema: require('./step-schema'),
   artifactStore: require('./artifact-store'),
+  routeEngine: require('./route-engine'),
+  contextCompiler: require('./context-compiler'),
+
+  // Kernel (set after deps object is created)
+  kernel: null,
 
   // Cross-module functions (set by tasks.js init)
   tryAutoDispatch: null,
   redispatchTask: null,
 };
+
+// --- Initialize kernel ---
+deps.kernel = require('./kernel').createKernel(deps);
 
 // --- Route modules ---
 const pushRoutes = require('./routes/push');

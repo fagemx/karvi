@@ -1010,6 +1010,16 @@ module.exports = function tasksRoutes(req, res, helpers, deps) {
 
         helpers.writeBoard(board);
         helpers.appendLog({ ts: helpers.nowIso(), event: signalType, taskId, stepId, from: oldState, to: step.state });
+
+        // Trigger kernel for terminal step states (async, after response)
+        const signal = { type: signalType, data: { taskId, stepId, from: oldState, to: step.state, attempt: step.attempt } };
+        if (deps.kernel && (step.state === 'succeeded' || step.state === 'dead')) {
+          setImmediate(() => {
+            deps.kernel.onStepEvent(signal, helpers.readBoard(), helpers)
+              .catch(err => console.error('[kernel] onStepEvent error:', err.message));
+          });
+        }
+
         json(res, 200, { ok: true, taskId, step });
       } catch (error) {
         const status = error.code === 'INVALID_STEP_TRANSITION' ? 400 : 500;
