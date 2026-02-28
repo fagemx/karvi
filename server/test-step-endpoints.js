@@ -7,17 +7,19 @@
  */
 const http = require('http');
 const fs = require('fs');
+const os = require('os');
 const { spawn } = require('child_process');
 const path = require('path');
 
-const PORT = Number(process.env.TEST_PORT) || 13462;
+let PORT = Number(process.env.TEST_PORT) || 0;  // 0 = OS assigns free port
 const API_TOKEN = process.env.KARVI_API_TOKEN || null;
 let serverProc = null;
 let passed = 0;
 let failed = 0;
+let tmpDataDir = null;
 
-function ok(label) { passed++; console.log(`  ✅ ${label}`); }
-function fail(label, reason) { failed++; console.log(`  ❌ ${label}: ${reason}`); process.exitCode = 1; }
+function ok(label) { passed++; console.log(`  \u2705 ${label}`); }
+function fail(label, reason) { failed++; console.log(`  \u274C ${label}: ${reason}`); process.exitCode = 1; }
 
 function post(urlPath, body) {
   return new Promise((resolve, reject) => {
@@ -55,23 +57,34 @@ function patch(urlPath, body) {
 
 function startServer() {
   return new Promise((resolve, reject) => {
+    // Create isolated temp DATA_DIR so parallel runs don't share board.json
+    tmpDataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'karvi-test-step-'));
     const proc = spawn(process.execPath, [path.join(__dirname, 'server.js')], {
       stdio: ['ignore', 'pipe', 'pipe'],
-      env: { ...process.env, PORT: String(PORT), KARVI_STORAGE: 'json' },
+      env: { ...process.env, PORT: String(PORT), KARVI_STORAGE: 'json', DATA_DIR: tmpDataDir },
     });
     serverProc = proc;
     let buf = '';
     proc.stdout.on('data', d => {
       buf += d.toString();
-      if (buf.includes('running at') || buf.includes('listening on')) resolve();
+      // Parse actual bound port from "running at http://localhost:<port>"
+      const m = buf.match(/running at http:\/\/localhost:(\d+)/);
+      if (m) {
+        PORT = Number(m[1]);
+        resolve();
+      }
     });
     proc.stderr.on('data', d => { buf += d.toString(); });
-    setTimeout(() => reject(new Error('Server start timeout: ' + buf)), 8000);
+    setTimeout(() => reject(new Error('Server start timeout (port regex did not match). Output: ' + buf)), 8000);
   });
 }
 
 function stopServer() {
   if (serverProc) { serverProc.kill(); serverProc = null; }
+  if (tmpDataDir) {
+    try { fs.rmSync(tmpDataDir, { recursive: true, force: true }); } catch { /* ignore */ }
+    tmpDataDir = null;
+  }
 }
 
 // Ensure a test task exists
@@ -117,23 +130,23 @@ async function runTests() {
     }
   }
 
-  // Test 3: PATCH /api/tasks/:id/steps/:stepId — transition queued → running
+  // Test 3: PATCH /api/tasks/:id/steps/:stepId — transition queued \u2192 running
   {
     const res = await patch('/api/tasks/T-STEP-TEST/steps/T-STEP-TEST:plan', { state: 'running', locked_by: 'worker-1' });
     if (res.status === 200 && res.body.ok && res.body.step.state === 'running') {
-      ok('PATCH step queued → running succeeds');
+      ok('PATCH step queued \u2192 running succeeds');
     } else {
-      fail('PATCH step queued → running', JSON.stringify(res));
+      fail('PATCH step queued \u2192 running', JSON.stringify(res));
     }
   }
 
-  // Test 4: PATCH step running → succeeded
+  // Test 4: PATCH step running \u2192 succeeded
   {
     const res = await patch('/api/tasks/T-STEP-TEST/steps/T-STEP-TEST:plan', { state: 'succeeded', output_ref: 'artifacts/run-integ-test/T-STEP-TEST_plan.output.json' });
     if (res.status === 200 && res.body.ok && res.body.step.state === 'succeeded') {
-      ok('PATCH step running → succeeded emits step_completed');
+      ok('PATCH step running \u2192 succeeded emits step_completed');
     } else {
-      fail('PATCH step running → succeeded', JSON.stringify(res));
+      fail('PATCH step running \u2192 succeeded', JSON.stringify(res));
     }
   }
 
@@ -141,7 +154,7 @@ async function runTests() {
   {
     const res = await patch('/api/tasks/T-STEP-TEST/steps/T-STEP-TEST:implement', { state: 'succeeded' });
     if (res.status === 400 && res.body.error && res.body.error.includes('Invalid step transition')) {
-      ok('PATCH invalid transition (queued → succeeded) returns 400');
+      ok('PATCH invalid transition (queued \u2192 succeeded) returns 400');
     } else {
       fail('PATCH invalid transition', JSON.stringify(res));
     }
@@ -159,14 +172,14 @@ async function runTests() {
     }
   }
 
-  // Test 7: Backward compatible — task without steps still works
+  // Test 7: Backward compatible \u2014 task without steps still works
   {
     const board = await get('/api/tasks');
     const tasks = board.tasks || board.taskPlan?.tasks || [];
     const testTask = tasks.find(t => t.id === 'T-STEP-TEST');
     const otherTasks = tasks.filter(t => t.id !== 'T-STEP-TEST');
     if (testTask && Array.isArray(testTask.steps) && otherTasks.every(t => !t.steps)) {
-      ok('Backward compatible — only step-enabled task has steps array');
+      ok('Backward compatible \u2014 only step-enabled task has steps array');
     } else {
       fail('Backward compatible', `testTask.steps=${JSON.stringify(testTask?.steps)}, others with steps=${otherTasks.filter(t => t.steps).length}`);
     }
@@ -184,7 +197,7 @@ async function runTests() {
     process.exitCode = 1;
   } finally {
     stopServer();
-    console.log(`\n${'─'.repeat(40)}`);
+    console.log(`\n${'\u2500'.repeat(40)}`);
     console.log(`Results: ${passed} passed, ${failed} failed`);
   }
 })();
