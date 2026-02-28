@@ -435,7 +435,8 @@ function ensureBoardExists(ctx, defaultBoard) {
 function listen(server, ctx) {
   storage.ensureLogFile(ctx.logPath);
   server.listen(ctx.port, () => {
-    console.log(`Blackboard server running at http://localhost:${ctx.port}`);
+    const actualPort = server.address().port;
+    console.log(`Blackboard server running at http://localhost:${actualPort}`);
   });
 }
 
