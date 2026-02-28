@@ -61,3 +61,13 @@ export async function unblockTask(taskId: string, message: string) {
   if (!res.ok) throw new Error(`unblockTask: ${res.status}`);
   return res.json();
 }
+
+export async function registerPushToken(token: string, deviceName: string) {
+  const res = await fetch(`${getBaseUrl()}/api/push-token`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...authHeaders() },
+    body: JSON.stringify({ token, deviceName }),
+  });
+  if (!res.ok) throw new Error(`registerPushToken: ${res.status}`);
+  return res.json();
+}
