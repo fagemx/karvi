@@ -10,6 +10,14 @@
 const routeEngine = require('./route-engine');
 const contextCompiler = require('./context-compiler');
 
+/**
+ * Create the kernel event loop.
+ *
+ * Depends on deps.stepWorker being set before any step dispatch occurs.
+ * See server.js for initialization order and circular dependency notes.
+ *
+ * @param {object} deps - Shared dependency injection object (mutated after creation)
+ */
 function createKernel(deps) {
   const { artifactStore, stepSchema, mgmt, push, PUSH_TOKENS_PATH } = deps;
 
@@ -96,6 +104,8 @@ function createKernel(deps) {
         }
         helpers.writeBoard(latestBoard);
         // Dispatch async via StepWorker (fire-and-forget, errors logged)
+        // Guard: stepWorker must be initialized (see server.js init order)
+        if (!deps.stepWorker) throw new Error('[kernel] deps.stepWorker not initialized \u2014 check init order in server.js');
         deps.stepWorker.executeStep(envelope, latestBoard, helpers).catch(err =>
           console.error(`[kernel] executeStep error for ${envelope.step_id}:`, err.message));
         return;  // writeBoard already called
