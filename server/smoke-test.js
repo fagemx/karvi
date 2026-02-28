@@ -79,6 +79,25 @@ function post(port, urlPath, payload, { token = authToken, timeout = 5000 } = {}
   });
 }
 
+function del(port, urlPath, payload, { token = authToken, timeout = 5000 } = {}) {
+  return new Promise((resolve, reject) => {
+    const data = JSON.stringify(payload);
+    const timer = setTimeout(() => reject(new Error(`Timeout ${urlPath}`)), timeout);
+    const headers = { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(data) };
+    if (token) headers['Authorization'] = `Bearer ${token}`;
+    const req = http.request({
+      hostname: 'localhost', port, path: urlPath, method: 'DELETE', headers,
+    }, res => {
+      let body = '';
+      res.setEncoding('utf8');
+      res.on('data', c => body += c);
+      res.on('end', () => { clearTimeout(timer); resolve({ status: res.statusCode, headers: res.headers, body }); });
+    });
+    req.on('error', e => { clearTimeout(timer); reject(e); });
+    req.end(data);
+  });
+}
+
 function sseProbe(port, timeout = 3000) {
   return new Promise((resolve, reject) => {
     const sseUrl = authToken
@@ -517,6 +536,224 @@ async function runSuite(target) {
         throw new Error(`expected 503 or 404, got ${r.status}`);
       }
     } catch (e) { fail('POST /api/tasks/:id/digest', e.message); }
+  }
+
+  // ── Uncovered Endpoint Tests (issue #77) ──
+  if (port === 3461) {
+    console.log('\n  ── Uncovered endpoint tests (issue #77) ──');
+
+    // ── Push Token API ──
+    // POST /api/push-token (valid token)
+    try {
+      const r = await post(port, '/api/push-token', { token: 'ExponentPushToken[smoke-test-token-123]', deviceName: 'SmokeTestDevice' });
+      if (r.status !== 200) throw new Error(`status ${r.status}`);
+      const body = JSON.parse(r.body);
+      if (body.ok !== true) throw new Error(`expected ok: true, got ${JSON.stringify(body)}`);
+      ok('POST /api/push-token (valid) → 200 + ok');
+    } catch (e) { fail('POST /api/push-token (valid)', e.message); }
+
+    // POST /api/push-token (invalid token)
+    try {
+      const r = await post(port, '/api/push-token', { token: 'invalid-token' });
+      if (r.status !== 400) throw new Error(`expected 400, got ${r.status}`);
+      const body = JSON.parse(r.body);
+      if (!body.error) throw new Error('missing error message');
+      ok('POST /api/push-token (invalid) → 400 + error');
+    } catch (e) { fail('POST /api/push-token (invalid)', e.message); }
+
+    // DELETE /api/push-token (cleanup)
+    try {
+      const r = await del(port, '/api/push-token', { token: 'ExponentPushToken[smoke-test-token-123]' });
+      if (r.status !== 200) throw new Error(`status ${r.status}`);
+      const body = JSON.parse(r.body);
+      if (body.ok !== true) throw new Error(`expected ok: true, got ${JSON.stringify(body)}`);
+      ok('DELETE /api/push-token → 200 + ok');
+    } catch (e) { fail('DELETE /api/push-token', e.message); }
+
+    // ── Jira Integration Config ──
+    // GET /api/integrations/jira
+    try {
+      const r = await get(port, '/api/integrations/jira');
+      if (r.status !== 200) throw new Error(`status ${r.status}`);
+      JSON.parse(r.body); // must be valid JSON
+      ok('GET /api/integrations/jira → 200 + valid JSON');
+    } catch (e) { fail('GET /api/integrations/jira', e.message); }
+
+    // POST /api/integrations/jira (update config + cleanup)
+    try {
+      // Save original config
+      const origR = await get(port, '/api/integrations/jira');
+      const origConfig = JSON.parse(origR.body);
+      // Update with smoke test marker
+      const r = await post(port, '/api/integrations/jira', { _smokeTest77: true });
+      if (r.status !== 200) throw new Error(`status ${r.status}`);
+      const body = JSON.parse(r.body);
+      if (body._smokeTest77 !== true) throw new Error('config not merged');
+      // Cleanup: restore original config by removing smoke marker
+      const boardR = await get(port, '/api/board');
+      const board = JSON.parse(boardR.body);
+      if (board.integrations?.jira?._smokeTest77 !== undefined) {
+        delete board.integrations.jira._smokeTest77;
+        await post(port, '/api/board', board);
+      }
+      ok('POST /api/integrations/jira → 200 + config merged + cleaned');
+    } catch (e) { fail('POST /api/integrations/jira', e.message); }
+
+    // ── GitHub Token Test ──
+    // POST /api/github/token/test — expect 503 (no vault) or 400 (no PAT)
+    try {
+      const r = await post(port, '/api/github/token/test', {});
+      if (r.status !== 503 && r.status !== 400) throw new Error(`expected 503 or 400, got ${r.status}`);
+      const body = JSON.parse(r.body);
+      if (!body.error) throw new Error('missing error message');
+      ok(`POST /api/github/token/test → ${r.status} (no vault/PAT)`);
+    } catch (e) { fail('POST /api/github/token/test', e.message); }
+
+    // ── Participants & Conversations ──
+    // POST /api/participants (create)
+    try {
+      const r = await post(port, '/api/participants', { id: 'smoke-part-77', type: 'agent', displayName: 'Smoke Agent 77', agentId: 'smoke-agent' });
+      if (r.status !== 200) throw new Error(`status ${r.status}: ${r.body}`);
+      const body = JSON.parse(r.body);
+      if (body.ok !== true) throw new Error(`expected ok: true`);
+      if (!body.participant || body.participant.id !== 'smoke-part-77') throw new Error('missing participant');
+      ok('POST /api/participants (create) → 200 + participant');
+    } catch (e) { fail('POST /api/participants (create)', e.message); }
+
+    // POST /api/participants (duplicate → 409)
+    try {
+      const r = await post(port, '/api/participants', { id: 'smoke-part-77', type: 'agent', displayName: 'Smoke Agent 77', agentId: 'smoke-agent' });
+      if (r.status !== 409) throw new Error(`expected 409, got ${r.status}`);
+      ok('POST /api/participants (duplicate) → 409');
+    } catch (e) { fail('POST /api/participants (duplicate)', e.message); }
+
+    // POST /api/conversations (create)
+    try {
+      const r = await post(port, '/api/conversations', { id: 'smoke-conv-77', title: 'Smoke Test Conv 77', members: ['smoke-part-77'] });
+      if (r.status !== 200) throw new Error(`status ${r.status}: ${r.body}`);
+      const body = JSON.parse(r.body);
+      if (body.ok !== true) throw new Error('expected ok: true');
+      if (!body.conversation || body.conversation.id !== 'smoke-conv-77') throw new Error('missing conversation');
+      ok('POST /api/conversations (create) → 200 + conversation');
+    } catch (e) { fail('POST /api/conversations (create)', e.message); }
+
+    // POST /api/conversations (duplicate → 409)
+    try {
+      const r = await post(port, '/api/conversations', { id: 'smoke-conv-77', title: 'Smoke Test Conv 77', members: ['smoke-part-77'] });
+      if (r.status !== 409) throw new Error(`expected 409, got ${r.status}`);
+      ok('POST /api/conversations (duplicate) → 409');
+    } catch (e) { fail('POST /api/conversations (duplicate)', e.message); }
+
+    // Cleanup: remove smoke participant and conversation from board
+    try {
+      const boardR = await get(port, '/api/board');
+      const board = JSON.parse(boardR.body);
+      if (board.participants) {
+        board.participants = board.participants.filter(p => p.id !== 'smoke-part-77');
+      }
+      if (board.conversations) {
+        board.conversations = board.conversations.filter(c => c.id !== 'smoke-conv-77');
+      }
+      await post(port, '/api/board', board);
+      ok('Participants & conversations cleanup → done');
+    } catch (e) { fail('Participants & conversations cleanup', e.message); }
+
+    // ── Task Plan API ──
+    // POST /api/tasks (create task plan)
+    try {
+      // Save board backup
+      const backupR = await get(port, '/api/board');
+      const backup = JSON.parse(backupR.body);
+      // Create task plan
+      const r = await post(port, '/api/tasks', {
+        goal: 'Smoke test goal 77', phase: 'planning',
+        tasks: [{ id: 'SMOKE-77-T1', title: 'Smoke task', status: 'pending', assignee: null }],
+      });
+      if (r.status !== 200) throw new Error(`status ${r.status}: ${r.body}`);
+      const body = JSON.parse(r.body);
+      if (body.ok !== true) throw new Error('expected ok: true');
+      if (!body.taskPlan || body.taskPlan.goal !== 'Smoke test goal 77') throw new Error('wrong taskPlan goal');
+      if (!Array.isArray(body.taskPlan.tasks) || body.taskPlan.tasks.length !== 1) throw new Error('expected 1 task');
+      // Restore original board
+      await post(port, '/api/board', backup);
+      ok('POST /api/tasks → 200 + taskPlan created + restored');
+    } catch (e) { fail('POST /api/tasks', e.message); }
+
+    // ── Project API ──
+    // POST /api/project (valid project)
+    try {
+      // Save board backup
+      const backupR = await get(port, '/api/board');
+      const backup = JSON.parse(backupR.body);
+      const r = await post(port, '/api/project', {
+        title: 'Smoke Project 77', goal: 'Test project creation',
+        tasks: [
+          { id: 'SP77-1', title: 'Task A' },
+          { id: 'SP77-2', title: 'Task B', depends: ['SP77-1'] },
+        ],
+      });
+      if (r.status !== 201) throw new Error(`expected 201, got ${r.status}: ${r.body}`);
+      const body = JSON.parse(r.body);
+      if (body.ok !== true) throw new Error('expected ok: true');
+      if (body.title !== 'Smoke Project 77') throw new Error(`wrong title: ${body.title}`);
+      if (body.taskCount !== 2) throw new Error(`expected taskCount 2, got ${body.taskCount}`);
+      // Restore original board
+      await post(port, '/api/board', backup);
+      ok('POST /api/project (valid) → 201 + project created + restored');
+    } catch (e) { fail('POST /api/project (valid)', e.message); }
+
+    // POST /api/project (missing title → 400)
+    try {
+      const r = await post(port, '/api/project', { tasks: [{ id: 'x', title: 'y' }] });
+      if (r.status !== 400) throw new Error(`expected 400, got ${r.status}`);
+      const body = JSON.parse(r.body);
+      if (!body.error || !body.error.includes('title')) throw new Error(`wrong error: ${body.error}`);
+      ok('POST /api/project (no title) → 400');
+    } catch (e) { fail('POST /api/project (no title)', e.message); }
+
+    // POST /api/project (empty tasks → 400)
+    try {
+      const r = await post(port, '/api/project', { title: 'Bad Project', tasks: [] });
+      if (r.status !== 400) throw new Error(`expected 400, got ${r.status}`);
+      const body = JSON.parse(r.body);
+      if (!body.error || !body.error.includes('tasks')) throw new Error(`wrong error: ${body.error}`);
+      ok('POST /api/project (empty tasks) → 400');
+    } catch (e) { fail('POST /api/project (empty tasks)', e.message); }
+
+    // ── Dispatch Next (safe path) ──
+    // POST /api/dispatch-next — no ready tasks in clean state
+    try {
+      // Ensure clean state: save backup, clear tasks
+      const backupR = await get(port, '/api/board');
+      const backup = JSON.parse(backupR.body);
+      const cleanBoard = JSON.parse(JSON.stringify(backup));
+      if (cleanBoard.taskPlan?.tasks) {
+        cleanBoard.taskPlan.tasks = cleanBoard.taskPlan.tasks.map(t => ({ ...t, status: 'completed' }));
+        await post(port, '/api/board', cleanBoard);
+      }
+      const r = await post(port, '/api/dispatch-next', {});
+      if (r.status !== 200) throw new Error(`status ${r.status}: ${r.body}`);
+      const body = JSON.parse(r.body);
+      if (body.ok !== true) throw new Error('expected ok: true');
+      if (body.dispatched !== false) throw new Error(`expected dispatched: false, got ${body.dispatched}`);
+      // Restore original board
+      await post(port, '/api/board', backup);
+      ok('POST /api/dispatch-next (no ready) → 200 + dispatched: false + restored');
+    } catch (e) { fail('POST /api/dispatch-next', e.message); }
+
+    // ── POST /api/retro ──
+    try {
+      const r = await post(port, '/api/retro', {}, { timeout: 15000 });
+      if (r.status !== 200) throw new Error(`status ${r.status}: ${r.body}`);
+      const body = JSON.parse(r.body);
+      if (body.ok !== true) throw new Error('expected ok: true');
+      ok('POST /api/retro → 200 + ok');
+    } catch (e) { fail('POST /api/retro', e.message); }
+
+    // Note: POST /api/shutdown is intentionally not tested here.
+    // It calls gracefulShutdown() which terminates the server process,
+    // preventing remaining tests from running. The endpoint is trivial
+    // (respond 200 then shutdown) and is better covered by lifecycle tests.
   }
 
   // Auth-specific tests (only when --token is provided)
