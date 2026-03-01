@@ -15,6 +15,7 @@ const FAILURE_MODES = {
   TEST_FAILURE:       'TEST_FAILURE',
   TOOL_ERROR:         'TOOL_ERROR',
   STRATEGY_MISMATCH:  'STRATEGY_MISMATCH',
+  FINALIZE_ERROR:     'FINALIZE_ERROR',
 };
 
 const BUDGET_DEFAULTS = {
@@ -31,6 +32,7 @@ const REMEDIATION_LIMITS = {
   CONFLICT:          1,
   TEST_FAILURE:      2,
   STRATEGY_MISMATCH: 2,
+  FINALIZE_ERROR:    1,
 };
 
 // --- Failure classification ---
@@ -43,6 +45,7 @@ const FAILURE_PATTERNS = [
   { mode: FAILURE_MODES.TEST_FAILURE,     pattern: /test.*fail|assert.*fail|expect.*received|spec.*fail/i },
   { mode: FAILURE_MODES.STRATEGY_MISMATCH, pattern: /wrong.direction|rethink|strategy.*(?:fail|wrong|bad)|approach.*(?:fail|wrong|bad)|(?:fail|wrong|bad).*(?:strategy|approach)/i },
   { mode: FAILURE_MODES.TOOL_ERROR,       pattern: /timeout|ETIMEDOUT|rate.limit|ECONNREFUSED|socket.hang/i },
+  { mode: FAILURE_MODES.FINALIZE_ERROR,   pattern: /uncommitted.changes|auto.finalize|finalize.error/i },
 ];
 
 function classifyFailure(agentOutput) {
