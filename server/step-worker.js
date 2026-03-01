@@ -225,7 +225,7 @@ function buildStepMessage(envelope) {
     || (envelope.task_id.match(/^GH-(\d+)$/) || [])[1]
     || envelope.task_id;
 
-  // Map step types to skill invocations
+  // Map built-in engineering steps to skill invocations (legacy fallback).
   const STEP_SKILL_MAP = {
     plan:      `Execute /issue-plan ${issueNumber}`,
     implement: `Execute /issue-action for issue #${issueNumber}. The plan has already been posted as a comment on the issue — read it from there.`,
@@ -233,10 +233,19 @@ function buildStepMessage(envelope) {
     review:    `Execute /pr-review`,
   };
 
-  const skillMsg = STEP_SKILL_MAP[envelope.step_type]
+  // Prefer task-defined semantic instructions over hard-coded step map.
+  const skillMsg = (typeof envelope.instruction === 'string' && envelope.instruction.trim())
+    || (typeof envelope.skill === 'string' && envelope.skill.trim() ? `Execute ${envelope.skill.trim()}` : null)
+    || STEP_SKILL_MAP[envelope.step_type]
     || `Complete the ${envelope.step_type} step for task ${envelope.task_id}.`;
 
+  const stepHeader = String(envelope.step_type || '').toUpperCase();
+  const objective = envelope.objective || `Execute step: ${envelope.step_type}`;
+
   const lines = [
+    `Step Dispatch: ${stepHeader}`,
+    `Objective: ${objective}`,
+    '',
     skillMsg,
     '',
     `Task: ${envelope.task_id}`,

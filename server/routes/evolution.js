@@ -107,7 +107,7 @@ module.exports = function evolutionRoutes(req, res, helpers, deps) {
         }
         const sa = payload.suggestedAction;
         if (!sa || !mgmt.VALID_ACTION_TYPES.includes(sa.type)) {
-          return json(res, 400, { error: 'suggestedAction.type must be controls_patch, dispatch_hint, lesson_write, or noop' });
+          return json(res, 400, { error: 'suggestedAction.type must be controls_patch, dispatch_hint, lesson_write, set_pipeline, or noop' });
         }
         const board = helpers.readBoard();
         mgmt.ensureEvolutionFields(board);

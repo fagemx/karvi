@@ -212,8 +212,8 @@ console.log('\n=== management.js step helpers ===\n');
 test('generateStepsForTask creates default pipeline', () => {
   const task = { id: 'T-00001' };
   const steps = mgmt.generateStepsForTask(task, 'run-xyz');
-  assert.strictEqual(steps.length, 4);
-  assert.deepStrictEqual(steps.map(s => s.type), ['plan', 'implement', 'test', 'review']);
+  assert.strictEqual(steps.length, 3);
+  assert.deepStrictEqual(steps.map(s => s.type), ['plan', 'implement', 'review']);
   assert.strictEqual(steps[0].step_id, 'T-00001:plan');
   assert.strictEqual(steps[0].run_id, 'run-xyz');
 });
@@ -223,6 +223,20 @@ test('generateStepsForTask accepts custom pipeline', () => {
   const steps = mgmt.generateStepsForTask(task, 'run-abc', ['plan', 'implement']);
   assert.strictEqual(steps.length, 2);
   assert.deepStrictEqual(steps.map(s => s.type), ['plan', 'implement']);
+});
+
+test('generateStepsForTask accepts semantic pipeline objects', () => {
+  const task = { id: 'T-00003' };
+  const steps = mgmt.generateStepsForTask(task, 'run-sem', [
+    { type: 'concept', instruction: 'Brainstorm 3 angles', skill: '/blog-concept' },
+    { type: 'draft', instruction: 'Write first draft', runtime_hint: 'claude' },
+  ]);
+
+  assert.strictEqual(steps.length, 2);
+  assert.deepStrictEqual(steps.map(s => s.type), ['concept', 'draft']);
+  assert.strictEqual(steps[0].instruction, 'Brainstorm 3 angles');
+  assert.strictEqual(steps[0].skill, '/blog-concept');
+  assert.strictEqual(steps[1].runtime_hint, 'claude');
 });
 
 test('buildDispatchPlan includes steps field', () => {

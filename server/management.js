@@ -25,7 +25,7 @@ const DEFAULT_CONTROLS = {
 };
 
 // --- Evolution Layer: Schema validation ---
-const VALID_ACTION_TYPES = ['controls_patch', 'dispatch_hint', 'lesson_write', 'noop'];
+const VALID_ACTION_TYPES = ['controls_patch', 'dispatch_hint', 'lesson_write', 'set_pipeline', 'noop'];
 const VALID_RISK_LEVELS = ['low', 'medium', 'high'];
 const VALID_LESSON_STATUSES = ['active', 'validated', 'invalidated', 'superseded'];
 
@@ -76,6 +76,25 @@ function applyInsightAction(board, insight) {
         supersededBy: null,
       });
       break;
+    case 'set_pipeline': {
+      const taskId = action.payload?.taskId || action.payload?.task_id;
+      const steps = action.payload?.steps;
+      if (!taskId || !Array.isArray(steps)) break;
+
+      const tasks = board.taskPlan?.tasks || [];
+      const task = tasks.find(t => t.id === taskId);
+      if (!task) break;
+
+      // Store semantic pipeline on task. Auto-dispatch and step creation will use this.
+      task.pipeline = steps;
+      task.history = task.history || [];
+      task.history.push({
+        ts: nowIso(),
+        status: task.status || 'pending',
+        reason: `pipeline_updated:${insight.id}`,
+      });
+      break;
+    }
     case 'noop':
     default:
       break;
@@ -754,9 +773,43 @@ function buildDispatchPlan(board, task, options = {}) {
 
 const DEFAULT_STEP_PIPELINE = ['plan', 'implement', 'review'];
 
+function normalizePipelineEntry(entry) {
+  if (typeof entry === 'string') {
+    const type = entry.trim();
+    return type ? { type } : null;
+  }
+  if (entry && typeof entry === 'object' && typeof entry.type === 'string') {
+    const type = entry.type.trim();
+    if (!type) return null;
+    return {
+      type,
+      instruction: typeof entry.instruction === 'string' ? entry.instruction : null,
+      skill: typeof entry.skill === 'string' ? entry.skill : null,
+      runtime_hint: typeof entry.runtime_hint === 'string' ? entry.runtime_hint : null,
+      retry_policy: entry.retry_policy && typeof entry.retry_policy === 'object' ? entry.retry_policy : null,
+    };
+  }
+  return null;
+}
+
 function generateStepsForTask(task, runId, pipeline) {
-  const types = pipeline || DEFAULT_STEP_PIPELINE;
-  return types.map(type => stepSchema.createStep(task.id, runId, type));
+  const source = Array.isArray(pipeline) ? pipeline
+    : Array.isArray(task?.pipeline) ? task.pipeline
+      : DEFAULT_STEP_PIPELINE;
+
+  const normalized = source.map(normalizePipelineEntry).filter(Boolean);
+  if (normalized.length === 0) {
+    return DEFAULT_STEP_PIPELINE.map(type => stepSchema.createStep(task.id, runId, type));
+  }
+
+  return normalized.map(stepDef => {
+    const opts = {};
+    if (stepDef.instruction) opts.instruction = stepDef.instruction;
+    if (stepDef.skill) opts.skill = stepDef.skill;
+    if (stepDef.runtime_hint) opts.runtime_hint = stepDef.runtime_hint;
+    if (stepDef.retry_policy) opts.retry_policy = stepDef.retry_policy;
+    return stepSchema.createStep(task.id, runId, stepDef.type, opts);
+  });
 }
 
 function pickNextTask(board) {
