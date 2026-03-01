@@ -79,6 +79,7 @@ function buildEnvelope(decision, runState, deps) {
       lessons: [],
     },
     retry_context: retryContext,
+    review_feedback: decision.review_feedback || task.reviewFeedback || null,
     budget_remaining: budgetRemaining,
     retry_policy: targetStep.retry_policy,
     idempotency_key: idempotencyKey,
