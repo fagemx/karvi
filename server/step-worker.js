@@ -234,10 +234,18 @@ function buildStepMessage(envelope) {
   };
 
   // Prefer task-defined semantic instructions over hard-coded step map.
-  const skillMsg = (typeof envelope.instruction === 'string' && envelope.instruction.trim())
+  const rawSkillMsg = (typeof envelope.instruction === 'string' && envelope.instruction.trim())
     || (typeof envelope.skill === 'string' && envelope.skill.trim() ? `Execute ${envelope.skill.trim()}` : null)
     || STEP_SKILL_MAP[envelope.step_type]
     || `Complete the ${envelope.step_type} step for task ${envelope.task_id}.`;
+
+  // Interpolate template variables in instruction strings.
+  const skillMsg = interpolateInstruction(rawSkillMsg, {
+    issue_id: issueNumber,
+    task_id: envelope.task_id,
+    step_id: envelope.step_id,
+    step_type: envelope.step_type,
+  });
 
   const stepHeader = String(envelope.step_type || '').toUpperCase();
   const objective = envelope.objective || `Execute step: ${envelope.step_type}`;
@@ -274,6 +282,21 @@ function buildStepMessage(envelope) {
 }
 
 /**
+ * Interpolate template variables like {issue_id}, {task_id} in instruction strings.
+ * Unknown placeholders are left as-is to avoid corrupting user-defined content.
+ *
+ * @param {string} template - Instruction string potentially containing {var} placeholders
+ * @param {object} vars     - Key-value map of variable names to their values
+ * @returns {string} Interpolated string
+ */
+function interpolateInstruction(template, vars) {
+  if (typeof template !== 'string') return template;
+  return template.replace(/\{(\w+)\}/g, (match, key) => {
+    return vars.hasOwnProperty(key) ? String(vars[key]) : match;
+  });
+}
+
+/**
  * Recover expired locks at server startup.
  * Steps stuck in 'running' with expired lock_expires_at get reset to 'queued'.
  */
@@ -294,4 +317,4 @@ function recoverExpiredLocks(board) {
   return recovered;
 }
 
-module.exports = { createStepWorker, parseStepResult, buildStepMessage, recoverExpiredLocks };
+module.exports = { createStepWorker, parseStepResult, buildStepMessage, interpolateInstruction, recoverExpiredLocks };

@@ -11,7 +11,7 @@ const assert = require('assert');
 const stepSchema = require('./step-schema');
 const artifactStore = require('./artifact-store');
 const mgmt = require('./management');
-const { createStepWorker, parseStepResult, buildStepMessage, recoverExpiredLocks } = require('./step-worker');
+const { createStepWorker, parseStepResult, buildStepMessage, interpolateInstruction, recoverExpiredLocks } = require('./step-worker');
 
 let passed = 0;
 let failed = 0;
@@ -299,7 +299,68 @@ function createMockEnvelope(overrides = {}) {
     assert.ok(message.includes('Test objective'), 'should include objective');
   });
 
-  // Test 11: batch dispatch filters out non-queued steps (blocker fix validation)
+  // Test 11: buildStepMessage uses envelope.instruction over STEP_SKILL_MAP
+  await test('buildStepMessage prefers envelope.instruction over STEP_SKILL_MAP', () => {
+    const envelope = createMockEnvelope({
+      instruction: 'Custom instruction for plan step',
+    });
+    const message = buildStepMessage(envelope);
+    assert.ok(message.includes('Custom instruction for plan step'), 'should include custom instruction');
+    // Should NOT include the default STEP_SKILL_MAP plan message
+    assert.ok(!message.includes('Execute /issue-plan'), 'should not include default skill map message');
+  });
+
+  // Test 12: buildStepMessage uses envelope.skill when instruction is absent
+  await test('buildStepMessage uses envelope.skill when no instruction', () => {
+    const envelope = createMockEnvelope({
+      step_type: 'concept',
+      skill: '/blog-concept',
+    });
+    const message = buildStepMessage(envelope);
+    assert.ok(message.includes('Execute /blog-concept'), 'should include Execute + skill');
+  });
+
+  // Test 13: buildStepMessage interpolates {issue_id} and {task_id} in instruction
+  await test('buildStepMessage interpolates template variables in instruction', () => {
+    const envelope = createMockEnvelope({
+      task_id: 'GH-42',
+      step_id: 'GH-42:plan',
+      step_type: 'plan',
+      instruction: 'Execute /issue-plan {issue_id} for task {task_id}',
+      input_refs: { task_description: 'Test', task_source: { number: 42 } },
+    });
+    const message = buildStepMessage(envelope);
+    assert.ok(message.includes('Execute /issue-plan 42 for task GH-42'), 'should interpolate {issue_id} and {task_id}');
+    assert.ok(!message.includes('{issue_id}'), 'should not contain raw {issue_id}');
+    assert.ok(!message.includes('{task_id}'), 'should not contain raw {task_id}');
+  });
+
+  // Test 14: buildStepMessage leaves unknown placeholders intact
+  await test('buildStepMessage leaves unknown placeholders intact', () => {
+    const envelope = createMockEnvelope({
+      instruction: 'Do {unknown_var} stuff for {task_id}',
+    });
+    const message = buildStepMessage(envelope);
+    assert.ok(message.includes('{unknown_var}'), 'unknown placeholders should be left as-is');
+    assert.ok(message.includes('stuff for T-W1'), '{task_id} should be interpolated');
+  });
+
+  // Test 15: interpolateInstruction unit test
+  await test('interpolateInstruction replaces known vars and preserves unknown', () => {
+    const result = interpolateInstruction(
+      'Plan {issue_id} for {task_id} with {unknown}',
+      { issue_id: '123', task_id: 'T-1' }
+    );
+    assert.strictEqual(result, 'Plan 123 for T-1 with {unknown}');
+  });
+
+  // Test 16: interpolateInstruction handles non-string input
+  await test('interpolateInstruction handles non-string input', () => {
+    assert.strictEqual(interpolateInstruction(null, {}), null);
+    assert.strictEqual(interpolateInstruction(undefined, {}), undefined);
+  });
+
+  // Test 17: batch dispatch filters out non-queued steps (blocker fix validation)
   await test('batch dispatch only dispatches queued steps when step_ids provided', () => {
     // Simulate the batch endpoint's filtering logic
     const steps = [
