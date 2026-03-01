@@ -189,6 +189,18 @@ function createKernel(deps) {
           refs: [taskId],
           data: { taskId, stepId, reason: decision.human_review?.reason },
         });
+        // Cycle stall detection: blocked meeting tasks may stall the cycle
+        if (cycleWatchdog.isMeetingTask(taskId)) {
+          const health = cycleWatchdog.checkCycleHealth(latestBoard);
+          if (health.stalled) {
+            cycleWatchdog.closeStalledCycle(latestBoard, helpers, health.reason, health);
+            if (push && PUSH_TOKENS_PATH && latestTask) {
+              push.notifyTaskEvent(PUSH_TOKENS_PATH, latestTask, 'task.blocked')
+                .catch(err => console.error('[kernel] push error:', err.message));
+            }
+            return;
+          }
+        }
         helpers.writeBoard(latestBoard);
         // Push notification
         if (push && PUSH_TOKENS_PATH && latestTask) {
