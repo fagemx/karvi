@@ -137,6 +137,7 @@ const briefsRoutes = require('./routes/briefs');
 const chatRoutes = require('./routes/chat');
 const jiraRoutes = require('./routes/jira');
 const tasksRoutes = require('./routes/tasks');
+const versionRoutes = require('./routes/version');
 
 // --- Route chain ---
 const routes = [
@@ -150,6 +151,7 @@ const routes = [
   chatRoutes,
   jiraRoutes,
   tasksRoutes,
+  versionRoutes,
 ];
 
 const { json } = bb;

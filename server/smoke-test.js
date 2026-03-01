@@ -193,6 +193,16 @@ async function runSuite(target) {
     ok('GET /health → 200 + valid health response');
   } catch (e) { fail('GET /health', e.message); }
 
+  // 6b. GET /api/version
+  try {
+    const r = await get(port, '/api/version', { token: null });
+    if (r.status !== 200) throw new Error(`status ${r.status}`);
+    const data = JSON.parse(r.body);
+    if (!data.version || typeof data.version !== 'string') throw new Error('missing or invalid version');
+    if (!/^\d+\.\d+\.\d+/.test(data.version)) throw new Error(`bad format: ${data.version}`);
+    ok(`GET /api/version → 200 (v${data.version})`);
+  } catch (e) { fail('GET /api/version', e.message); }
+
   // 7. CORS headers (accepts '*' or a whitelisted origin when KARVI_CORS_ORIGINS is set)
   try {
     const r = await get(port, '/api/board');
