@@ -37,8 +37,13 @@ function dispatch(plan) {
       ? ['/d', '/s', '/c', CLAUDE_CMD, ...args]
       : args;
 
+    // Clear CLAUDECODE env var to allow spawning inside an existing Claude Code session
+    const env = { ...process.env };
+    delete env.CLAUDECODE;
+
     const child = spawn(spawnCmd, spawnArgs, {
       cwd: workDir,
+      env,
       windowsHide: true,
       shell: false,
       timeout: (plan.timeoutSec || 300) * 1000,
