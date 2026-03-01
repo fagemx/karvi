@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
-import { View, Text, TextInput, ScrollView, Pressable, StyleSheet, Alert } from 'react-native';
+import { View, Text, TextInput, ScrollView, Pressable, StyleSheet, Alert, Switch } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useBoardStore } from '../../hooks/useBoardStore';
@@ -15,6 +15,8 @@ import {
   checkGithubToken,
   testGithubToken,
   deleteGithubToken,
+  getGithubIntegration,
+  updateGithubIntegration,
 } from '../../lib/api';
 
 export default function SettingsScreen() {
@@ -38,6 +40,15 @@ export default function SettingsScreen() {
   const [ghSaving, setGhSaving] = useState(false);
   const [ghTesting, setGhTesting] = useState(false);
 
+  // GitHub webhook integration state
+  const [whEnabled, setWhEnabled] = useState(false);
+  const [whSecretDraft, setWhSecretDraft] = useState('');
+  const [whSecretConfigured, setWhSecretConfigured] = useState(false);
+  const [whAssignee, setWhAssignee] = useState('engineer_lite');
+  const [whTargetRepos, setWhTargetRepos] = useState('');
+  const [whIgnoreLabels, setWhIgnoreLabels] = useState('');
+  const [whSaving, setWhSaving] = useState(false);
+
   const refreshGhStatus = useCallback(async () => {
     try {
       const status = await checkGithubToken();
@@ -45,6 +56,14 @@ export default function SettingsScreen() {
     } catch {
       setGhConfigured(false);
     }
+    try {
+      const wh = await getGithubIntegration();
+      setWhEnabled(wh.enabled === true);
+      setWhSecretConfigured(wh.webhookSecretConfigured === true);
+      setWhAssignee(wh.assignee || 'engineer_lite');
+      setWhTargetRepos((wh.targetRepos || []).join(', '));
+      setWhIgnoreLabels((wh.ignoreLabels || []).join(', '));
+    } catch { /* server may not have integration config yet */ }
   }, []);
 
   useEffect(() => {
@@ -106,6 +125,29 @@ export default function SettingsScreen() {
         },
       },
     ]);
+  };
+
+  const handleWhSave = async () => {
+    setWhSaving(true);
+    try {
+      const payload: Record<string, any> = {
+        enabled: whEnabled,
+        assignee: whAssignee.trim() || 'engineer_lite',
+        targetRepos: whTargetRepos.split(',').map((s: string) => s.trim()).filter(Boolean),
+        ignoreLabels: whIgnoreLabels.split(',').map((s: string) => s.trim()).filter(Boolean),
+      };
+      if (whSecretDraft.trim()) {
+        payload.webhookSecret = whSecretDraft.trim();
+      }
+      const result = await updateGithubIntegration(payload);
+      setWhSecretConfigured(result.webhookSecretConfigured === true);
+      setWhSecretDraft('');
+      Alert.alert('Saved', 'GitHub webhook settings updated.');
+    } catch (err: any) {
+      Alert.alert('Error', err.message);
+    } finally {
+      setWhSaving(false);
+    }
   };
 
   const isUsingDefault = defaultApiUrl !== '' && draft === defaultApiUrl;
@@ -228,8 +270,10 @@ export default function SettingsScreen() {
                 {ghConfigured ? (ghUsername ? `Connected as ${ghUsername}` : 'Connected') : 'Not connected'}
               </Text>
             </View>
-            {ghConfigured ? (
+            {ghConfigured && whEnabled ? (
               <Badge label="Connected" bg={t.successBg} color={t.success} size="sm" />
+            ) : ghConfigured ? (
+              <Badge label="PAT Only" bg={t.bgSubtle} color={t.textSecondary} size="sm" />
             ) : (
               <Ionicons name="chevron-forward" size={18} color={t.textTertiary} />
             )}
@@ -333,6 +377,97 @@ export default function SettingsScreen() {
             </View>
           </>
         )}
+
+        {/* Divider between PAT and Webhook sections */}
+        <View style={[styles.divider, { backgroundColor: t.border, marginVertical: 16 }]} />
+
+        {/* Webhook Integration Section */}
+        <Text style={[styles.inputLabel, { color: t.textSecondary }]}>WEBHOOK INTEGRATION</Text>
+
+        <View style={styles.toggleRow}>
+          <Text style={[styles.toggleLabel, { color: t.text }]}>Enabled</Text>
+          <Switch value={whEnabled} onValueChange={setWhEnabled} />
+        </View>
+
+        <Text style={[styles.inputLabel, { color: t.textSecondary }]}>Webhook URL</Text>
+        <View style={[styles.inputBox, { backgroundColor: t.bgSubtle, borderColor: t.border }]}>
+          <Ionicons name="link-outline" size={16} color={t.textTertiary} />
+          <TextInput
+            style={[styles.input, { color: t.textSecondary }]}
+            value={`${serverUrl}/api/webhooks/github`}
+            editable={false}
+            selectTextOnFocus
+          />
+        </View>
+
+        <Text style={[styles.inputLabel, { color: t.textSecondary }]}>Webhook Secret</Text>
+        <View style={[styles.inputBox, { backgroundColor: t.bgSubtle, borderColor: t.border }]}>
+          <Ionicons name="key-outline" size={16} color={t.textTertiary} />
+          <TextInput
+            style={[styles.input, { color: t.text }]}
+            value={whSecretDraft}
+            onChangeText={setWhSecretDraft}
+            placeholder={whSecretConfigured ? '\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022  (configured)' : 'Enter webhook secret'}
+            placeholderTextColor={t.placeholder}
+            autoCapitalize="none"
+            autoCorrect={false}
+            secureTextEntry
+          />
+        </View>
+        {whSecretConfigured && (
+          <View style={styles.secretHintRow}>
+            <Ionicons name="checkmark-circle" size={14} color={t.success} />
+            <Text style={{ color: t.success, fontSize: 12 }}>Secret configured</Text>
+          </View>
+        )}
+
+        <Text style={[styles.inputLabel, { color: t.textSecondary }]}>Default Assignee</Text>
+        <View style={[styles.inputBox, { backgroundColor: t.bgSubtle, borderColor: t.border }]}>
+          <TextInput
+            style={[styles.input, { color: t.text }]}
+            value={whAssignee}
+            onChangeText={setWhAssignee}
+            placeholder="engineer_lite"
+            placeholderTextColor={t.placeholder}
+            autoCapitalize="none"
+            autoCorrect={false}
+          />
+        </View>
+
+        <Text style={[styles.inputLabel, { color: t.textSecondary }]}>Target Repos</Text>
+        <View style={[styles.inputBox, { backgroundColor: t.bgSubtle, borderColor: t.border }]}>
+          <TextInput
+            style={[styles.input, { color: t.text }]}
+            value={whTargetRepos}
+            onChangeText={setWhTargetRepos}
+            placeholder="owner/repo, org/repo (empty = all)"
+            placeholderTextColor={t.placeholder}
+            autoCapitalize="none"
+            autoCorrect={false}
+          />
+        </View>
+
+        <Text style={[styles.inputLabel, { color: t.textSecondary }]}>Ignore Labels</Text>
+        <View style={[styles.inputBox, { backgroundColor: t.bgSubtle, borderColor: t.border }]}>
+          <TextInput
+            style={[styles.input, { color: t.text }]}
+            value={whIgnoreLabels}
+            onChangeText={setWhIgnoreLabels}
+            placeholder="wontfix, question (empty = none)"
+            placeholderTextColor={t.placeholder}
+            autoCapitalize="none"
+            autoCorrect={false}
+          />
+        </View>
+
+        <Button
+          label="Save Webhook Settings"
+          onPress={handleWhSave}
+          loading={whSaving}
+          fullWidth
+          style={{ marginTop: 4 }}
+          icon={<Ionicons name="save-outline" size={16} color="#fff" />}
+        />
       </BottomSheet>
     </SafeAreaView>
   );
@@ -386,4 +521,9 @@ const styles = StyleSheet.create({
   ghConnectedRow: { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 4 },
   ghConnectedText: { fontSize: 15, fontWeight: '600' },
   ghHint: { fontSize: 13, lineHeight: 19, marginBottom: 16 },
+
+  // Webhook settings
+  toggleRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 },
+  toggleLabel: { fontSize: 15, fontWeight: '600' },
+  secretHintRow: { flexDirection: 'row', alignItems: 'center', gap: 4, marginBottom: 12, marginTop: -8 },
 });

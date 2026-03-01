@@ -166,3 +166,28 @@ export async function deleteGithubToken() {
   if (!res.ok) throw new Error(`deleteGithubToken: ${res.status}`);
   return res.json();
 }
+
+// ---------------------------------------------------------------------------
+// GitHub Integration Config (webhook settings)
+// ---------------------------------------------------------------------------
+
+export async function getGithubIntegration() {
+  const res = await fetch(`${getBaseUrl()}/api/integrations/github`, {
+    headers: authHeaders(),
+  });
+  if (!res.ok) return { enabled: false, webhookSecretConfigured: false };
+  return res.json();
+}
+
+export async function updateGithubIntegration(config: Record<string, any>) {
+  const res = await fetch(`${getBaseUrl()}/api/integrations/github`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json', ...authHeaders() },
+    body: JSON.stringify(config),
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({ error: `HTTP ${res.status}` }));
+    throw new Error(body.error || `updateGithubIntegration: ${res.status}`);
+  }
+  return res.json();
+}
