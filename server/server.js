@@ -203,6 +203,7 @@ bb.ensureBoardExists(ctx, {
     review_timeout_sec: 180,
     review_agent: 'engineer_lite',
     auto_apply_insights: true,
+    cycle_stall_timeout_hours: 4,
   },
 });
 
