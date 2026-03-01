@@ -82,7 +82,7 @@ function createStepWorker(deps) {
     // 3b. Preflight: check if work is already done (zero tokens)
     const preflightResult = runPreflight(envelope, plan.workingDir || plan.cwd);
 
-    let status, failure, summary, durationMs, usage, postCheckResult, stepResult;
+    let status, failure, summary, durationMs, usage, postCheckResult, stepResult, sessionId;
 
     if (preflightResult.alreadyDone) {
       // Skip dispatch — work already exists in codebase
@@ -142,7 +142,7 @@ function createStepWorker(deps) {
       //    is inside parsed.result, not in raw stdout)
       const replyText = rt.extractReplyText(result.parsed, result.stdout);
       usage = rt.extractUsage?.(result.parsed, result.stdout) || null;
-      const sessionId = rt.extractSessionId?.(result.parsed) || null;
+      sessionId = rt.extractSessionId?.(result.parsed) || null;
       stepResult = parseStepResult(replyText) || parseStepResult(result.stdout);
 
       if (stepResult) {
