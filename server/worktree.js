@@ -43,6 +43,16 @@ function createWorktree(repoRoot, taskId) {
     timeout: 30000,
   });
 
+  // Copy .claude/settings.json into worktree so agents inherit project permissions.
+  // Without this, Claude Code headless mode has no project-level allow-list and
+  // blocks all Bash tools (gh, curl, etc.) requiring user approval that never comes.
+  const srcSettings = path.join(repoRoot, '.claude', 'settings.json');
+  if (fs.existsSync(srcSettings)) {
+    const destDir = path.join(worktreePath, '.claude');
+    fs.mkdirSync(destDir, { recursive: true });
+    fs.copyFileSync(srcSettings, path.join(destDir, 'settings.json'));
+  }
+
   return { worktreePath, branch };
 }
 
