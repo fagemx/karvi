@@ -89,10 +89,12 @@ const MAX_REVISION_CYCLES = 2;
 
 function needsRevision(agentOutput) {
   const text = [agentOutput.summary, agentOutput.failure?.failure_signature].filter(Boolean).join(' ').toLowerCase();
+  // "Approve with nits" is not actionable — skip revision
+  if (/approve/i.test(text) && !/request.changes/i.test(text)) return false;
   // Explicit "request changes" verdict
   if (/request.changes/i.test(text)) return true;
-  // Has medium or high severity findings (not just "approve with nits")
-  if (/\bmedium\b.*\bfind/i.test(text) || /\bhigh\b.*\bfind/i.test(text) || /\bcritical\b.*\bfind/i.test(text)) return true;
+  // High/critical severity findings (medium alone is not worth a revision cycle)
+  if (/\bhigh\b.*\bfind/i.test(text) || /\bcritical\b.*\bfind/i.test(text)) return true;
   return false;
 }
 

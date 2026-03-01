@@ -139,8 +139,9 @@ function createKernel(deps) {
           latestTask.reviewFeedback = decision.review_feedback || null;
           console.log(`[kernel] revision cycle for ${taskId}: resetting implement+review, feedback: ${(decision.review_feedback || '').slice(0, 100)}`);
         }
-        // Build envelope and dispatch implement step
-        const revEnvelope = contextCompiler.buildEnvelope(decision, runState, deps);
+        // Build envelope using fresh runState from latestTask (steps were just reset above)
+        const freshRunState = { task: latestTask, steps: latestTask.steps, run_id: runState.run_id, budget: latestTask.budget };
+        const revEnvelope = contextCompiler.buildEnvelope(decision, freshRunState, deps);
         if (revEnvelope && implStep) {
           artifactStore.writeArtifact(revEnvelope.run_id, revEnvelope.step_id, 'input', revEnvelope);
           stepSchema.transitionStep(implStep, 'running', {
