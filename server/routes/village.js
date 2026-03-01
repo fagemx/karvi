@@ -278,17 +278,23 @@ module.exports = function villageRoutes(req, res, helpers, deps) {
 
         const meetingType = body.type || 'weekly_planning';
 
-        // Idempotency check: don't start a new meeting if one is active
-        if (village.currentCycle && village.currentCycle.phase === 'proposal') {
+        // Idempotency check: don't start a new meeting if one is already active
+        // - proposal phase: always block (weekly_planning already in progress)
+        // - checkin phase: block only if another midweek_checkin is requested
+        const activePhase = village.currentCycle?.phase;
+        const blockDuplicate =
+          activePhase === 'proposal' ||
+          (activePhase === 'checkin' && meetingType === 'midweek_checkin');
+        if (blockDuplicate) {
           return json(res, 409, {
             error: 'meeting_active',
-            message: `Cycle ${village.currentCycle.cycleId} is already in phase: ${village.currentCycle.phase}`,
+            message: `Cycle ${village.currentCycle.cycleId} is already in phase: ${activePhase}`,
             currentCycle: village.currentCycle,
           });
         }
 
-        // Validate: need at least one department
-        if (village.departments.length === 0) {
+        // Validate: need at least one department (not required for midweek check-ins)
+        if (meetingType !== 'midweek_checkin' && village.departments.length === 0) {
           return json(res, 400, {
             error: 'no_departments',
             message: 'Cannot trigger meeting without departments. Add departments first via POST /api/village/departments',
@@ -305,10 +311,17 @@ module.exports = function villageRoutes(req, res, helpers, deps) {
         board.taskPlan.tasks.push(...meetingTasks);
 
         // Set cycle state
-        const cycleId = meetingTasks[0]?.id?.replace(/^MTG-/, '').replace(/-proposal-.*$/, '') || `cycle-${Date.now()}`;
+        // Extract cycleId from the first task id: MTG-{cycleId}-{suffix}
+        // suffix may be "proposal-{deptId}", "synthesis", or "checkin"
+        const rawId = meetingTasks[0]?.id || '';
+        const cycleId = rawId
+          .replace(/^MTG-/, '')
+          .replace(/-(proposal-.+|synthesis|checkin)$/, '') || `cycle-${Date.now()}`;
+
+        const cyclePhase = meetingType === 'midweek_checkin' ? 'checkin' : 'proposal';
         village.currentCycle = {
           cycleId,
-          phase: 'proposal',
+          phase: cyclePhase,
           meetingType,
           startedAt: now,
           taskIds: meetingTasks.map(t => t.id),
@@ -322,7 +335,7 @@ module.exports = function villageRoutes(req, res, helpers, deps) {
           meetingType,
           taskCount: meetingTasks.length,
         });
-        helpers.broadcastSSE('village_meeting', { cycleId, meetingType, phase: 'proposal' });
+        helpers.broadcastSSE('village_meeting', { cycleId, meetingType, phase: cyclePhase });
 
         // Auto-dispatch dispatched tasks
         if (deps.tryAutoDispatch) {
@@ -337,7 +350,7 @@ module.exports = function villageRoutes(req, res, helpers, deps) {
           ok: true,
           cycleId,
           meetingType,
-          phase: 'proposal',
+          phase: cyclePhase,
           tasksCreated: meetingTasks.length,
           taskIds: meetingTasks.map(t => t.id),
         });

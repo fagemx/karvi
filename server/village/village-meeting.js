@@ -103,6 +103,55 @@ function buildProposalInstruction(rolePrompt, goals, recentSignals) {
 }
 
 /**
+ * Build the instruction string for the village chief's mid-week check-in task.
+ *
+ * @param {string} chiefPrompt - chief role prompt text
+ * @param {object[]} goals - active village goals
+ * @param {object[]} execTasks - current execution task summaries { id, title, status, department }
+ * @returns {string}
+ */
+function buildCheckinInstruction(chiefPrompt, goals, execTasks) {
+  const lines = [];
+  lines.push('# Village Chief: Mid-week Check-in');
+  lines.push('');
+  lines.push('## Your Role');
+  lines.push(chiefPrompt);
+  lines.push('');
+  lines.push('## Active Village Goals');
+  if (goals.length === 0) {
+    lines.push('(no active goals)');
+  } else {
+    for (const g of goals) {
+      lines.push(`- **${g.id}**: ${g.text} [cadence: ${g.cadence || 'unset'}]`);
+      if (g.metrics && g.metrics.length > 0) {
+        lines.push(`  Metrics: ${g.metrics.join(', ')}`);
+      }
+    }
+  }
+  lines.push('');
+  lines.push('## Current Execution Task Statuses');
+  if (execTasks.length === 0) {
+    lines.push('(no execution tasks found for this cycle)');
+  } else {
+    for (const t of execTasks) {
+      const dept = t.department ? ` [${t.department}]` : '';
+      lines.push(`- **${t.id}**${dept}: ${t.title} — status: ${t.status}`);
+    }
+  }
+  lines.push('');
+  lines.push('## Instructions');
+  lines.push('You are conducting a mid-week check-in. Review the execution task statuses above and produce:');
+  lines.push('1. **Progress summary**: What has been completed, what is in progress.');
+  lines.push('2. **Blockers identified**: Any tasks that are blocked or at risk.');
+  lines.push('3. **Recommended adjustments**: Priority changes, reassignments, or new actions needed.');
+  lines.push('');
+  lines.push('Output your result as:');
+  lines.push('STEP_RESULT:{"status":"completed","summary":{...}}');
+  lines.push('where summary contains: { progress, blockers, recommendations }');
+  return lines.join('\n');
+}
+
+/**
  * Build the instruction string for the village chief's synthesis task.
  */
 function buildSynthesisInstruction(chiefPrompt, goals) {
@@ -139,11 +188,40 @@ function buildSynthesisInstruction(chiefPrompt, goals) {
  * @returns {object[]} array of task objects ready to be added to board.taskPlan.tasks
  */
 function generateMeetingTasks(board, meetingType) {
-  const cycleId = `cycle-${getWeekId()}`;
+  // midweek_checkin reuses the active cycle's id; other types generate a new one
+  const activeCycleId = board.village?.currentCycle?.cycleId;
+  const cycleId = (meetingType === 'midweek_checkin' && activeCycleId)
+    ? activeCycleId
+    : `cycle-${getWeekId()}`;
+
   const departments = board.village?.departments || [];
   const goals = (board.village?.goals || []).filter(g => g.active);
 
   const chiefPrompt = readRoleFile('village/roles/chief.md');
+
+  // ── midweek_checkin: single task, no department proposals ──
+  if (meetingType === 'midweek_checkin') {
+    const execTasks = (board.taskPlan?.tasks || [])
+      .filter(t => t.source?.type === 'village_plan' && t.source?.cycleId === cycleId)
+      .map(t => ({ id: t.id, title: t.title, status: t.status, department: t.department || null }));
+
+    const taskId = `MTG-${cycleId}-checkin`;
+    const instruction = buildCheckinInstruction(chiefPrompt, goals, execTasks);
+
+    return [{
+      id: taskId,
+      title: 'Village Chief: Mid-week Check-in',
+      assignee: 'engineer_lite',
+      status: 'dispatched',
+      depends: [],
+      pipeline: [{
+        type: 'checkin',
+        instruction,
+        runtime_hint: 'claude',
+      }],
+      history: [{ ts: new Date().toISOString(), status: 'dispatched', reason: `meeting:${meetingType}` }],
+    }];
+  }
 
   const proposalTasks = [];
   const proposalIds = [];
@@ -194,6 +272,7 @@ module.exports = {
   generateMeetingTasks,
   buildProposalInstruction,
   buildSynthesisInstruction,
+  buildCheckinInstruction,
   readRoleFile,
   getWeekId,
   gatherRecentSignals,
