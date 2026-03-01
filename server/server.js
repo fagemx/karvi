@@ -20,6 +20,9 @@ try { runtimeClaude = require('./runtime-claude'); } catch { /* claude not insta
 let jiraIntegration = null;
 try { jiraIntegration = require('./integration-jira'); } catch { /* jira integration not available, skip */ }
 
+let githubIntegration = null;
+try { githubIntegration = require('./integration-github'); } catch { /* github integration not available, skip */ }
+
 let digestTask = null;
 try { digestTask = require('./digest-task'); } catch { /* digest-task not available, skip */ }
 
@@ -81,6 +84,7 @@ const deps = {
   push,
   usage,
   jiraIntegration,
+  githubIntegration,
   digestTask,
   timelineTask,
   confidenceEngine,
