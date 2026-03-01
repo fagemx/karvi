@@ -1,9 +1,36 @@
 const { spawn, execSync } = require('child_process');
 const path = require('path');
+const fs = require('fs');
 
 const DIR = __dirname;
-const CLAUDE_CMD = process.env.CLAUDE_CMD || 'claude';
 const STEP_RESULT_RE = /STEP_RESULT:\s*(\{.*\})/;
+
+/**
+ * Resolve the absolute path to claude executable.
+ *
+ * On Windows, passing a custom env to spawn() breaks PATH resolution
+ * (the case-insensitive proxy on process.env is lost). We resolve the
+ * full path once at startup to sidestep this.
+ */
+function resolveClaudePath() {
+  if (process.env.CLAUDE_CMD) return process.env.CLAUDE_CMD;
+
+  if (process.platform === 'win32') {
+    // Try `where` first
+    try {
+      const p = execSync('where claude', { encoding: 'utf8', timeout: 5000 })
+        .trim().split('\n')[0].trim();
+      if (p && fs.existsSync(p)) return p;
+    } catch {}
+    // Fallback: common install location
+    const local = path.join(process.env.USERPROFILE || '', '.local/bin/claude.exe');
+    if (fs.existsSync(local)) return local;
+  }
+
+  return 'claude'; // Unix: PATH works fine with custom env
+}
+
+const CLAUDE_EXE = resolveClaudePath();
 
 /**
  * Kill an entire process tree.
@@ -20,28 +47,18 @@ function killTree(pid) {
 }
 
 /**
- * Extract all text from a Claude assistant message content array.
+ * Dispatch a plan to Claude Code headless CLI.
+ *
+ * Uses --output-format json (not stream-json) for reliable single-object
+ * output. The CLI outputs one complete JSON result when the task finishes.
+ * We parse stdout incrementally; as soon as valid JSON is received we
+ * resolve and kill the process tree (CLI may hang after completion).
  */
-function extractTextFromContent(content) {
-  if (!Array.isArray(content)) return '';
-  return content
-    .filter(c => c.type === 'text')
-    .map(c => c.text)
-    .join('\n');
-}
-
 function dispatch(plan) {
   return new Promise((resolve, reject) => {
-    const args = ['-p'];
+    const args = ['-p', '--output-format', 'json'];
 
     if (plan.sessionId) args.push('--resume', plan.sessionId);
-
-    // Stream JSON with partial messages — get token-level events during tool use.
-    // Without --include-partial-messages, only complete turn-boundary events are
-    // emitted. A single turn with many tool calls can take >5 minutes with zero
-    // events, causing the inactivity timer to fire prematurely.
-    args.push('--output-format', 'stream-json', '--verbose', '--include-partial-messages');
-
     if (plan.modelHint) args.push('--model', plan.modelHint);
     if (plan.codexRole) args.push('--agent', plan.codexRole);
     if (plan.maxBudgetUsd) args.push('--max-budget-usd', String(plan.maxBudgetUsd));
@@ -54,34 +71,29 @@ function dispatch(plan) {
     args.push(plan.message);
 
     const workDir = plan.workingDir || path.resolve(DIR, '..');
-    const spawnCmd = process.platform === 'win32' ? 'cmd.exe' : CLAUDE_CMD;
-    const spawnArgs = process.platform === 'win32'
-      ? ['/d', '/s', '/c', CLAUDE_CMD, ...args]
-      : args;
-
     const env = { ...process.env };
     delete env.CLAUDECODE;
 
     const timeoutMs = (plan.timeoutSec || 300) * 1000;
-    const child = spawn(spawnCmd, spawnArgs, {
+    console.log('[claude-rt] spawn:', CLAUDE_EXE);
+    console.log('[claude-rt] args:', JSON.stringify(args.filter(a => a !== plan.message)));
+    console.log('[claude-rt] message length:', plan.message?.length || 0);
+    console.log('[claude-rt] cwd:', workDir, 'timeout:', timeoutMs);
+
+    const child = spawn(CLAUDE_EXE, args, {
       cwd: workDir,
       env,
       windowsHide: true,
       shell: false,
+      stdio: ['ignore', 'pipe', 'pipe'],  // stdin MUST be ignored on Windows
     });
 
-    let lastAssistantText = '';  // text from the most recent assistant message
-    let sessionId = null;
-    let inputTokens = null;
-    let outputTokens = null;
-    let totalCost = null;
+    let stdout = '';
     let stderr = '';
     let settled = false;
-    let lineBuf = '';
 
     child.stdout.setEncoding('utf8');
     child.stderr.setEncoding('utf8');
-    child.stderr.on('data', c => (stderr += c));
 
     function settle(err, result) {
       if (settled) return;
@@ -90,113 +102,83 @@ function dispatch(plan) {
       if (err) reject(err); else resolve(result);
     }
 
-    function buildResult() {
+    function buildResult(obj) {
       return {
         code: 0,
-        stdout: lastAssistantText,
+        stdout: obj.result || '',
         stderr,
         parsed: {
-          result: lastAssistantText || null,
-          session_id: sessionId,
-          input_tokens: inputTokens,
-          output_tokens: outputTokens,
-          total_cost: totalCost,
+          result: obj.result || null,
+          session_id: obj.session_id || null,
+          input_tokens: obj.usage?.input_tokens ?? null,
+          output_tokens: obj.usage?.output_tokens ?? null,
+          total_cost: obj.total_cost_usd ?? obj.cost_usd ?? null,
         },
       };
     }
 
-    // --- NDJSON parsing: one complete JSON object per line ---
+    // --- stdout: accumulate and try to parse as complete JSON ---
     child.stdout.on('data', chunk => {
-      lineBuf += chunk;
-      const lines = lineBuf.split('\n');
-      lineBuf = lines.pop(); // keep incomplete last line
-
-      for (const line of lines) {
-        if (!line.trim()) continue;
-        let obj;
-        try { obj = JSON.parse(line); } catch { continue; }
-
-        // Activity detected — reset inactivity timer
-        resetInactivityTimer();
-
-        if (obj.session_id) sessionId = obj.session_id;
-
-        // --- (1) result event: definitive completion (may be missing per known bug) ---
-        if (obj.type === 'result') {
-          if (obj.result) lastAssistantText = obj.result;
-          if (obj.session_id) sessionId = obj.session_id;
-          inputTokens = obj.usage?.input_tokens ?? obj.input_tokens ?? inputTokens;
-          outputTokens = obj.usage?.output_tokens ?? obj.output_tokens ?? outputTokens;
-          totalCost = obj.total_cost_usd ?? obj.total_cost ?? totalCost;
-          settle(
-            obj.is_error ? new Error(obj.result || 'claude reported error') : null,
-            obj.is_error ? undefined : buildResult(),
-          );
-          killTree(child.pid);
-          return;
+      stdout += chunk;
+      try {
+        const obj = JSON.parse(stdout);
+        // Successfully parsed — CLI has finished outputting result
+        console.log('[claude-rt] result received: type=%s is_error=%s cost=%s',
+          obj.type, obj.is_error, obj.total_cost_usd);
+        if (obj.is_error) {
+          settle(new Error(obj.result || 'claude reported error'));
+        } else {
+          settle(null, buildResult(obj));
         }
-
-        // --- (2) assistant event: complete message after each turn ---
-        if (obj.type === 'assistant' && obj.message) {
-          const msg = obj.message;
-          const text = extractTextFromContent(msg.content);
-          if (text) lastAssistantText = text;
-          if (msg.usage) {
-            inputTokens = msg.usage.input_tokens ?? inputTokens;
-            outputTokens = msg.usage.output_tokens ?? outputTokens;
-          }
-
-          // Primary completion signal: STEP_RESULT in assistant text
-          if (STEP_RESULT_RE.test(text)) {
-            settle(null, buildResult());
-            killTree(child.pid);
-            return;
-          }
-        }
+        // Kill process tree — CLI may hang after outputting result
+        killTree(child.pid);
+      } catch {
+        // JSON not yet complete, wait for more data
       }
     });
 
-    // --- Inactivity timeout: resets on every stream event ---
-    // If claude is producing output, it's alive. Only kill when truly idle.
-    const INACTIVITY_MS = timeoutMs; // use plan timeout as inactivity window
-    let timer = null;
-    function resetInactivityTimer() {
-      if (settled) return;
-      clearTimeout(timer);
-      timer = setTimeout(() => {
-        settle(new Error(`claude idle for ${Math.round(INACTIVITY_MS / 1000)}s (no stream events)`));
-        killTree(child.pid);
-      }, INACTIVITY_MS);
-    }
-    resetInactivityTimer(); // start initial timer
-
-    child.on('error', err => settle(err));
-
-    // --- Process exit: fallback if no STEP_RESULT / result event was seen ---
-    child.on('close', code => {
-      // Flush remaining buffer
-      if (lineBuf.trim()) {
-        try {
-          const obj = JSON.parse(lineBuf);
-          if (obj.type === 'result') {
-            if (obj.result) lastAssistantText = obj.result;
-            inputTokens = obj.usage?.input_tokens ?? inputTokens;
-            outputTokens = obj.usage?.output_tokens ?? outputTokens;
-            totalCost = obj.total_cost_usd ?? totalCost;
-          }
-          if (obj.type === 'assistant' && obj.message) {
-            const text = extractTextFromContent(obj.message.content);
-            if (text) lastAssistantText = text;
-          }
-          if (obj.session_id) sessionId = obj.session_id;
-        } catch {}
+    child.stderr.on('data', chunk => {
+      stderr += chunk;
+      if (stderr.length <= 1000) {
+        console.log('[claude-rt] stderr:', chunk.slice(0, 200));
       }
+    });
+
+    // --- Wall-clock timeout as safety net ---
+    const timer = setTimeout(() => {
+      console.log('[claude-rt] timeout after %ds (stdout: %d bytes, stderr: %d bytes)',
+        Math.round(timeoutMs / 1000), stdout.length, stderr.length);
+      settle(new Error(`claude timed out after ${Math.round(timeoutMs / 1000)}s`));
+      killTree(child.pid);
+    }, timeoutMs);
+
+    child.on('error', err => {
+      console.log('[claude-rt] spawn error:', err.message);
+      settle(err);
+    });
+
+    // --- Process exit: fallback if stdout wasn't parsed yet ---
+    child.on('close', code => {
+      console.log('[claude-rt] close: code=%d stdout=%d stderr=%d settled=%s',
+        code, stdout.length, stderr.length, settled);
+      if (settled) return;
 
       if (code !== 0) {
-        settle(new Error(stderr || lastAssistantText || `claude exited ${code}`));
+        settle(new Error(stderr || `claude exited ${code}`));
         return;
       }
-      settle(null, buildResult());
+
+      // Try to parse whatever we have
+      try {
+        const obj = JSON.parse(stdout);
+        if (obj.is_error) {
+          settle(new Error(obj.result || 'claude reported error'));
+        } else {
+          settle(null, buildResult(obj));
+        }
+      } catch {
+        settle(new Error('claude exited 0 but no valid JSON output'));
+      }
     });
   });
 }
