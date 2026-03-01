@@ -7,7 +7,7 @@
 
 'use strict';
 
-const { execSync } = require('child_process');
+const { execFileSync } = require('child_process');
 const path = require('path');
 const fs = require('fs');
 
@@ -37,7 +37,7 @@ function createWorktree(repoRoot, taskId) {
     fs.mkdirSync(parentDir, { recursive: true });
   }
 
-  execSync(`git worktree add "${worktreePath}" -b "${branch}"`, {
+  execFileSync('git', ['worktree', 'add', worktreePath, '-b', branch], {
     cwd: repoRoot,
     stdio: 'pipe',
     timeout: 30000,
@@ -69,7 +69,7 @@ function removeWorktree(repoRoot, taskId) {
   if (!fs.existsSync(worktreePath)) return;
 
   try {
-    execSync(`git worktree remove "${worktreePath}" --force`, {
+    execFileSync('git', ['worktree', 'remove', worktreePath, '--force'], {
       cwd: repoRoot,
       stdio: 'pipe',
       timeout: 15000,
@@ -79,7 +79,7 @@ function removeWorktree(repoRoot, taskId) {
   }
 
   try {
-    execSync(`git branch -D "${branch}"`, {
+    execFileSync('git', ['branch', '-D', branch], {
       cwd: repoRoot,
       stdio: 'pipe',
       timeout: 5000,
@@ -89,21 +89,4 @@ function removeWorktree(repoRoot, taskId) {
   }
 }
 
-/**
- * Count active worktrees under .claude/worktrees/.
- * @param {string} repoRoot
- * @returns {number}
- */
-function countActiveWorktrees(repoRoot) {
-  const wtDir = path.join(repoRoot, '.claude', 'worktrees');
-  if (!fs.existsSync(wtDir)) return 0;
-  try {
-    return fs.readdirSync(wtDir).filter(f =>
-      fs.statSync(path.join(wtDir, f)).isDirectory()
-    ).length;
-  } catch {
-    return 0;
-  }
-}
-
-module.exports = { createWorktree, removeWorktree, countActiveWorktrees, sanitizeId };
+module.exports = { createWorktree, removeWorktree, sanitizeId };

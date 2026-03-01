@@ -10,6 +10,8 @@
 const routeEngine = require('./route-engine');
 const contextCompiler = require('./context-compiler');
 const planDispatcher = require('./village/plan-dispatcher');
+const worktreeHelper = require('./worktree');
+const path = require('path');
 
 /**
  * Create the kernel event loop.
@@ -21,6 +23,17 @@ const planDispatcher = require('./village/plan-dispatcher');
  */
 function createKernel(deps) {
   const { artifactStore, stepSchema, mgmt, push, PUSH_TOKENS_PATH } = deps;
+  const repoRoot = path.resolve(__dirname, '..');
+
+  function cleanupWorktree(task, taskId) {
+    if (!task?.worktreeDir) return;
+    try {
+      worktreeHelper.removeWorktree(repoRoot, taskId);
+      console.log(`[kernel] worktree cleaned up for ${taskId}`);
+    } catch (err) {
+      console.error(`[kernel] worktree cleanup failed for ${taskId}:`, err.message);
+    }
+  }
 
   /**
    * Called after a step transitions to a terminal state (succeeded, dead)
@@ -188,17 +201,7 @@ function createKernel(deps) {
         if (latestTask) {
           latestTask.status = 'blocked';
           latestTask.blocker = { reason: `Dead letter: ${decision.rule}`, askedAt: helpers.nowIso() };
-          // Cleanup worktree on dead letter
-          if (latestTask.worktreeDir) {
-            try {
-              const worktreeHelper = require('./worktree');
-              const repoRoot = require('path').resolve(__dirname, '..');
-              worktreeHelper.removeWorktree(repoRoot, taskId);
-              console.log(`[kernel] worktree cleaned up for dead-lettered ${taskId}`);
-            } catch (wtErr) {
-              console.error(`[kernel] worktree cleanup failed for ${taskId}:`, wtErr.message);
-            }
-          }
+          cleanupWorktree(latestTask, taskId);
         }
         latestBoard.signals.push({
           id: helpers.uid('sig'), ts: helpers.nowIso(), by: 'kernel',
@@ -220,17 +223,7 @@ function createKernel(deps) {
           // Step pipeline includes review as step[3] — all steps succeeded means approved
           latestTask.status = 'approved';
           latestTask.completedAt = helpers.nowIso();
-          // Cleanup worktree on task completion
-          if (latestTask.worktreeDir) {
-            try {
-              const worktreeHelper = require('./worktree');
-              const repoRoot = require('path').resolve(__dirname, '..');
-              worktreeHelper.removeWorktree(repoRoot, taskId);
-              console.log(`[kernel] worktree cleaned up for completed ${taskId}`);
-            } catch (wtErr) {
-              console.error(`[kernel] worktree cleanup failed for ${taskId}:`, wtErr.message);
-            }
-          }
+          cleanupWorktree(latestTask, taskId);
           // Preserve payload from last step's artifact for downstream access
           const lastStepOutput = artifactStore.readArtifact(step.run_id, stepId, 'output');
           latestTask.result = {
