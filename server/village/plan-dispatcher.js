@@ -192,6 +192,11 @@ function parsePlanAndDispatch(board, planData, helpers, deps, synthesisTask) {
     }).catch(err => console.error('[plan-dispatcher] village.plan_executing push error:', err.message));
   }
 
+  // Ensure all VT assignees are registered as agent participants.
+  // Without this, tryAutoDispatch silently skips tasks whose assignee
+  // isn't in board.participants (the participantById guard).
+  ensureAssigneesRegistered(board, createdTaskIds);
+
   // Auto-dispatch tasks that are ready (status === 'dispatched')
   if (deps.tryAutoDispatch) {
     for (const taskId of createdTaskIds) {
@@ -273,6 +278,30 @@ function resolveDependencies(depends, titleToId) {
   return resolved;
 }
 
+/**
+ * Ensure all VT task assignees are registered as agent participants.
+ * tryAutoDispatch checks participantById(board, task.assignee) and silently
+ * skips tasks whose assignee isn't registered. This closes that gap.
+ */
+function ensureAssigneesRegistered(board, taskIds) {
+  if (!Array.isArray(board.participants)) board.participants = [];
+  const existing = new Set(board.participants.map(p => p.id));
+
+  for (const taskId of taskIds) {
+    const task = (board.taskPlan?.tasks || []).find(t => t.id === taskId);
+    if (!task?.assignee || existing.has(task.assignee)) continue;
+
+    board.participants.push({
+      id: task.assignee,
+      type: 'agent',
+      displayName: task.assignee,
+      agentId: task.assignee,
+    });
+    existing.add(task.assignee);
+    console.log(`[village:plan-dispatcher] auto-registered participant: ${task.assignee}`);
+  }
+}
+
 module.exports = {
   extractPlanFromArtifact,
   extractPlanFromText,
@@ -280,4 +309,5 @@ module.exports = {
   isSynthesisTask,
   normalizePipeline,
   resolveDependencies,
+  ensureAssigneesRegistered,
 };
