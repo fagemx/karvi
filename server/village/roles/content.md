@@ -50,5 +50,5 @@ Your proposal must be valid JSON with the following structure:
 ## Output
 Wrap your proposal JSON inside a STEP_RESULT block:
 ```
-STEP_RESULT:{"status":"completed","proposal":{...}}
+STEP_RESULT:{"status":"succeeded","summary":"one line summary","proposal":{...}}
 ```

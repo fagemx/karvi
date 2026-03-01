@@ -46,28 +46,6 @@ function createStepWorker(deps) {
     plan.stepId = envelope.step_id;
     plan.stepType = envelope.step_type;
 
-    // Clear AGENT_MODEL_MAP hints for Claude Code runtime — those model IDs
-    // are for API/OpenClaw runtimes and not recognized by `claude -p`.
-    if (plan.runtimeHint === 'claude' && plan.modelHint) {
-      plan.modelHint = null;
-    }
-
-    // Inject STEP_RESULT instruction as system prompt — more reliable than
-    // putting it in the user message, because system prompts persist across
-    // the entire conversation and won't be forgotten by long-running skills.
-    if (plan.runtimeHint === 'claude') {
-      const resultPrompt = [
-        'CRITICAL: When you have completely finished your task, you MUST output the following on a single line (no code fences):',
-        'STEP_RESULT:{"status":"succeeded","summary":"one line summary"}',
-        'Or on failure:',
-        'STEP_RESULT:{"status":"failed","error":"what went wrong","failure_mode":"TEST_FAILURE","retryable":true}',
-        'This line MUST appear in your final message. Without it, the pipeline cannot advance.',
-      ].join('\n');
-      plan.systemPrompt = plan.systemPrompt
-        ? plan.systemPrompt + '\n\n' + resultPrompt
-        : resultPrompt;
-    }
-
     // 2. Set lock with expiry before dispatch
     const lockBoard = helpers.readBoard();
     const lockTask = (lockBoard.taskPlan?.tasks || []).find(t => t.id === envelope.task_id);
@@ -78,10 +56,33 @@ function createStepWorker(deps) {
       helpers.writeBoard(lockBoard);
     }
 
-    // 3. Per-step runtime selection
+    // 3. Per-step runtime selection (envelope.runtime_hint takes precedence)
     const step = task.steps?.find(s => s.step_id === envelope.step_id);
     const runtimeHint = envelope.runtime_hint || step?.runtime_hint || plan.runtimeHint;
     const rt = deps.getRuntime(runtimeHint);
+
+    // Clear AGENT_MODEL_MAP hints for Claude Code runtime — those model IDs
+    // are for API/OpenClaw runtimes and not recognized by `claude -p`.
+    if (runtimeHint === 'claude' && plan.modelHint) {
+      plan.modelHint = null;
+    }
+
+    // Inject STEP_RESULT instruction as system prompt — more reliable than
+    // putting it in the user message, because system prompts persist across
+    // the entire conversation and won't be forgotten by long-running skills.
+    if (runtimeHint === 'claude') {
+      const resultPrompt = [
+        'CRITICAL: When you have completely finished your task, you MUST output the following on a single line (no code fences):',
+        'STEP_RESULT:{"status":"succeeded","summary":"one line summary", ...extra fields as instructed}',
+        'Include any additional payload fields requested by your task instruction (e.g. "proposal", "plan").',
+        'Or on failure:',
+        'STEP_RESULT:{"status":"failed","error":"what went wrong","failure_mode":"TEST_FAILURE","retryable":true}',
+        'This line MUST appear in your final message. Without it, the pipeline cannot advance.',
+      ].join('\n');
+      plan.systemPrompt = plan.systemPrompt
+        ? plan.systemPrompt + '\n\n' + resultPrompt
+        : resultPrompt;
+    }
 
     // 3b. Preflight: check if work is already done (zero tokens)
     const preflightResult = runPreflight(envelope, plan.workingDir || plan.cwd);
