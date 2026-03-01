@@ -136,6 +136,7 @@ const evolutionRoutes = require('./routes/evolution');
 const briefsRoutes = require('./routes/briefs');
 const chatRoutes = require('./routes/chat');
 const jiraRoutes = require('./routes/jira');
+const villageRoutes = require('./routes/village');
 const tasksRoutes = require('./routes/tasks');
 
 // --- Route chain ---
@@ -149,6 +150,7 @@ const routes = [
   briefsRoutes,
   chatRoutes,
   jiraRoutes,
+  villageRoutes,
   tasksRoutes,
 ];
 
@@ -213,6 +215,8 @@ let dirty = false;
 if (!Array.isArray(initBoard.signals)) { initBoard.signals = []; dirty = true; }
 if (!Array.isArray(initBoard.insights)) { initBoard.insights = []; dirty = true; }
 if (!Array.isArray(initBoard.lessons)) { initBoard.lessons = []; dirty = true; }
+// Village Chief: ensure village block exists on startup
+if (!initBoard.village) { villageRoutes.ensureVillage(initBoard); dirty = true; }
 if (dirty) writeBoard(initBoard);
 
 // --- Recover expired step locks (crashed dispatch recovery) ---
