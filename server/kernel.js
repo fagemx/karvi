@@ -10,6 +10,7 @@
 const routeEngine = require('./route-engine');
 const contextCompiler = require('./context-compiler');
 const planDispatcher = require('./village/plan-dispatcher');
+const cycleWatchdog = require('./village/cycle-watchdog');
 const worktreeHelper = require('./worktree');
 const path = require('path');
 
@@ -188,6 +189,18 @@ function createKernel(deps) {
           refs: [taskId],
           data: { taskId, stepId, reason: decision.human_review?.reason },
         });
+        // Cycle stall detection: blocked meeting tasks may stall the cycle
+        if (cycleWatchdog.isMeetingTask(taskId)) {
+          const health = cycleWatchdog.checkCycleHealth(latestBoard);
+          if (health.stalled) {
+            cycleWatchdog.closeStalledCycle(latestBoard, helpers, health.reason, health);
+            if (push && PUSH_TOKENS_PATH && latestTask) {
+              push.notifyTaskEvent(PUSH_TOKENS_PATH, latestTask, 'task.blocked')
+                .catch(err => console.error('[kernel] push error:', err.message));
+            }
+            return;
+          }
+        }
         helpers.writeBoard(latestBoard);
         // Push notification
         if (push && PUSH_TOKENS_PATH && latestTask) {
@@ -210,6 +223,20 @@ function createKernel(deps) {
           refs: [taskId],
           data: { taskId, stepId, rule: decision.rule },
         });
+        // Cycle stall detection: when a meeting task dies, check if the
+        // entire cycle is now stuck (all tasks exhausted retries).
+        if (cycleWatchdog.isMeetingTask(taskId)) {
+          const health = cycleWatchdog.checkCycleHealth(latestBoard);
+          if (health.stalled) {
+            // closeStalledCycle calls writeBoard internally
+            cycleWatchdog.closeStalledCycle(latestBoard, helpers, health.reason, health);
+            if (push && PUSH_TOKENS_PATH && latestTask) {
+              push.notifyTaskEvent(PUSH_TOKENS_PATH, latestTask, 'task.blocked')
+                .catch(err => console.error('[kernel] push error:', err.message));
+            }
+            return;
+          }
+        }
         helpers.writeBoard(latestBoard);
         if (push && PUSH_TOKENS_PATH && latestTask) {
           push.notifyTaskEvent(PUSH_TOKENS_PATH, latestTask, 'task.blocked')

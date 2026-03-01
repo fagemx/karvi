@@ -7,13 +7,26 @@
  * Uses setInterval (1 hour) to check; no external dependencies.
  */
 const { generateMeetingTasks } = require('./village-meeting');
+const cycleWatchdog = require('./cycle-watchdog');
 
 const HOUR = 3_600_000;
 
 function createScheduler(deps) {
   function checkSchedule() {
     try {
-      const board = deps.helpers.readBoard();
+      let board = deps.helpers.readBoard();
+
+      // Periodic stall detection: close cycles stuck in the same phase too long
+      const cycle = board.village?.currentCycle;
+      if (cycle && cycle.phase !== 'done' && cycle.phase !== 'execution') {
+        const stallHours = board.controls?.cycle_stall_timeout_hours || 4;
+        const health = cycleWatchdog.checkCycleHealth(board, stallHours * 3_600_000);
+        if (health.stalled) {
+          cycleWatchdog.closeStalledCycle(board, deps.helpers, health.reason, health);
+          board = deps.helpers.readBoard(); // re-read after mutation
+        }
+      }
+
       const schedule = board.village?.schedule;
       if (!schedule) return;
 
