@@ -130,35 +130,38 @@ function createKernel(deps) {
       }
 
       case 'revision': {
-        // Review found fixable issues → reset implement+review steps and re-dispatch.
-        // The review feedback is injected into the implement step's context.
-        const implStep = latestTask?.steps?.find(s => s.type === 'implement');
-        const revStep = latestTask?.steps?.find(s => s.type === 'review');
-        if (implStep && revStep) {
-          // Reset implement step for re-dispatch (fresh attempt)
-          implStep.state = 'queued';
-          implStep.attempt = 0;
-          implStep.error = null;
-          implStep.output_ref = null;
-          implStep.locked_by = null;
-          implStep.lock_expires_at = null;
-          // Reset review step
-          revStep.state = 'queued';
-          revStep.attempt = 0;
-          revStep.error = null;
-          revStep.output_ref = null;
-          revStep.locked_by = null;
-          revStep.lock_expires_at = null;
-          // Store review feedback on task for context-compiler to inject
+        // Generic revision: find target and source steps from decision metadata,
+        // reset all steps in between, and re-dispatch the target step.
+        const targetStepId = decision.next_step?.step_id;
+        const sourceStepId = decision.from_step_id;
+        const targetStep = latestTask?.steps?.find(s => s.step_id === targetStepId);
+        const sourceStep = latestTask?.steps?.find(s => s.step_id === sourceStepId);
+
+        if (targetStep && sourceStep) {
+          const targetIdx = latestTask.steps.indexOf(targetStep);
+          const sourceIdx = latestTask.steps.indexOf(sourceStep);
+          for (let i = targetIdx; i <= sourceIdx; i++) {
+            const s = latestTask.steps[i];
+            s.state = 'queued';
+            s.attempt = 0;
+            s.error = null;
+            s.output_ref = null;
+            s.locked_by = null;
+            s.lock_expires_at = null;
+          }
+
+          if (!latestTask._revisionCounts) latestTask._revisionCounts = {};
+          latestTask._revisionCounts[targetStepId] = (latestTask._revisionCounts[targetStepId] || 0) + 1;
+
           latestTask.reviewFeedback = decision.review_feedback || null;
-          console.log(`[kernel] revision cycle for ${taskId}: resetting implement+review, feedback: ${(decision.review_feedback || '').slice(0, 100)}`);
+          console.log(`[kernel] revision: ${sourceStep.step_id} → ${targetStep.step_id} (cycle ${latestTask._revisionCounts[targetStepId]})`);
         }
-        // Build envelope using fresh runState from latestTask (steps were just reset above)
+
         const freshRunState = { task: latestTask, steps: latestTask.steps, run_id: runState.run_id, budget: latestTask.budget };
         const revEnvelope = contextCompiler.buildEnvelope(decision, freshRunState, deps);
-        if (revEnvelope && implStep) {
+        if (revEnvelope && targetStep) {
           artifactStore.writeArtifact(revEnvelope.run_id, revEnvelope.step_id, 'input', revEnvelope);
-          stepSchema.transitionStep(implStep, 'running', {
+          stepSchema.transitionStep(targetStep, 'running', {
             locked_by: 'kernel-revision',
             input_ref: artifactStore.artifactPath(revEnvelope.run_id, revEnvelope.step_id, 'input'),
           });

@@ -50,6 +50,8 @@ function createStep(taskId, runId, type, opts = {}) {
     instruction: opts.instruction || null,
     skill: opts.skill || null,
     runtime_hint: opts.runtime_hint || null,
+    revision_target: opts.revision_target || null,
+    max_revision_cycles: opts.max_revision_cycles || null,
     retry_policy: retry,
     error: null,
     started_at: null,

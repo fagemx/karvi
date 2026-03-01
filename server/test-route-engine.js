@@ -143,6 +143,58 @@ test('isBudgetExceeded returns true when any limit hit', () => {
   }), false);
 });
 
+// --- Revision (generic revision_target) ---
+
+test('decideNext returns revision when step has revision_target and needsRevision', () => {
+  const steps = [
+    { step_id: 'T-1:plan', type: 'plan', state: 'succeeded', attempt: 0, max_attempts: 3, run_id: 'run-1', retry_policy: { backoff_base_ms: 5000 } },
+    { step_id: 'T-1:draft', type: 'draft', state: 'succeeded', attempt: 0, max_attempts: 3, run_id: 'run-1', retry_policy: { backoff_base_ms: 5000 } },
+    { step_id: 'T-1:edit', type: 'edit', state: 'succeeded', attempt: 0, max_attempts: 3, run_id: 'run-1', retry_policy: { backoff_base_ms: 5000 }, revision_target: 'draft', max_revision_cycles: 3 },
+  ];
+  const runState = makeRunState({ steps, task: { _revisionCounts: {} } });
+  const output = { step_id: 'T-1:edit', status: 'succeeded', summary: 'Request changes: tone too casual' };
+  const d = routeEngine.decideNext(output, runState);
+  assert.strictEqual(d.action, 'revision');
+  assert.strictEqual(d.rule, 'review_needs_fix');
+  assert.strictEqual(d.next_step.step_id, 'T-1:draft');
+  assert.strictEqual(d.next_step.step_type, 'draft');
+  assert.ok(d.review_feedback);
+});
+
+test('decideNext accepts as-is when max_revision_cycles reached', () => {
+  const steps = [
+    { step_id: 'T-1:draft', type: 'draft', state: 'succeeded', attempt: 0, max_attempts: 3, run_id: 'run-1', retry_policy: { backoff_base_ms: 5000 } },
+    { step_id: 'T-1:edit', type: 'edit', state: 'succeeded', attempt: 0, max_attempts: 3, run_id: 'run-1', retry_policy: { backoff_base_ms: 5000 }, revision_target: 'draft', max_revision_cycles: 1 },
+  ];
+  const runState = makeRunState({ steps, task: { _revisionCounts: { 'T-1:draft': 1 } } });
+  const output = { step_id: 'T-1:edit', status: 'succeeded', summary: 'Request changes: still needs work' };
+  const d = routeEngine.decideNext(output, runState);
+  assert.strictEqual(d.action, 'done');
+});
+
+test('decideNext skips revision when no revision_target on step', () => {
+  const steps = [
+    { step_id: 'T-1:scan', type: 'scan', state: 'succeeded', attempt: 0, max_attempts: 3, run_id: 'run-1', retry_policy: { backoff_base_ms: 5000 } },
+    { step_id: 'T-1:report', type: 'report', state: 'succeeded', attempt: 0, max_attempts: 3, run_id: 'run-1', retry_policy: { backoff_base_ms: 5000 } },
+  ];
+  const runState = makeRunState({ steps });
+  const output = { step_id: 'T-1:report', status: 'succeeded', summary: 'Request changes in report' };
+  const d = routeEngine.decideNext(output, runState);
+  assert.strictEqual(d.action, 'done');
+});
+
+test('decideNext uses default MAX_REVISION_CYCLES when max_revision_cycles not set', () => {
+  const steps = [
+    { step_id: 'T-1:impl', type: 'impl', state: 'succeeded', attempt: 0, max_attempts: 3, run_id: 'run-1', retry_policy: { backoff_base_ms: 5000 } },
+    { step_id: 'T-1:review', type: 'review', state: 'succeeded', attempt: 0, max_attempts: 3, run_id: 'run-1', retry_policy: { backoff_base_ms: 5000 }, revision_target: 'impl' },
+  ];
+  const runState = makeRunState({ steps, task: { _revisionCounts: { 'T-1:impl': routeEngine.MAX_REVISION_CYCLES } } });
+  const output = { step_id: 'T-1:review', status: 'succeeded', summary: 'Request changes: bugs found' };
+  const d = routeEngine.decideNext(output, runState);
+  // max cycles reached → falls through to done
+  assert.strictEqual(d.action, 'done');
+});
+
 // --- Summary ---
 console.log(`\n${'─'.repeat(40)}`);
 console.log(`Results: ${passed} passed, ${failed} failed`);

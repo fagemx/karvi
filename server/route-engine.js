@@ -159,21 +159,22 @@ function decideNext(agentOutput, runState) {
     const currentIdx = stepTypes.indexOf(fromStep?.type);
     const nextIdx = currentIdx + 1;
 
-    // Review→Fix cycle: if review step found actionable findings, loop back
-    // to implement for a fix pass instead of completing the pipeline.
+    // Revision cycle: if a step with revision_target found actionable findings,
+    // loop back to the target step for a fix pass.
     // Guard: limit revision cycles to avoid infinite loops.
-    if (fromStep?.type === 'review' && needsRevision(agentOutput)) {
-      const revisionCount = steps.filter(s => s.type === 'implement' && s.state === 'succeeded').length;
-      if (revisionCount < MAX_REVISION_CYCLES) {
-        const implStep = steps.find(s => s.type === 'implement');
-        if (implStep) {
+    if (fromStep?.revision_target && needsRevision(agentOutput)) {
+      const targetStep = steps.find(s => s.type === fromStep.revision_target);
+      if (targetStep) {
+        const maxCycles = fromStep.max_revision_cycles || MAX_REVISION_CYCLES;
+        const revisionCount = task._revisionCounts?.[targetStep.step_id] || 0;
+        if (revisionCount < maxCycles) {
           return { ...base, action: 'revision', rule: 'review_needs_fix', confidence: 0.9,
             retry: null, human_review: null,
-            next_step: { step_id: implStep.step_id, step_type: 'implement', priority: 0 },
+            next_step: { step_id: targetStep.step_id, step_type: targetStep.type, priority: 0 },
             review_feedback: agentOutput.summary || null };
         }
+        // Max cycles reached — accept as-is
       }
-      // Max cycles reached — accept as-is
     }
 
     // More steps in pipeline?
@@ -199,6 +200,7 @@ module.exports = {
   FAILURE_MODES,
   BUDGET_DEFAULTS,
   REMEDIATION_LIMITS,
+  MAX_REVISION_CYCLES,
   classifyFailure,
   isBudgetExceeded,
   decideNext,
