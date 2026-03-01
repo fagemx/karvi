@@ -40,6 +40,7 @@ function createStepWorker(deps) {
       mode: 'dispatch',
       timeoutSec: Math.ceil(envelope.timeout_ms / 1000),
       steps: task.steps,
+      workingDir: task.worktreeDir || null,
     });
     const stepMessage = buildStepMessage(envelope, plan.artifacts);
     plan.message = stepMessage;
@@ -60,12 +61,6 @@ function createStepWorker(deps) {
     const step = task.steps?.find(s => s.step_id === envelope.step_id);
     const runtimeHint = envelope.runtime_hint || step?.runtime_hint || plan.runtimeHint;
     const rt = deps.getRuntime(runtimeHint);
-
-    // Clear AGENT_MODEL_MAP hints for Claude Code runtime — those model IDs
-    // are for API/OpenClaw runtimes and not recognized by `claude -p`.
-    if (runtimeHint === 'claude' && plan.modelHint) {
-      plan.modelHint = null;
-    }
 
     // Inject STEP_RESULT instruction as system prompt — more reliable than
     // putting it in the user message, because system prompts persist across
@@ -113,8 +108,30 @@ function createStepWorker(deps) {
           stepSchema.transitionStep(failStep, 'failed', {
             error: (dispatchErr.message || 'dispatch error').slice(0, 500),
           });
+
+          // Emit signal so dashboard/SSE sees dispatch errors
+          const signalType = failStep.state === 'dead' ? 'step_dead' : 'step_failed';
+          mgmt.ensureEvolutionFields(failBoard);
+          failBoard.signals.push({
+            id: helpers.uid('sig'), ts: helpers.nowIso(), by: 'step-worker',
+            type: signalType,
+            content: `${envelope.task_id} step ${envelope.step_id} dispatch error → ${failStep.state}`,
+            refs: [envelope.task_id],
+            data: { taskId: envelope.task_id, stepId: envelope.step_id, from: 'running', to: failStep.state, attempt: failStep.attempt },
+          });
+          if (failBoard.signals.length > 500) failBoard.signals = failBoard.signals.slice(-500);
+
           helpers.writeBoard(failBoard);
           helpers.appendLog({ ts: helpers.nowIso(), event: 'step_dispatch_error', taskId: envelope.task_id, stepId: envelope.step_id, error: dispatchErr.message, duration_ms: dispatchDurationMs });
+
+          // Trigger kernel for dead steps — dead-letter routing, worktree cleanup, push notification
+          if (failStep.state === 'dead' && deps.kernel) {
+            const signal = { type: 'step_dead', data: { taskId: envelope.task_id, stepId: envelope.step_id } };
+            setImmediate(() => {
+              deps.kernel.onStepEvent(signal, helpers.readBoard(), helpers)
+                .catch(err => console.error(`[step-worker] kernel callback error for ${envelope.step_id}:`, err.message));
+            });
+          }
         }
         throw dispatchErr;
       }
@@ -125,6 +142,7 @@ function createStepWorker(deps) {
       //    is inside parsed.result, not in raw stdout)
       const replyText = rt.extractReplyText(result.parsed, result.stdout);
       usage = rt.extractUsage?.(result.parsed, result.stdout) || null;
+      const sessionId = rt.extractSessionId?.(result.parsed) || null;
       stepResult = parseStepResult(replyText) || parseStepResult(result.stdout);
 
       if (stepResult) {
@@ -187,6 +205,7 @@ function createStepWorker(deps) {
       model_used: plan.modelHint,
       post_check: postCheckResult,
       payload,
+      sessionId: sessionId || null,
       ...(preflightResult.alreadyDone ? { skipped: true, preflight: preflightResult } : {}),
     };
     artifactStore.writeArtifact(envelope.run_id, envelope.step_id, 'output', agentOutput);
@@ -195,6 +214,11 @@ function createStepWorker(deps) {
     const latestBoard = helpers.readBoard();
     const latestTask = (latestBoard.taskPlan?.tasks || []).find(t => t.id === envelope.task_id);
     const latestStep = latestTask?.steps?.find(s => s.step_id === envelope.step_id);
+    // Persist session ID on task for subsequent steps / follow-up resume
+    if (sessionId && latestTask) {
+      latestTask.childSessionKey = sessionId;
+    }
+
     if (latestStep && latestStep.state === 'running') {
       const newState = agentOutput.status === 'succeeded' ? 'succeeded' : 'failed';
       stepSchema.transitionStep(latestStep, newState, {
@@ -475,6 +499,12 @@ function buildStepMessage(envelope, upstreamArtifacts) {
     if (envelope.retry_context.previous_error) lines.push(`  Previous error: ${envelope.retry_context.previous_error}`);
     if (envelope.retry_context.failure_mode) lines.push(`  Failure mode: ${envelope.retry_context.failure_mode}`);
     if (envelope.retry_context.remediation_hint) lines.push(`  Hint: ${envelope.retry_context.remediation_hint}`);
+  }
+
+  if (envelope.review_feedback) {
+    lines.push('', '🔄 REVISION — the review found issues to fix:');
+    lines.push(envelope.review_feedback);
+    lines.push('', 'Fix the issues listed above. Do NOT re-implement from scratch — only address the review findings.');
   }
 
   // Instruct agent to output structured result when done

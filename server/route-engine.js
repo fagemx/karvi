@@ -82,6 +82,20 @@ function isBudgetExceeded(budget) {
   );
 }
 
+// --- Review verdict classification ---
+
+// Max review→fix cycles before accepting as-is
+const MAX_REVISION_CYCLES = 2;
+
+function needsRevision(agentOutput) {
+  const text = [agentOutput.summary, agentOutput.failure?.failure_signature].filter(Boolean).join(' ').toLowerCase();
+  // Explicit "request changes" verdict
+  if (/request.changes/i.test(text)) return true;
+  // Has medium or high severity findings (not just "approve with nits")
+  if (/\bmedium\b.*\bfind/i.test(text) || /\bhigh\b.*\bfind/i.test(text) || /\bcritical\b.*\bfind/i.test(text)) return true;
+  return false;
+}
+
 // --- Core routing ---
 
 function decideNext(agentOutput, runState) {
@@ -142,6 +156,23 @@ function decideNext(agentOutput, runState) {
     const stepTypes = steps.map(s => s.type);
     const currentIdx = stepTypes.indexOf(fromStep?.type);
     const nextIdx = currentIdx + 1;
+
+    // Review→Fix cycle: if review step found actionable findings, loop back
+    // to implement for a fix pass instead of completing the pipeline.
+    // Guard: limit revision cycles to avoid infinite loops.
+    if (fromStep?.type === 'review' && needsRevision(agentOutput)) {
+      const revisionCount = steps.filter(s => s.type === 'implement' && s.state === 'succeeded').length;
+      if (revisionCount < MAX_REVISION_CYCLES) {
+        const implStep = steps.find(s => s.type === 'implement');
+        if (implStep) {
+          return { ...base, action: 'revision', rule: 'review_needs_fix', confidence: 0.9,
+            retry: null, human_review: null,
+            next_step: { step_id: implStep.step_id, step_type: 'implement', priority: 0 },
+            review_feedback: agentOutput.summary || null };
+        }
+      }
+      // Max cycles reached — accept as-is
+    }
 
     // More steps in pipeline?
     if (nextIdx < steps.length) {

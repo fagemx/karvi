@@ -60,7 +60,8 @@ function dispatch(plan) {
 
     if (plan.sessionId) args.push('--resume', plan.sessionId);
     if (plan.modelHint) args.push('--model', plan.modelHint);
-    if (plan.codexRole) args.push('--agent', plan.codexRole);
+    // --agent flag removed: no custom agent definitions configured,
+    // passing undefined agent names may restrict tool permissions.
     if (plan.maxBudgetUsd) args.push('--max-budget-usd', String(plan.maxBudgetUsd));
     if (plan.allowedTools && plan.allowedTools.length) {
       args.push('--allowedTools', ...plan.allowedTools);

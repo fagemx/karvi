@@ -22,6 +22,8 @@ const DEFAULT_CONTROLS = {
   telemetry_enabled: true,
   usage_limits: null,            // { dispatches_per_month, runtime_sec_per_month, tokens_per_month }
   usage_alert_threshold: 0.8,    // Alert when usage > 80% of limit
+  max_concurrent_tasks: 2,       // max in-progress tasks at once (worktree or not)
+  use_worktrees: true,           // create git worktree per task for parallel execution
 };
 
 // --- Evolution Layer: Schema validation ---
@@ -318,8 +320,8 @@ function getControls(board) {
 const ALLOWED_TASK_TRANSITIONS = {
   pending: ['dispatched'],
   dispatched: ['in_progress', 'pending'],
-  in_progress: ['blocked', 'completed'],
-  blocked: ['in_progress'],
+  in_progress: ['blocked', 'completed', 'dispatched'],
+  blocked: ['in_progress', 'dispatched'],
   completed: ['reviewing', 'approved', 'needs_revision'],
   reviewing: ['approved', 'needs_revision'],
   needs_revision: ['in_progress', 'approved'],
@@ -745,7 +747,9 @@ function buildDispatchPlan(board, task, options = {}) {
     runtimeHint,
     userId,
     agentId: task.assignee,
-    modelHint: preferredModelFor(task.assignee),
+    // AGENT_MODEL_MAP contains OpenClaw/API model IDs — skip for Claude Code CLI
+    // which uses its own model selection (--model flag not needed).
+    modelHint: runtimeHint === 'claude' ? null : preferredModelFor(task.assignee),
     timeoutSec: options.timeoutSec || 300,
     sessionId: task.childSessionKey || null,
     message,
@@ -770,6 +774,8 @@ function buildDispatchPlan(board, task, options = {}) {
     },
     // Step-level orchestration (null for legacy dispatch, populated by kernel)
     steps: options.steps || null,
+    // Git worktree path for parallel execution (set by tryAutoDispatch)
+    workingDir: options.workingDir || null,
   };
 }
 

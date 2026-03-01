@@ -115,6 +115,47 @@ function createKernel(deps) {
         return;  // writeBoard already called
       }
 
+      case 'revision': {
+        // Review found fixable issues → reset implement+review steps and re-dispatch.
+        // The review feedback is injected into the implement step's context.
+        const implStep = latestTask?.steps?.find(s => s.type === 'implement');
+        const revStep = latestTask?.steps?.find(s => s.type === 'review');
+        if (implStep && revStep) {
+          // Reset implement step for re-dispatch (fresh attempt)
+          implStep.state = 'queued';
+          implStep.attempt = 0;
+          implStep.error = null;
+          implStep.output_ref = null;
+          implStep.locked_by = null;
+          implStep.lock_expires_at = null;
+          // Reset review step
+          revStep.state = 'queued';
+          revStep.attempt = 0;
+          revStep.error = null;
+          revStep.output_ref = null;
+          revStep.locked_by = null;
+          revStep.lock_expires_at = null;
+          // Store review feedback on task for context-compiler to inject
+          latestTask.reviewFeedback = decision.review_feedback || null;
+          console.log(`[kernel] revision cycle for ${taskId}: resetting implement+review, feedback: ${(decision.review_feedback || '').slice(0, 100)}`);
+        }
+        // Build envelope and dispatch implement step
+        const revEnvelope = contextCompiler.buildEnvelope(decision, runState, deps);
+        if (revEnvelope && implStep) {
+          artifactStore.writeArtifact(revEnvelope.run_id, revEnvelope.step_id, 'input', revEnvelope);
+          stepSchema.transitionStep(implStep, 'running', {
+            locked_by: 'kernel-revision',
+            input_ref: artifactStore.artifactPath(revEnvelope.run_id, revEnvelope.step_id, 'input'),
+          });
+          helpers.writeBoard(latestBoard);
+          deps.stepWorker.executeStep(revEnvelope, latestBoard, helpers).catch(err =>
+            console.error(`[kernel] revision executeStep error for ${revEnvelope.step_id}:`, err.message));
+          return;
+        }
+        helpers.writeBoard(latestBoard);
+        return;
+      }
+
       case 'retry': {
         // Step-schema's transitionStep already handles retry+backoff.
         // Kernel just needs to persist budget update.
@@ -146,6 +187,17 @@ function createKernel(deps) {
         if (latestTask) {
           latestTask.status = 'blocked';
           latestTask.blocker = { reason: `Dead letter: ${decision.rule}`, askedAt: helpers.nowIso() };
+          // Cleanup worktree on dead letter
+          if (latestTask.worktreeDir) {
+            try {
+              const worktreeHelper = require('./worktree');
+              const repoRoot = require('path').resolve(__dirname, '..');
+              worktreeHelper.removeWorktree(repoRoot, taskId);
+              console.log(`[kernel] worktree cleaned up for dead-lettered ${taskId}`);
+            } catch (wtErr) {
+              console.error(`[kernel] worktree cleanup failed for ${taskId}:`, wtErr.message);
+            }
+          }
         }
         latestBoard.signals.push({
           id: helpers.uid('sig'), ts: helpers.nowIso(), by: 'kernel',
@@ -167,6 +219,17 @@ function createKernel(deps) {
           // Step pipeline includes review as step[3] — all steps succeeded means approved
           latestTask.status = 'approved';
           latestTask.completedAt = helpers.nowIso();
+          // Cleanup worktree on task completion
+          if (latestTask.worktreeDir) {
+            try {
+              const worktreeHelper = require('./worktree');
+              const repoRoot = require('path').resolve(__dirname, '..');
+              worktreeHelper.removeWorktree(repoRoot, taskId);
+              console.log(`[kernel] worktree cleaned up for completed ${taskId}`);
+            } catch (wtErr) {
+              console.error(`[kernel] worktree cleanup failed for ${taskId}:`, wtErr.message);
+            }
+          }
           // Preserve payload from last step's artifact for downstream access
           const lastStepOutput = artifactStore.readArtifact(step.run_id, stepId, 'output');
           latestTask.result = {
