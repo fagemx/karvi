@@ -2,6 +2,7 @@ import { useEffect, useRef } from 'react';
 import {
   View,
   Text,
+  ScrollView,
   Animated,
   TouchableWithoutFeedback,
   StyleSheet,
@@ -73,7 +74,7 @@ export function BottomSheet({ visible, onClose, title, children, closeOnBackdrop
             </View>
           )}
 
-          <View style={styles.content}>{children}</View>
+          <ScrollView style={styles.content} bounces={false} keyboardShouldPersistTaps="handled">{children}</ScrollView>
         </Animated.View>
       </KeyboardAvoidingView>
     </View>
