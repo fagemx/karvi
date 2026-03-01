@@ -464,6 +464,126 @@ const testRunId = `smoke-${Date.now()}`;
   });
 
   // ══════════════════════════════════════════════════════
+  // DoD 7: scheduler deduplication guards (#156)
+  // ══════════════════════════════════════════════════════
+  console.log('\n── DoD 7: scheduler deduplication guards (#156) ──');
+
+  await test('checkSchedule skips when cycle is in execution phase', () => {
+    const board = createVillageBoard();
+    const now = new Date();
+    // Set schedule to match current day/hour so the time check passes
+    board.village.schedule.weeklyPlanning = { day: now.getDay(), hour: now.getHours() };
+    board.village.currentCycle = { cycleId: 'cycle-exec', phase: 'execution', startedAt: now.toISOString() };
+    const taskCountBefore = (board.taskPlan?.tasks || []).length;
+
+    const mockBoard = JSON.parse(JSON.stringify(board));
+    const scheduler = require('./village/village-scheduler').createScheduler({
+      helpers: {
+        readBoard: () => mockBoard,
+        writeBoard: () => { throw new Error('should not write'); },
+        appendLog: () => {},
+        broadcastSSE: () => {},
+      },
+      tryAutoDispatch: null,
+    });
+    scheduler.checkSchedule();
+    assert.strictEqual(mockBoard.taskPlan.tasks.length, taskCountBefore, 'no new tasks should be added');
+  });
+
+  await test('checkSchedule skips when cycle is in awaiting_approval phase', () => {
+    const board = createVillageBoard();
+    const now = new Date();
+    board.village.schedule.weeklyPlanning = { day: now.getDay(), hour: now.getHours() };
+    board.village.currentCycle = { cycleId: 'cycle-await', phase: 'awaiting_approval', startedAt: now.toISOString() };
+
+    const mockBoard = JSON.parse(JSON.stringify(board));
+    const scheduler = require('./village/village-scheduler').createScheduler({
+      helpers: {
+        readBoard: () => mockBoard,
+        writeBoard: () => { throw new Error('should not write'); },
+        appendLog: () => {},
+        broadcastSSE: () => {},
+      },
+      tryAutoDispatch: null,
+    });
+    scheduler.checkSchedule();
+    assert.strictEqual(mockBoard.taskPlan.tasks.length, 0, 'no new tasks should be added');
+  });
+
+  await test('triggerMeeting guards all non-terminal phases', () => {
+    const nonTerminalPhases = ['proposal', 'awaiting_approval', 'execution', 'checkin'];
+    for (const phase of nonTerminalPhases) {
+      const board = createVillageBoard();
+      board.village.currentCycle = { cycleId: `cycle-${phase}`, phase, startedAt: new Date().toISOString() };
+      const mockBoard = JSON.parse(JSON.stringify(board));
+      let writeCount = 0;
+
+      const scheduler = require('./village/village-scheduler').createScheduler({
+        helpers: {
+          readBoard: () => mockBoard,
+          writeBoard: () => { writeCount++; },
+          appendLog: () => {},
+          broadcastSSE: () => {},
+        },
+        tryAutoDispatch: null,
+      });
+      // Directly invoke checkSchedule with a matching time window
+      // The triggerMeeting idempotency should block even if checkSchedule's phase check passes
+      const now = new Date();
+      mockBoard.village.schedule = {
+        weeklyPlanning: { day: now.getDay(), hour: now.getHours() },
+      };
+      scheduler.checkSchedule();
+      assert.strictEqual(writeCount, 0, `phase "${phase}" should block triggerMeeting`);
+    }
+  });
+
+  await test('lastTriggeredAt prevents same-hour re-trigger', () => {
+    const board = createVillageBoard();
+    const now = new Date();
+    board.village.schedule.weeklyPlanning = { day: now.getDay(), hour: now.getHours() };
+    board.village.schedule.lastTriggeredAt = now.toISOString(); // already triggered this hour
+    board.village.currentCycle = null; // no active cycle — would normally trigger
+
+    const mockBoard = JSON.parse(JSON.stringify(board));
+    let writeCount = 0;
+    const scheduler = require('./village/village-scheduler').createScheduler({
+      helpers: {
+        readBoard: () => mockBoard,
+        writeBoard: () => { writeCount++; },
+        appendLog: () => {},
+        broadcastSSE: () => {},
+      },
+      tryAutoDispatch: null,
+    });
+    scheduler.checkSchedule();
+    assert.strictEqual(writeCount, 0, 'lastTriggeredAt in same hour should prevent trigger');
+  });
+
+  await test('scheduler triggers when lastTriggeredAt is from previous hour', () => {
+    const board = createVillageBoard();
+    const now = new Date();
+    board.village.schedule.weeklyPlanning = { day: now.getDay(), hour: now.getHours() };
+    const previousHour = new Date(now.getTime() - 3600000);
+    board.village.schedule.lastTriggeredAt = previousHour.toISOString();
+    board.village.currentCycle = null; // no active cycle
+
+    const mockBoard = JSON.parse(JSON.stringify(board));
+    let writeCount = 0;
+    const scheduler = require('./village/village-scheduler').createScheduler({
+      helpers: {
+        readBoard: () => mockBoard,
+        writeBoard: () => { writeCount++; },
+        appendLog: () => {},
+        broadcastSSE: () => {},
+      },
+      tryAutoDispatch: null,
+    });
+    scheduler.checkSchedule();
+    assert.ok(writeCount > 0, 'lastTriggeredAt from previous hour should allow trigger');
+  });
+
+  // ══════════════════════════════════════════════════════
   // SUMMARY
   // ══════════════════════════════════════════════════════
   console.log('\n════════════════════════════════════════');

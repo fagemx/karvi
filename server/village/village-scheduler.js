@@ -21,12 +21,22 @@ function createScheduler(deps) {
       const day = now.getDay(); // 0=Sun, 1=Mon, ...
       const hour = now.getHours();
 
+      // Timestamp dedup: skip if already triggered this clock-hour
+      const lastTriggered = schedule.lastTriggeredAt ? new Date(schedule.lastTriggeredAt) : null;
+      if (lastTriggered
+          && lastTriggered.getFullYear() === now.getFullYear()
+          && lastTriggered.getMonth() === now.getMonth()
+          && lastTriggered.getDate() === now.getDate()
+          && lastTriggered.getHours() === hour) {
+        return;
+      }
+
       // Weekly planning: default Monday 9:00
       if (schedule.weeklyPlanning) {
         const wp = schedule.weeklyPlanning;
         if (day === (wp.day !== undefined ? wp.day : 1) && hour === (wp.hour !== undefined ? wp.hour : 9)) {
           const cycle = board.village?.currentCycle;
-          if (!cycle || cycle.phase === 'done' || cycle.phase === 'execution') {
+          if (!cycle || cycle.phase === 'done') {
             triggerMeeting('weekly_planning');
           }
         }
@@ -55,9 +65,10 @@ function createScheduler(deps) {
 
       const now = new Date().toISOString();
 
-      // Idempotency: don't start a new meeting if one is already in proposal phase
-      if (village.currentCycle && village.currentCycle.phase === 'proposal') {
-        console.log(`[village-scheduler] skipping ${meetingType} — cycle ${village.currentCycle.cycleId} already in proposal`);
+      // Idempotency: don't start a new meeting if a cycle is active (any non-terminal phase)
+      const activePhase = village.currentCycle?.phase;
+      if (activePhase && activePhase !== 'done') {
+        console.log(`[village-scheduler] skipping ${meetingType} — cycle ${village.currentCycle.cycleId} in phase: ${activePhase}`);
         return;
       }
 
@@ -81,6 +92,9 @@ function createScheduler(deps) {
         startedAt: now,
         taskIds: meetingTasks.map(t => t.id),
       };
+
+      // Stamp lastTriggeredAt for dedup
+      if (village.schedule) village.schedule.lastTriggeredAt = now;
 
       deps.helpers.writeBoard(board);
       deps.helpers.appendLog({
