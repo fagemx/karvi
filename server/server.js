@@ -34,6 +34,7 @@ try { confidenceEngine = require('./confidence-engine'); } catch { /* confidence
 
 const telemetry = require('./telemetry');
 const push = require('./push');
+const { createScheduler } = require('./village/village-scheduler');
 const githubApi = require('./github-api');
 const usage = require('./usage');
 
@@ -286,10 +287,23 @@ try {
   console.warn(`[usage] init failed, continuing without usage tracking: ${err.message}`);
 }
 
+// --- Village Scheduler (Cadence Engine) ---
+let villageScheduler = null;
+try {
+  villageScheduler = createScheduler({
+    helpers: routeHelpers,
+    tryAutoDispatch: (taskId) => deps.tryAutoDispatch && deps.tryAutoDispatch(taskId),
+  });
+  villageScheduler.start();
+} catch (err) {
+  console.warn(`[village-scheduler] init failed, continuing without scheduler: ${err.message}`);
+}
+
 // --- Graceful Shutdown ---
 function gracefulShutdown() {
   console.log('[server] shutting down...');
   clearInterval(retryPoller);
+  villageScheduler?.stop();
   telemetryHandle?.stop();
   usageHandle?.stop();
   server.close(() => process.exit(0));
