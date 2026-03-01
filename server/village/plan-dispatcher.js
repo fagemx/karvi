@@ -32,9 +32,18 @@ function extractPlanFromArtifact(artifact) {
     return artifact.plan;
   }
 
-  // Path 2: STEP_RESULT was parsed by step-worker, plan is in summary text
-  // The summary field contains the raw agent output which may include
-  // STEP_RESULT:{"status":"succeeded","plan":{...}}
+  // Path 2: step-worker preserved STEP_RESULT payload containing plan
+  if (artifact.payload?.plan) {
+    // Handle both formats: plan as { tasks: [...] } or plan as [...]
+    if (Array.isArray(artifact.payload.plan.tasks)) {
+      return artifact.payload.plan;
+    }
+    if (Array.isArray(artifact.payload.plan)) {
+      return { tasks: artifact.payload.plan };
+    }
+  }
+
+  // Path 3: STEP_RESULT was parsed by step-worker, plan is in summary text
   const summaryText = artifact.summary || '';
   const planFromText = extractPlanFromText(summaryText);
   if (planFromText) return planFromText;

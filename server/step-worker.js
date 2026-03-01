@@ -36,12 +36,12 @@ function createStepWorker(deps) {
     if (!task) throw new Error(`Task ${envelope.task_id} not found`);
 
     // 1. Build dispatch plan
-    const stepMessage = buildStepMessage(envelope);
     const plan = mgmt.buildDispatchPlan(board, task, {
       mode: 'dispatch',
       timeoutSec: Math.ceil(envelope.timeout_ms / 1000),
       steps: task.steps,
     });
+    const stepMessage = buildStepMessage(envelope, plan.artifacts);
     plan.message = stepMessage;
     plan.stepId = envelope.step_id;
     plan.stepType = envelope.step_type;
@@ -86,7 +86,7 @@ function createStepWorker(deps) {
     // 3b. Preflight: check if work is already done (zero tokens)
     const preflightResult = runPreflight(envelope, plan.workingDir || plan.cwd);
 
-    let status, failure, summary, durationMs, usage, postCheckResult;
+    let status, failure, summary, durationMs, usage, postCheckResult, stepResult;
 
     if (preflightResult.alreadyDone) {
       // Skip dispatch — work already exists in codebase
@@ -124,7 +124,7 @@ function createStepWorker(deps) {
       //    is inside parsed.result, not in raw stdout)
       const replyText = rt.extractReplyText(result.parsed, result.stdout);
       usage = rt.extractUsage?.(result.parsed, result.stdout) || null;
-      const stepResult = parseStepResult(replyText) || parseStepResult(result.stdout);
+      stepResult = parseStepResult(replyText) || parseStepResult(result.stdout);
 
       if (stepResult) {
         // Structured output from agent
@@ -168,6 +168,13 @@ function createStepWorker(deps) {
       }
     }
 
+    // Preserve full STEP_RESULT payload (proposal, plan, etc.) for downstream modules.
+    // Without this, structured data from agents is lost and only summary text survives.
+    const payload = stepResult ? (() => {
+      const { status: _s, summary: _sm, error: _e, failure_mode: _f, retryable: _r, ...extra } = stepResult;
+      return Object.keys(extra).length > 0 ? extra : null;
+    })() : null;
+
     const agentOutput = {
       run_id: envelope.run_id,
       step_id: envelope.step_id,
@@ -178,6 +185,7 @@ function createStepWorker(deps) {
       duration_ms: durationMs,
       model_used: plan.modelHint,
       post_check: postCheckResult,
+      payload,
       ...(preflightResult.alreadyDone ? { skipped: true, preflight: preflightResult } : {}),
     };
     artifactStore.writeArtifact(envelope.run_id, envelope.step_id, 'output', agentOutput);
@@ -406,7 +414,7 @@ function parseStepResult(stdout) {
  * skill directly. The headless agent (`claude -p`) runs in the repo directory
  * and has access to `.claude/skills/`.
  */
-function buildStepMessage(envelope) {
+function buildStepMessage(envelope, upstreamArtifacts) {
   // Extract issue number from task source or task ID (GH-123 → 123)
   const source = envelope.input_refs?.task_source;
   const issueNumber = source?.number
@@ -442,6 +450,22 @@ function buildStepMessage(envelope) {
 
   if (envelope.input_refs.task_description) {
     lines.push('', `Task description: ${envelope.input_refs.task_description}`);
+  }
+
+  // Inject upstream artifacts (from completed dependency tasks)
+  if (Array.isArray(upstreamArtifacts) && upstreamArtifacts.length > 0) {
+    lines.push('', '## Upstream Task Outputs');
+    for (const u of upstreamArtifacts) {
+      lines.push(`### ${u.id} — ${u.title || '(untitled)'} [${u.status}]`);
+      if (u.payload) {
+        lines.push('```json');
+        lines.push(JSON.stringify(u.payload, null, 2));
+        lines.push('```');
+      } else if (u.summary) {
+        lines.push(u.summary);
+      }
+    }
+    lines.push('');
   }
 
   if (envelope.retry_context) {

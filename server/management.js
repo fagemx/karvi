@@ -436,6 +436,10 @@ function gatherUpstreamArtifacts(board, task) {
     } else if (dep.result?.summary) {
       entry.summary = dep.result.summary.slice(0, 600);
     }
+    // Include structured payload from step output (proposal, plan, etc.)
+    if (dep.result?.payload) {
+      entry.payload = dep.result.payload;
+    }
     results.push(entry);
   }
   return results;
