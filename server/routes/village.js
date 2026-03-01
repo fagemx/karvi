@@ -329,6 +329,12 @@ module.exports = function villageRoutes(req, res, helpers, deps) {
         const { generateMeetingTasks } = require('../village/village-meeting');
         const meetingTasks = generateMeetingTasks(board, meetingType);
 
+        // Ensure ALL meeting task assignees are registered as participants
+        // (covers synthesis/chief assignee in addition to department assignees)
+        for (const task of meetingTasks) {
+          ensureAgentParticipant(board, task.assignee);
+        }
+
         // Add tasks to board
         if (!board.taskPlan) board.taskPlan = { goal: '', phase: 'idle', tasks: [] };
         if (!Array.isArray(board.taskPlan.tasks)) board.taskPlan.tasks = [];

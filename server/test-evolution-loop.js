@@ -11,11 +11,14 @@
 
 const http = require('http');
 const fs = require('fs');
+const os = require('os');
 const { spawn, spawnSync } = require('child_process');
 const path = require('path');
 
 const PORT = Number(process.env.TEST_PORT) || 13461;
 const API_TOKEN = process.env.KARVI_API_TOKEN || null;
+// Use a temp directory for board data to avoid clobbering production board.json
+const TEST_DATA_DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'karvi-test-'));
 let serverProc = null;
 
 function post(urlPath, body) {
@@ -48,7 +51,7 @@ function startServer() {
   return new Promise((resolve, reject) => {
     const proc = spawn(process.execPath, [path.join(__dirname, 'server.js')], {
       stdio: ['ignore', 'pipe', 'pipe'],
-      env: { ...process.env, PORT: String(PORT) },
+      env: { ...process.env, PORT: String(PORT), DATA_DIR: TEST_DATA_DIR },
     });
 
     let started = false;
@@ -96,10 +99,10 @@ function stopServer() {
 }
 
 function cleanState() {
-  // Delete board.json so server's ensureBoardExists() creates a fresh default.
-  // This avoids duplicating the default board definition and ensures full replace (not merge).
+  // Clean temp data dir — server's ensureBoardExists() creates a fresh default.
+  // Uses TEST_DATA_DIR (temp) instead of __dirname to avoid clobbering production board.json.
   for (const f of ['board.json', 'board.json.bak', 'task-log.jsonl']) {
-    try { fs.unlinkSync(path.join(__dirname, f)); } catch {}
+    try { fs.unlinkSync(path.join(TEST_DATA_DIR, f)); } catch {}
   }
 }
 
