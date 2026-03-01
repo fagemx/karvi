@@ -46,6 +46,9 @@ function createStep(taskId, runId, type, opts = {}) {
     idempotency_key: null,
     input_ref: null,
     output_ref: null,
+    // Semantic step metadata (task-specific behavior lives in data, not hard-coded maps)
+    instruction: opts.instruction || null,
+    skill: opts.skill || null,
     runtime_hint: opts.runtime_hint || null,
     retry_policy: retry,
     error: null,

@@ -277,7 +277,7 @@ function tryAutoDispatch(taskId, deps, helpers) {
   if (ctrl.use_step_pipeline && deps.stepWorker) {
     console.log(`[auto-dispatch] step-pipeline for ${taskId}`);
     const runId = helpers.uid('run');
-    task.steps = mgmt.generateStepsForTask(task, runId);
+    task.steps = mgmt.generateStepsForTask(task, runId, task.pipeline || null);
     task.status = 'in_progress';
     task.startedAt = task.startedAt || helpers.nowIso();
     task.history = task.history || [];

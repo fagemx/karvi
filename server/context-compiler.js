@@ -67,6 +67,9 @@ function buildEnvelope(decision, runState, deps) {
     task_id: task.id,
     step_type: stepType,
     objective: STEP_OBJECTIVES[stepType] || `Execute step: ${stepType}`,
+    instruction: targetStep.instruction || null,
+    skill: targetStep.skill || null,
+    runtime_hint: targetStep.runtime_hint || null,
     constraints: buildConstraints(task),
     input_refs: {
       previous_output: previousOutputRef,
