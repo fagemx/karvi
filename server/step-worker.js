@@ -45,6 +45,12 @@ function createStepWorker(deps) {
     plan.stepId = envelope.step_id;
     plan.stepType = envelope.step_type;
 
+    // Clear AGENT_MODEL_MAP hints for Claude Code runtime — those model IDs
+    // are for API/OpenClaw runtimes and not recognized by `claude -p`.
+    if (plan.runtimeHint === 'claude' && plan.modelHint) {
+      plan.modelHint = null;
+    }
+
     // 2. Set lock with expiry before dispatch
     const lockBoard = helpers.readBoard();
     const lockTask = (lockBoard.taskPlan?.tasks || []).find(t => t.id === envelope.task_id);
