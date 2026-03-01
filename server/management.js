@@ -752,7 +752,7 @@ function buildDispatchPlan(board, task, options = {}) {
 
 // --- Step-level helpers ---
 
-const DEFAULT_STEP_PIPELINE = ['plan', 'implement', 'test', 'review'];
+const DEFAULT_STEP_PIPELINE = ['plan', 'implement', 'review'];
 
 function generateStepsForTask(task, runId, pipeline) {
   const types = pipeline || DEFAULT_STEP_PIPELINE;

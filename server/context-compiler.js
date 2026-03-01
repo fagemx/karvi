@@ -8,10 +8,10 @@
 const { BUDGET_DEFAULTS } = require('./route-engine');
 
 const STEP_OBJECTIVES = {
-  plan:      'Analyze the task and create a detailed implementation plan with specific files and changes.',
-  implement: 'Implement the changes according to the plan. Write production-ready code.',
-  test:      'Write and run tests to verify the implementation. Report any failures.',
-  review:    'Review the implementation for correctness, quality, and adherence to requirements.',
+  plan:      'Research codebase and create implementation plan via /issue-plan skill.',
+  implement: 'Implement changes and create PR via /issue-action skill.',
+  test:      'Verify CI passes and auto-fix lint/format failures.',
+  review:    'Review PR via /pr-review skill.',
 };
 
 function buildEnvelope(decision, runState, deps) {
@@ -71,6 +71,7 @@ function buildEnvelope(decision, runState, deps) {
     input_refs: {
       previous_output: previousOutputRef,
       task_description: task.description || task.title || '',
+      task_source: task.source || task.githubIssue || null,
       codebase_context: null,
       lessons: [],
     },

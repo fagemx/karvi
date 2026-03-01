@@ -60,15 +60,34 @@ function createStepWorker(deps) {
     const runtimeHint = envelope.runtime_hint || step?.runtime_hint || plan.runtimeHint;
     const rt = deps.getRuntime(runtimeHint);
 
-    // 4. Dispatch with duration tracking
+    // 4. Dispatch with duration tracking (catch failures to transition step properly)
     const startMs = Date.now();
-    const result = await rt.dispatch(plan);
+    let result;
+    try {
+      result = await rt.dispatch(plan);
+    } catch (dispatchErr) {
+      const durationMs = Date.now() - startMs;
+      // Transition step to failed instead of leaving it stuck in 'running'
+      const failBoard = helpers.readBoard();
+      const failTask = (failBoard.taskPlan?.tasks || []).find(t => t.id === envelope.task_id);
+      const failStep = failTask?.steps?.find(s => s.step_id === envelope.step_id);
+      if (failStep && failStep.state === 'running') {
+        stepSchema.transitionStep(failStep, 'failed', {
+          error: (dispatchErr.message || 'dispatch error').slice(0, 500),
+        });
+        helpers.writeBoard(failBoard);
+        helpers.appendLog({ ts: helpers.nowIso(), event: 'step_dispatch_error', taskId: envelope.task_id, stepId: envelope.step_id, error: dispatchErr.message, duration_ms: durationMs });
+      }
+      throw dispatchErr;
+    }
     const durationMs = Date.now() - startMs;
 
-    // 5. Parse output — try STEP_RESULT first, fall back to exit-code
+    // 5. Parse output — try STEP_RESULT from extracted reply first (critical for
+    //    JSON-wrapping runtimes like claude --output-format json where STEP_RESULT
+    //    is inside parsed.result, not in raw stdout)
     const replyText = rt.extractReplyText(result.parsed, result.stdout);
     const usage = rt.extractUsage?.(result.parsed, result.stdout) || null;
-    const stepResult = parseStepResult(result.stdout);
+    const stepResult = parseStepResult(replyText) || parseStepResult(result.stdout);
 
     let status, failure, summary;
     if (stepResult) {
@@ -171,43 +190,54 @@ function parseStepResult(stdout) {
 
 /**
  * Build step-specific prompt message from envelope.
- * Includes objective, constraints, retry context, and budget.
+ *
+ * Core insight: Claude Code skills already contain the full workflow logic
+ * for each step. Instead of rewriting objectives, we invoke the corresponding
+ * skill directly. The headless agent (`claude -p`) runs in the repo directory
+ * and has access to `.claude/skills/`.
  */
 function buildStepMessage(envelope) {
+  // Extract issue number from task source or task ID (GH-123 → 123)
+  const source = envelope.input_refs?.task_source;
+  const issueNumber = source?.number
+    || (envelope.task_id.match(/^GH-(\d+)$/) || [])[1]
+    || envelope.task_id;
+
+  // Map step types to skill invocations
+  const STEP_SKILL_MAP = {
+    plan:      `Execute /issue-plan ${issueNumber}`,
+    implement: `Execute /issue-action for issue #${issueNumber}. The plan has already been posted as a comment on the issue — read it from there.`,
+    test:      `Check CI status for the PR. Run: gh pr checks. If lint/format failures, auto-fix and push. Report test results.`,
+    review:    `Execute /pr-review`,
+  };
+
+  const skillMsg = STEP_SKILL_MAP[envelope.step_type]
+    || `Complete the ${envelope.step_type} step for task ${envelope.task_id}.`;
+
   const lines = [
-    `【Step Dispatch: ${envelope.step_type.toUpperCase()}】`,
+    skillMsg,
     '',
     `Task: ${envelope.task_id}`,
     `Step: ${envelope.step_id} (${envelope.step_type})`,
-    `Objective: ${envelope.objective}`,
   ];
-
-  if (envelope.constraints.length > 0) {
-    lines.push('', 'Constraints:');
-    envelope.constraints.forEach(c => lines.push(`  - ${c}`));
-  }
 
   if (envelope.input_refs.task_description) {
     lines.push('', `Task description: ${envelope.input_refs.task_description}`);
   }
 
   if (envelope.retry_context) {
-    lines.push('', '\u26a0 RETRY CONTEXT:');
+    lines.push('', '\u26a0 RETRY — this step previously failed:');
     lines.push(`  Attempt: ${envelope.retry_context.attempt}`);
     if (envelope.retry_context.previous_error) lines.push(`  Previous error: ${envelope.retry_context.previous_error}`);
     if (envelope.retry_context.failure_mode) lines.push(`  Failure mode: ${envelope.retry_context.failure_mode}`);
     if (envelope.retry_context.remediation_hint) lines.push(`  Hint: ${envelope.retry_context.remediation_hint}`);
   }
 
-  if (envelope.budget_remaining) {
-    lines.push('', `Budget remaining: ${envelope.budget_remaining.llm_calls} LLM calls, ${envelope.budget_remaining.tokens} tokens, ${Math.round(envelope.budget_remaining.wall_clock_ms / 1000)}s`);
-  }
-
-  // Instruct agent to output structured result
-  lines.push('', 'When done, output your result on the last line as:');
-  lines.push('STEP_RESULT:{"status":"succeeded","summary":"..."}');
+  // Instruct agent to output structured result when done
+  lines.push('', 'IMPORTANT: When you are completely done, output your result on the LAST line as:');
+  lines.push('STEP_RESULT:{"status":"succeeded","summary":"one line summary of what you did"}');
   lines.push('Or on failure:');
-  lines.push('STEP_RESULT:{"status":"failed","error":"...","failure_mode":"TEST_FAILURE","retryable":true}');
+  lines.push('STEP_RESULT:{"status":"failed","error":"what went wrong","failure_mode":"TEST_FAILURE","retryable":true}');
 
   return lines.join('\n');
 }
