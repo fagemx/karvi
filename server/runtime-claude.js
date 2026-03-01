@@ -47,21 +47,30 @@ function killTree(pid) {
 }
 
 /**
+ * Extract all text from a Claude assistant message content array.
+ */
+function extractTextFromContent(content) {
+  if (!Array.isArray(content)) return '';
+  return content
+    .filter(c => c.type === 'text')
+    .map(c => c.text)
+    .join('\n');
+}
+
+/**
  * Dispatch a plan to Claude Code headless CLI.
  *
- * Uses --output-format json (not stream-json) for reliable single-object
- * output. The CLI outputs one complete JSON result when the task finishes.
- * We parse stdout incrementally; as soon as valid JSON is received we
- * resolve and kill the process tree (CLI may hang after completion).
+ * Uses --output-format stream-json for real-time NDJSON events.
+ * Each line is a complete JSON object (assistant message, result, etc.).
+ * Inactivity timer resets on every event — only kills truly idle processes.
+ * STEP_RESULT detection resolves immediately without waiting for exit.
  */
 function dispatch(plan) {
   return new Promise((resolve, reject) => {
-    const args = ['-p', '--output-format', 'json'];
+    const args = ['-p', '--output-format', 'stream-json'];
 
     if (plan.sessionId) args.push('--resume', plan.sessionId);
     if (plan.modelHint) args.push('--model', plan.modelHint);
-    // --agent flag removed: no custom agent definitions configured,
-    // passing undefined agent names may restrict tool permissions.
     if (plan.maxBudgetUsd) args.push('--max-budget-usd', String(plan.maxBudgetUsd));
     if (plan.allowedTools && plan.allowedTools.length) {
       args.push('--allowedTools', ...plan.allowedTools);
@@ -89,9 +98,12 @@ function dispatch(plan) {
       stdio: ['ignore', 'pipe', 'pipe'],  // stdin MUST be ignored on Windows
     });
 
-    let stdout = '';
     let stderr = '';
     let settled = false;
+    let lineBuf = '';
+    let lastResult = null;   // last result event (definitive completion)
+    let sessionId = null;
+    let lastAssistantText = '';  // accumulated assistant text for STEP_RESULT detection
 
     child.stdout.setEncoding('utf8');
     child.stderr.setEncoding('utf8');
@@ -103,54 +115,78 @@ function dispatch(plan) {
       if (err) reject(err); else resolve(result);
     }
 
-    // --- Inactivity timeout: resets on every stdout/stderr event ---
-    // If claude is producing output, it's alive. Only kill when truly idle.
+    // --- Inactivity timeout: resets on every stream event ---
     let inactivityTimer = null;
     function resetInactivityTimer() {
       if (settled) return;
       clearTimeout(inactivityTimer);
       inactivityTimer = setTimeout(() => {
-        console.log('[claude-rt] idle for %ds (no output), killing (stdout: %d bytes, stderr: %d bytes)',
-          Math.round(timeoutMs / 1000), stdout.length, stderr.length);
+        console.log('[claude-rt] idle for %ds (no stream events), killing',
+          Math.round(timeoutMs / 1000));
         settle(new Error(`claude idle for ${Math.round(timeoutMs / 1000)}s (no stream events)`));
         killTree(child.pid);
       }, timeoutMs);
     }
-    resetInactivityTimer(); // start initial timer
+    resetInactivityTimer();
 
-    function buildResult(obj) {
+    function buildResult(text) {
       return {
         code: 0,
-        stdout: obj.result || '',
+        stdout: text || lastAssistantText || '',
         stderr,
         parsed: {
-          result: obj.result || null,
-          session_id: obj.session_id || null,
-          input_tokens: obj.usage?.input_tokens ?? null,
-          output_tokens: obj.usage?.output_tokens ?? null,
-          total_cost: obj.total_cost_usd ?? obj.cost_usd ?? null,
+          result: text || lastAssistantText || null,
+          session_id: sessionId,
+          input_tokens: lastResult?.usage?.input_tokens ?? null,
+          output_tokens: lastResult?.usage?.output_tokens ?? null,
+          total_cost: lastResult?.total_cost_usd ?? lastResult?.cost_usd ?? null,
         },
       };
     }
 
-    // --- stdout: accumulate and try to parse as complete JSON ---
+    // --- NDJSON parsing: one complete JSON object per line ---
     child.stdout.on('data', chunk => {
-      stdout += chunk;
+      lineBuf += chunk;
       resetInactivityTimer();
-      try {
-        const obj = JSON.parse(stdout);
-        // Successfully parsed — CLI has finished outputting result
-        console.log('[claude-rt] result received: type=%s is_error=%s cost=%s',
-          obj.type, obj.is_error, obj.total_cost_usd);
-        if (obj.is_error) {
-          settle(new Error(obj.result || 'claude reported error'));
-        } else {
-          settle(null, buildResult(obj));
+
+      const lines = lineBuf.split('\n');
+      lineBuf = lines.pop(); // keep incomplete last line
+
+      for (const line of lines) {
+        if (!line.trim()) continue;
+        let obj;
+        try { obj = JSON.parse(line); } catch { continue; }
+
+        if (obj.session_id) sessionId = obj.session_id;
+
+        // --- (1) result event: definitive completion ---
+        if (obj.type === 'result') {
+          lastResult = obj;
+          const text = obj.result || extractTextFromContent(obj.content) || '';
+          console.log('[claude-rt] result event: is_error=%s cost=%s',
+            obj.is_error, obj.total_cost_usd);
+          if (obj.is_error) {
+            settle(new Error(text || 'claude reported error'));
+          } else {
+            settle(null, buildResult(text));
+          }
+          killTree(child.pid);
+          return;
         }
-        // Kill process tree — CLI may hang after outputting result
-        killTree(child.pid);
-      } catch {
-        // JSON not yet complete, wait for more data
+
+        // --- (2) assistant message: accumulate text, check for STEP_RESULT ---
+        if (obj.type === 'assistant') {
+          const text = extractTextFromContent(obj.message?.content || obj.content);
+          if (text) lastAssistantText = text;
+
+          const m = STEP_RESULT_RE.exec(text);
+          if (m) {
+            console.log('[claude-rt] STEP_RESULT detected in assistant message');
+            settle(null, buildResult(text));
+            killTree(child.pid);
+            return;
+          }
+        }
       }
     });
 
@@ -167,10 +203,9 @@ function dispatch(plan) {
       settle(err);
     });
 
-    // --- Process exit: fallback if stdout wasn't parsed yet ---
+    // --- Process exit: fallback if no result event was received ---
     child.on('close', code => {
-      console.log('[claude-rt] close: code=%d stdout=%d stderr=%d settled=%s',
-        code, stdout.length, stderr.length, settled);
+      console.log('[claude-rt] close: code=%d settled=%s', code, settled);
       if (settled) return;
 
       if (code !== 0) {
@@ -178,16 +213,11 @@ function dispatch(plan) {
         return;
       }
 
-      // Try to parse whatever we have
-      try {
-        const obj = JSON.parse(stdout);
-        if (obj.is_error) {
-          settle(new Error(obj.result || 'claude reported error'));
-        } else {
-          settle(null, buildResult(obj));
-        }
-      } catch {
-        settle(new Error('claude exited 0 but no valid JSON output'));
+      // Process exited cleanly but no result event — use last assistant text
+      if (lastAssistantText) {
+        settle(null, buildResult(lastAssistantText));
+      } else {
+        settle(new Error('claude exited 0 but no output received'));
       }
     });
   });
