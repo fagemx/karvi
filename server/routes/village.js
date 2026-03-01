@@ -169,10 +169,99 @@ module.exports = function villageRoutes(req, res, helpers, deps) {
     try {
       const board = helpers.readBoard();
       const village = ensureVillage(board);
+      const activeGoals = village.goals.filter(g => g.active);
+      const departments = village.departments;
+
+      // Build department summary with goal counts
+      const departmentSummary = departments.map(dept => ({
+        id: dept.id,
+        name: dept.name,
+        goalCount: activeGoals.filter(g => (dept.goalIds || []).includes(g.id)).length,
+      }));
+
+      // If no current cycle, return basic info
+      const cycle = village.currentCycle;
+      if (!cycle) {
+        return json(res, 200, {
+          currentCycle: null,
+          goalCount: activeGoals.length,
+          departmentCount: departments.length,
+          departments: departmentSummary,
+        });
+      }
+
+      const allTasks = board.taskPlan?.tasks || [];
+      const { cycleId } = cycle;
+
+      // --- Proposal tasks: MTG-{cycleId}-proposal-{deptId} ---
+      const proposalPrefix = `MTG-${cycleId}-proposal-`;
+      const proposalTasks = allTasks.filter(t => t.id && t.id.startsWith(proposalPrefix));
+      const proposals = proposalTasks.map(t => {
+        const department = t.id.slice(proposalPrefix.length);
+        const summary = (t.result && t.result.summary)
+          ? t.result.summary
+          : (t.lastReply ? t.lastReply.slice(0, 300) : null);
+        return {
+          taskId: t.id,
+          department,
+          status: t.status,
+          summary,
+        };
+      });
+
+      // --- Synthesis task: MTG-{cycleId}-synthesis ---
+      const synthesisId = `MTG-${cycleId}-synthesis`;
+      const synthesisTask = allTasks.find(t => t.id === synthesisId);
+      let synthesis = null;
+      if (synthesisTask) {
+        // Count plan tasks produced by this synthesis (VT tasks referencing this synthesisTaskId)
+        const planTaskCount = allTasks.filter(
+          t => t.source && t.source.synthesisTaskId === synthesisId
+        ).length;
+        synthesis = {
+          taskId: synthesisTask.id,
+          status: synthesisTask.status,
+          planTaskCount,
+        };
+      }
+
+      // --- Execution tasks: VT-* with source.cycleId === cycleId ---
+      const execTasks = allTasks.filter(
+        t => t.source && t.source.type === 'village_plan' && t.source.cycleId === cycleId
+      );
+      const execStatusCount = { completed: 0, inProgress: 0, blocked: 0, pending: 0 };
+      for (const t of execTasks) {
+        if (t.status === 'approved') execStatusCount.completed++;
+        else if (t.status === 'in_progress' || t.status === 'running' || t.status === 'dispatched') execStatusCount.inProgress++;
+        else if (t.status === 'blocked') execStatusCount.blocked++;
+        else execStatusCount.pending++;
+      }
+      const execution = {
+        total: execTasks.length,
+        completed: execStatusCount.completed,
+        inProgress: execStatusCount.inProgress,
+        blocked: execStatusCount.blocked,
+        pending: execStatusCount.pending,
+        tasks: execTasks.map(t => ({
+          id: t.id,
+          title: t.title,
+          status: t.status,
+          department: t.department || null,
+        })),
+      };
+
       return json(res, 200, {
-        currentCycle: village.currentCycle || null,
-        goalCount: village.goals.filter(g => g.active).length,
-        departmentCount: village.departments.length,
+        currentCycle: {
+          cycleId: cycle.cycleId,
+          phase: cycle.phase,
+          startedAt: cycle.startedAt,
+          proposals,
+          synthesis,
+          execution,
+        },
+        goalCount: activeGoals.length,
+        departmentCount: departments.length,
+        departments: departmentSummary,
       });
     } catch (error) {
       return json(res, 500, { error: error.message });
