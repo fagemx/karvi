@@ -51,6 +51,22 @@ function createStepWorker(deps) {
       plan.modelHint = null;
     }
 
+    // Inject STEP_RESULT instruction as system prompt — more reliable than
+    // putting it in the user message, because system prompts persist across
+    // the entire conversation and won't be forgotten by long-running skills.
+    if (plan.runtimeHint === 'claude') {
+      const resultPrompt = [
+        'CRITICAL: When you have completely finished your task, you MUST output the following on a single line (no code fences):',
+        'STEP_RESULT:{"status":"succeeded","summary":"one line summary"}',
+        'Or on failure:',
+        'STEP_RESULT:{"status":"failed","error":"what went wrong","failure_mode":"TEST_FAILURE","retryable":true}',
+        'This line MUST appear in your final message. Without it, the pipeline cannot advance.',
+      ].join('\n');
+      plan.systemPrompt = plan.systemPrompt
+        ? plan.systemPrompt + '\n\n' + resultPrompt
+        : resultPrompt;
+    }
+
     // 2. Set lock with expiry before dispatch
     const lockBoard = helpers.readBoard();
     const lockTask = (lockBoard.taskPlan?.tasks || []).find(t => t.id === envelope.task_id);
