@@ -149,8 +149,7 @@ function parsePlanAndDispatch(board, planData, helpers, deps, synthesisTask) {
   }
 
   // Emit signal
-  const mgmt = deps.mgmt;
-  if (mgmt) mgmt.ensureEvolutionFields(board);
+  if (deps.mgmt) deps.mgmt.ensureEvolutionFields(board);
   if (!Array.isArray(board.signals)) board.signals = [];
   board.signals.push({
     id: helpers.uid('sig'),
