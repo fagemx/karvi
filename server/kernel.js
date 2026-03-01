@@ -221,6 +221,42 @@ function createKernel(deps) {
           }
         }
 
+        // Check if all execution tasks for the current village cycle are complete
+        if (latestBoard.village?.currentCycle?.phase === 'execution') {
+          const cycleId = latestBoard.village.currentCycle.cycleId;
+          const execTaskIds = latestBoard.village.currentCycle.executionTaskIds || [];
+          if (execTaskIds.length > 0) {
+            const allDone = execTaskIds.every(id => {
+              const t = (latestBoard.taskPlan?.tasks || []).find(tt => tt.id === id);
+              return t && (t.status === 'approved' || t.status === 'blocked');
+            });
+            if (allDone) {
+              // Generate retro signals
+              const retro = require('./village/retro');
+              const retroSignals = retro.generateRetroSignals(latestBoard, cycleId, helpers);
+              latestBoard.signals.push(...retroSignals);
+
+              // Mark cycle as done
+              latestBoard.village.currentCycle.phase = 'done';
+              latestBoard.village.currentCycle.completedAt = helpers.nowIso();
+
+              // Push notification
+              const completedCount = execTaskIds.filter(id => {
+                const t = (latestBoard.taskPlan?.tasks || []).find(tt => tt.id === id);
+                return t?.status === 'approved';
+              }).length;
+              if (push && PUSH_TOKENS_PATH) {
+                push.notifyTaskEvent(PUSH_TOKENS_PATH, null, 'village.checkin_summary', {
+                  cycleId, completed: completedCount, total: execTaskIds.length,
+                  blocked: execTaskIds.length - completedCount,
+                }).catch(err => console.error('[kernel] retro push error:', err.message));
+              }
+            }
+          }
+        }
+
+        if (latestBoard.signals.length > 500) latestBoard.signals = latestBoard.signals.slice(-500);
+
         helpers.writeBoard(latestBoard);
 
         if (push && PUSH_TOKENS_PATH && latestTask) {
