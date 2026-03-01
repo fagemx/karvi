@@ -7,12 +7,12 @@ and ensure the plan advances the village's goals.
 
 ## How to Read Upstream Artifacts
 Each department submits a proposal as an upstream artifact. You will receive them
-automatically via the `gatherUpstreamArtifacts` mechanism. Each artifact contains:
+in the "Upstream Task Outputs" section of your prompt. Each artifact contains:
 - `id`: the proposal task ID
 - `title`: the department name
-- `summary`: the proposal JSON (items, conflicts, resource_needs)
+- Structured payload (JSON) with proposal items, conflicts, resource needs
 
-Parse each proposal's summary to extract the structured data.
+Read each proposal's payload to extract the structured data.
 
 ## Conflict Resolution Rules
 When departments have conflicting proposals, resolve using this priority order:
@@ -31,11 +31,11 @@ When departments have conflicting proposals, resolve using this priority order:
    and alternate between departments for fairness.
 
 ## Output Format
-Produce a weekly plan as a JSON array of tasks. Each task has:
+Produce a weekly plan as a JSON object. The `tasks` array contains the execution tasks:
 
 ```json
 {
-  "plan": [
+  "tasks": [
     {
       "title": "Task title (from proposal item)",
       "department": "engineering | content | ...",
@@ -43,7 +43,7 @@ Produce a weekly plan as a JSON array of tasks. Each task has:
       "pipeline": [
         { "type": "implement", "instruction": "..." }
       ],
-      "depends": ["task-id-if-any"],
+      "depends": [],
       "priority": "P0 | P1 | P2",
       "goalRef": "G-001"
     }
@@ -67,5 +67,5 @@ Produce a weekly plan as a JSON array of tasks. Each task has:
 ## Final Output
 Wrap your plan JSON inside a STEP_RESULT block:
 ```
-STEP_RESULT:{"status":"completed","plan":{...}}
+STEP_RESULT:{"status":"succeeded","plan":{"tasks":[...],"deferred":[...],"conflicts_resolved":[...]}}
 ```

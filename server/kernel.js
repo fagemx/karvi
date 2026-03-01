@@ -167,7 +167,13 @@ function createKernel(deps) {
           // Step pipeline includes review as step[3] — all steps succeeded means approved
           latestTask.status = 'approved';
           latestTask.completedAt = helpers.nowIso();
-          latestTask.result = { status: 'approved', summary: `All ${task.steps.length} steps succeeded (including review)` };
+          // Preserve payload from last step's artifact for downstream access
+          const lastStepOutput = artifactStore.readArtifact(step.run_id, stepId, 'output');
+          latestTask.result = {
+            status: 'approved',
+            summary: lastStepOutput?.summary || `All ${task.steps.length} steps succeeded (including review)`,
+            payload: lastStepOutput?.payload || null,
+          };
         }
 
         // Unlock dependent tasks (autoUnlockDependents checks for 'approved')

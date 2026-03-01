@@ -106,7 +106,14 @@ function sendPush(tokenStrings, { title, body, data }) {
 // Notification Builder
 // ---------------------------------------------------------------------------
 
-function buildNotification(task, eventType) {
+function buildNotification(task, eventType, extra) {
+  // Village events don't require a task object
+  if (eventType.startsWith('village.')) {
+    return buildVillageNotification(eventType, extra);
+  }
+
+  if (!task) return null;
+
   const map = {
     'task.completed': {
       title: `${task.id} Completed`,
@@ -136,8 +143,6 @@ function buildNotification(task, eventType) {
       title: `${task.id} Requirements Updated`,
       body: `${task.title} — acceptance criteria changed, please review`,
     },
-    // TODO: pr.created — 當 PR review 功能 (#27) 落地後，加入 PR 建立通知。
-    // 屆時需在 server.js 的 PR 建立流程中呼叫 notifyTaskEvent(path, task, 'pr.created')。
     'pr.created': {
       title: `PR Created: ${task.id}`,
       body: task.pr?.url || task.title,
@@ -157,12 +162,46 @@ function buildNotification(task, eventType) {
   };
 }
 
+function buildVillageNotification(eventType, extra) {
+  const cycleId = extra?.cycleId || '';
+  const map = {
+    'village.meeting_started': {
+      title: 'Village: Meeting Started',
+      body: `Cycle ${cycleId} — departments are preparing proposals`,
+    },
+    'village.proposals_ready': {
+      title: 'Village: Proposals Ready',
+      body: `${extra?.departmentCount || 0} departments submitted — synthesis starting`,
+    },
+    'village.plan_ready': {
+      title: extra?.needsApproval ? 'Village: Plan Needs Approval' : 'Village: Plan Ready',
+      body: `Cycle ${cycleId} — weekly plan synthesized`,
+    },
+    'village.plan_executing': {
+      title: 'Village: Execution Started',
+      body: `${extra?.taskCount || 0} tasks dispatched for cycle ${cycleId}`,
+    },
+    'village.checkin_summary': {
+      title: 'Village: Check-in Complete',
+      body: `${extra?.completed || 0}/${extra?.total || 0} tasks done, ${extra?.blocked || 0} blocked`,
+    },
+  };
+
+  const msg = map[eventType];
+  if (!msg) return null;
+
+  return {
+    ...msg,
+    data: { eventType, cycleId, ...(extra || {}) },
+  };
+}
+
 // ---------------------------------------------------------------------------
 // High-Level: Notify + Cleanup stale tokens
 // ---------------------------------------------------------------------------
 
-async function notifyTaskEvent(filePath, task, eventType) {
-  const notification = buildNotification(task, eventType);
+async function notifyTaskEvent(filePath, task, eventType, extra) {
+  const notification = buildNotification(task, eventType, extra);
   if (!notification) return;
 
   const data = loadTokens(filePath);
@@ -201,5 +240,6 @@ module.exports = {
   removeToken,
   sendPush,
   buildNotification,
+  buildVillageNotification,
   notifyTaskEvent,
 };
