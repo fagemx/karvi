@@ -231,21 +231,21 @@ function isSynthesisTask(task) {
  */
 function normalizePipeline(pipeline) {
   if (!Array.isArray(pipeline) || pipeline.length === 0) {
-    return [{ type: 'implement', instruction: null }];
+    return [{ type: 'implement', instruction: null, runtime_hint: 'claude' }];
   }
   return pipeline.map(entry => {
     if (typeof entry === 'string') {
-      return { type: entry };
+      return { type: entry, runtime_hint: 'claude' };
     }
     if (entry && typeof entry === 'object' && typeof entry.type === 'string') {
       return {
         type: entry.type,
         instruction: entry.instruction || null,
         skill: entry.skill || null,
-        runtime_hint: entry.runtime_hint || null,
+        runtime_hint: entry.runtime_hint || 'claude',
       };
     }
-    return { type: 'implement', instruction: null };
+    return { type: 'implement', instruction: null, runtime_hint: 'claude' };
   });
 }
 

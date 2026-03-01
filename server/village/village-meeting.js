@@ -98,7 +98,7 @@ function buildProposalInstruction(rolePrompt, goals, recentSignals) {
   lines.push('## Instructions');
   lines.push('Based on the goals and signals above, produce your weekly proposal.');
   lines.push('Follow the Proposal Format defined in your role document.');
-  lines.push('Output your result as: STEP_RESULT:{"status":"completed","proposal":{...}}');
+  lines.push('Output your result as: STEP_RESULT:{"status":"succeeded","summary":"one line summary","proposal":{...}}');
   return lines.join('\n');
 }
 
@@ -146,7 +146,7 @@ function buildCheckinInstruction(chiefPrompt, goals, execTasks) {
   lines.push('3. **Recommended adjustments**: Priority changes, reassignments, or new actions needed.');
   lines.push('');
   lines.push('Output your result as:');
-  lines.push('STEP_RESULT:{"status":"completed","summary":{...}}');
+  lines.push('STEP_RESULT:{"status":"succeeded","summary":"one line summary","checkin":{...}}');
   lines.push('where summary contains: { progress, blockers, recommendations }');
   return lines.join('\n');
 }
@@ -176,7 +176,7 @@ function buildSynthesisInstruction(chiefPrompt, goals) {
   lines.push('## Instructions');
   lines.push('Synthesize all department proposals into a unified weekly execution plan.');
   lines.push('Follow the Output Format defined in your role document.');
-  lines.push('Output your result as: STEP_RESULT:{"status":"completed","plan":{...}}');
+  lines.push('Output your result as: STEP_RESULT:{"status":"succeeded","summary":"one line summary","plan":{...}}');
   return lines.join('\n');
 }
 
