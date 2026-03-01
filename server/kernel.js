@@ -177,6 +177,12 @@ function createKernel(deps) {
         // parse the plan from its artifact and create execution tasks.
         // Runs server-side (no LLM tokens). Failures are non-blocking.
         if (latestTask && planDispatcher.isSynthesisTask(latestTask)) {
+          // Push: village.plan_ready — chief's plan is available
+          if (push && PUSH_TOKENS_PATH) {
+            const cycleId = latestBoard.village?.currentCycle?.cycleId;
+            push.notifyTaskEvent(PUSH_TOKENS_PATH, null, 'village.plan_ready', { cycleId })
+              .catch(err => console.error('[kernel] village.plan_ready push error:', err.message));
+          }
           try {
             const synthArtifact = artifactStore.readArtifact(
               step.run_id, stepId, 'output'
@@ -202,6 +208,21 @@ function createKernel(deps) {
         if (push && PUSH_TOKENS_PATH && latestTask) {
           push.notifyTaskEvent(PUSH_TOKENS_PATH, latestTask, 'task.completed')
             .catch(err => console.error('[kernel] push error:', err.message));
+        }
+
+        // Push: village.proposals_ready — when synthesis task unlocks, all proposals are done
+        if (push && PUSH_TOKENS_PATH && unlocked.length > 0) {
+          const allTasks = latestBoard.taskPlan?.tasks || [];
+          for (const uid of unlocked) {
+            const unlockedTask = allTasks.find(t => t.id === uid);
+            if (unlockedTask && planDispatcher.isSynthesisTask(unlockedTask)) {
+              const cycleId = latestBoard.village?.currentCycle?.cycleId;
+              const deptCount = latestBoard.village?.departments?.length || 0;
+              push.notifyTaskEvent(PUSH_TOKENS_PATH, null, 'village.proposals_ready', {
+                cycleId, departmentCount: deptCount,
+              }).catch(err => console.error('[kernel] village.proposals_ready push error:', err.message));
+            }
+          }
         }
 
         // Auto-dispatch newly unblocked tasks (deferred to avoid deep recursion)

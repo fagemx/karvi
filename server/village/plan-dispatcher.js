@@ -176,6 +176,13 @@ function parsePlanAndDispatch(board, planData, helpers, deps, synthesisTask) {
     taskIds: createdTaskIds,
   });
 
+  // Push notification: village.plan_executing
+  if (deps.push && deps.PUSH_TOKENS_PATH) {
+    deps.push.notifyTaskEvent(deps.PUSH_TOKENS_PATH, null, 'village.plan_executing', {
+      cycleId, taskCount: createdTaskIds.length,
+    }).catch(err => console.error('[plan-dispatcher] village.plan_executing push error:', err.message));
+  }
+
   // Auto-dispatch tasks that are ready (status === 'dispatched')
   if (deps.tryAutoDispatch) {
     for (const taskId of createdTaskIds) {
