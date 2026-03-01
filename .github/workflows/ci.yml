@@ -30,6 +30,7 @@ jobs:
           node server/test-usage.js
           node server/test-gateway.js
           node server/test-instance-manager.js
+          node server/test-github-webhook.js
 
       # Create initial board.json (gitignored, needed for server to start)
       - name: Seed board
