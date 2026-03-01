@@ -83,73 +83,87 @@ function createStepWorker(deps) {
     const runtimeHint = envelope.runtime_hint || step?.runtime_hint || plan.runtimeHint;
     const rt = deps.getRuntime(runtimeHint);
 
-    // 4. Dispatch with duration tracking (catch failures to transition step properly)
-    const startMs = Date.now();
-    let result;
-    try {
-      result = await rt.dispatch(plan);
-    } catch (dispatchErr) {
-      const durationMs = Date.now() - startMs;
-      // Transition step to failed instead of leaving it stuck in 'running'
-      const failBoard = helpers.readBoard();
-      const failTask = (failBoard.taskPlan?.tasks || []).find(t => t.id === envelope.task_id);
-      const failStep = failTask?.steps?.find(s => s.step_id === envelope.step_id);
-      if (failStep && failStep.state === 'running') {
-        stepSchema.transitionStep(failStep, 'failed', {
-          error: (dispatchErr.message || 'dispatch error').slice(0, 500),
-        });
-        helpers.writeBoard(failBoard);
-        helpers.appendLog({ ts: helpers.nowIso(), event: 'step_dispatch_error', taskId: envelope.task_id, stepId: envelope.step_id, error: dispatchErr.message, duration_ms: durationMs });
-      }
-      throw dispatchErr;
-    }
-    const durationMs = Date.now() - startMs;
+    // 3b. Preflight: check if work is already done (zero tokens)
+    const preflightResult = runPreflight(envelope, plan.workingDir || plan.cwd);
 
-    // 5. Parse output — try STEP_RESULT from extracted reply first (critical for
-    //    JSON-wrapping runtimes like claude --output-format json where STEP_RESULT
-    //    is inside parsed.result, not in raw stdout)
-    const replyText = rt.extractReplyText(result.parsed, result.stdout);
-    const usage = rt.extractUsage?.(result.parsed, result.stdout) || null;
-    const stepResult = parseStepResult(replyText) || parseStepResult(result.stdout);
+    let status, failure, summary, durationMs, usage, postCheckResult;
 
-    let status, failure, summary;
-    if (stepResult) {
-      // Structured output from agent
-      status = stepResult.status === 'succeeded' ? 'succeeded' : 'failed';
-      summary = stepResult.summary || replyText?.slice(0, 500) || null;
-      failure = status === 'failed' ? {
-        failure_signature: stepResult.error || replyText?.slice(0, 200),
-        failure_mode: stepResult.failure_mode || null,
-        retryable: stepResult.retryable !== false,
-      } : null;
+    if (preflightResult.alreadyDone) {
+      // Skip dispatch — work already exists in codebase
+      status = 'succeeded';
+      summary = `Preflight: already implemented (${preflightResult.evidence})`;
+      failure = null;
+      durationMs = 0;
+      usage = null;
+      postCheckResult = null;
     } else {
-      // Fall back to exit-code classification
-      status = result.code === 0 ? 'succeeded' : 'failed';
-      summary = replyText?.slice(0, 500) || null;
-      failure = result.code !== 0 ? {
-        failure_signature: replyText?.slice(0, 200),
-        retryable: true,
-      } : null;
-    }
+      // 4. Dispatch with duration tracking (catch failures to transition step properly)
+      const startMs = Date.now();
+      let result;
+      try {
+        result = await rt.dispatch(plan);
+      } catch (dispatchErr) {
+        const dispatchDurationMs = Date.now() - startMs;
+        // Transition step to failed instead of leaving it stuck in 'running'
+        const failBoard = helpers.readBoard();
+        const failTask = (failBoard.taskPlan?.tasks || []).find(t => t.id === envelope.task_id);
+        const failStep = failTask?.steps?.find(s => s.step_id === envelope.step_id);
+        if (failStep && failStep.state === 'running') {
+          stepSchema.transitionStep(failStep, 'failed', {
+            error: (dispatchErr.message || 'dispatch error').slice(0, 500),
+          });
+          helpers.writeBoard(failBoard);
+          helpers.appendLog({ ts: helpers.nowIso(), event: 'step_dispatch_error', taskId: envelope.task_id, stepId: envelope.step_id, error: dispatchErr.message, duration_ms: dispatchDurationMs });
+        }
+        throw dispatchErr;
+      }
+      durationMs = Date.now() - startMs;
 
-    // 5b. Post-condition verification — only when agent self-reported success
-    let postCheckResult = null;
-    if (status === 'succeeded') {
-      const postResult = await runPostCheck(plan.workingDir || plan.cwd);
-      postCheckResult = postResult;
-      if (postResult.hasUncommittedChanges) {
-        // Attempt auto-finalize
-        const finalized = autoFinalize(plan.workingDir || plan.cwd, envelope);
-        if (!finalized.ok) {
-          status = 'failed';
-          failure = {
-            failure_signature: `Post-check: uncommitted changes (${postResult.files.length} files) and auto-finalize failed: ${finalized.error}`,
-            failure_mode: 'FINALIZE_ERROR',
-            retryable: true,
-          };
-          summary = `Agent reported success but left uncommitted changes. Auto-finalize failed.`;
-        } else {
-          summary = (summary || '') + ` [auto-finalized: ${finalized.commitHash}]`;
+      // 5. Parse output — try STEP_RESULT from extracted reply first (critical for
+      //    JSON-wrapping runtimes like claude --output-format json where STEP_RESULT
+      //    is inside parsed.result, not in raw stdout)
+      const replyText = rt.extractReplyText(result.parsed, result.stdout);
+      usage = rt.extractUsage?.(result.parsed, result.stdout) || null;
+      const stepResult = parseStepResult(replyText) || parseStepResult(result.stdout);
+
+      if (stepResult) {
+        // Structured output from agent
+        status = stepResult.status === 'succeeded' ? 'succeeded' : 'failed';
+        summary = stepResult.summary || replyText?.slice(0, 500) || null;
+        failure = status === 'failed' ? {
+          failure_signature: stepResult.error || replyText?.slice(0, 200),
+          failure_mode: stepResult.failure_mode || null,
+          retryable: stepResult.retryable !== false,
+        } : null;
+      } else {
+        // Fall back to exit-code classification
+        status = result.code === 0 ? 'succeeded' : 'failed';
+        summary = replyText?.slice(0, 500) || null;
+        failure = result.code !== 0 ? {
+          failure_signature: replyText?.slice(0, 200),
+          retryable: true,
+        } : null;
+      }
+
+      // 5b. Post-condition verification — only when agent self-reported success
+      postCheckResult = null;
+      if (status === 'succeeded') {
+        const postResult = await runPostCheck(plan.workingDir || plan.cwd);
+        postCheckResult = postResult;
+        if (postResult.hasUncommittedChanges) {
+          // Attempt auto-finalize
+          const finalized = autoFinalize(plan.workingDir || plan.cwd, envelope);
+          if (!finalized.ok) {
+            status = 'failed';
+            failure = {
+              failure_signature: `Post-check: uncommitted changes (${postResult.files.length} files) and auto-finalize failed: ${finalized.error}`,
+              failure_mode: 'FINALIZE_ERROR',
+              retryable: true,
+            };
+            summary = `Agent reported success but left uncommitted changes. Auto-finalize failed.`;
+          } else {
+            summary = (summary || '') + ` [auto-finalized: ${finalized.commitHash}]`;
+          }
         }
       }
     }
@@ -164,6 +178,7 @@ function createStepWorker(deps) {
       duration_ms: durationMs,
       model_used: plan.modelHint,
       post_check: postCheckResult,
+      ...(preflightResult.alreadyDone ? { skipped: true, preflight: preflightResult } : {}),
     };
     artifactStore.writeArtifact(envelope.run_id, envelope.step_id, 'output', agentOutput);
 
@@ -189,7 +204,7 @@ function createStepWorker(deps) {
         type: signalType,
         content: `${envelope.task_id} step ${envelope.step_id} running → ${latestStep.state}`,
         refs: [envelope.task_id],
-        data: { taskId: envelope.task_id, stepId: envelope.step_id, from: 'running', to: latestStep.state, attempt: latestStep.attempt },
+        data: { taskId: envelope.task_id, stepId: envelope.step_id, from: 'running', to: latestStep.state, attempt: latestStep.attempt, ...(preflightResult.alreadyDone ? { preflight: { skipped: true, evidence: preflightResult.evidence } } : {}) },
       });
       if (latestBoard.signals.length > 500) latestBoard.signals = latestBoard.signals.slice(-500);
       helpers.writeBoard(latestBoard);
@@ -265,6 +280,105 @@ function autoFinalize(workDir, envelope) {
   } catch (err) {
     return { ok: false, error: err.message?.slice(0, 200) || 'unknown' };
   }
+}
+
+/**
+ * Check if the work described in the envelope has already been implemented.
+ * Returns { alreadyDone, evidence, checks }.
+ * Only marks as done if ALL extracted targets are found (avoids false positives).
+ */
+function runPreflight(envelope, workDir) {
+  const result = { alreadyDone: false, evidence: null, checks: [] };
+
+  if (!workDir) return result;
+
+  const targets = extractPreflightTargets(envelope.instruction || '');
+  if (targets.length === 0) return result; // No targets to check, proceed normally
+
+  const opts = { cwd: workDir, encoding: 'utf8', timeout: 5000 };
+  const fs = require('fs');
+  const path = require('path');
+
+  let matched = 0;
+  for (const target of targets) {
+    try {
+      let found = false;
+
+      if (target.type === 'file') {
+        found = fs.existsSync(path.resolve(workDir, target.value));
+      } else if (target.type === 'function' || target.type === 'pattern') {
+        try {
+          execSync(`git grep -q "${target.value}" -- "*.js" "*.ts"`, opts);
+          found = true;
+        } catch {
+          found = false;
+        }
+      } else if (target.type === 'route') {
+        try {
+          execSync(`git grep -q "${target.value}" -- "*.js"`, opts);
+          found = true;
+        } catch {
+          found = false;
+        }
+      }
+
+      result.checks.push({ target: target.value, type: target.type, found });
+      if (found) matched++;
+    } catch {
+      // Check failed, skip
+    }
+  }
+
+  // Only mark as already done if ALL targets are found (avoid false positives)
+  if (targets.length > 0 && matched === targets.length) {
+    result.alreadyDone = true;
+    result.evidence = targets.map(t => `${t.type}:${t.value}`).join(', ');
+  }
+
+  return result;
+}
+
+/**
+ * Extract checkable targets (file paths, function names, route patterns)
+ * from a step instruction string.
+ */
+function extractPreflightTargets(instruction) {
+  if (!instruction || typeof instruction !== 'string') return [];
+  const targets = [];
+
+  // Match file paths like server/village/retro.js or routes/village.js
+  const filePaths = instruction.match(/(?:server|routes|village|src)\/[\w\-\/]+\.\w+/g);
+  if (filePaths) {
+    for (const fp of filePaths) {
+      targets.push({ type: 'file', value: fp });
+    }
+  }
+
+  // Match function names like buildVillageNotification, createScheduler
+  const funcNames = instruction.match(/(?:function|const|def)\s+(\w{8,})/g);
+  if (funcNames) {
+    for (const fn of funcNames) {
+      const name = fn.replace(/^(?:function|const|def)\s+/, '');
+      targets.push({ type: 'function', value: name });
+    }
+  }
+
+  // Match route patterns like /api/village/approve
+  const routes = instruction.match(/\/api\/[\w\/\-]+/g);
+  if (routes) {
+    for (const route of routes) {
+      targets.push({ type: 'route', value: route });
+    }
+  }
+
+  // Deduplicate
+  const seen = new Set();
+  return targets.filter(t => {
+    const key = `${t.type}:${t.value}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
 }
 
 /**
@@ -368,4 +482,4 @@ function recoverExpiredLocks(board) {
   return recovered;
 }
 
-module.exports = { createStepWorker, parseStepResult, buildStepMessage, recoverExpiredLocks };
+module.exports = { createStepWorker, parseStepResult, buildStepMessage, recoverExpiredLocks, runPreflight, extractPreflightTargets };
