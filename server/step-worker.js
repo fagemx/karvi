@@ -8,6 +8,7 @@
  * Extracted from kernel.js:dispatchStep() (issue #92).
  * Kernel = routing decisions, StepWorker = execution.
  */
+const { execSync } = require('child_process');
 const LOCK_GRACE_MS = 30_000; // 30s grace on top of step timeout
 
 /**
@@ -131,6 +132,28 @@ function createStepWorker(deps) {
       } : null;
     }
 
+    // 5b. Post-condition verification — only when agent self-reported success
+    let postCheckResult = null;
+    if (status === 'succeeded') {
+      const postResult = await runPostCheck(plan.workingDir || plan.cwd);
+      postCheckResult = postResult;
+      if (postResult.hasUncommittedChanges) {
+        // Attempt auto-finalize
+        const finalized = autoFinalize(plan.workingDir || plan.cwd, envelope);
+        if (!finalized.ok) {
+          status = 'failed';
+          failure = {
+            failure_signature: `Post-check: uncommitted changes (${postResult.files.length} files) and auto-finalize failed: ${finalized.error}`,
+            failure_mode: 'FINALIZE_ERROR',
+            retryable: true,
+          };
+          summary = `Agent reported success but left uncommitted changes. Auto-finalize failed.`;
+        } else {
+          summary = (summary || '') + ` [auto-finalized: ${finalized.commitHash}]`;
+        }
+      }
+    }
+
     const agentOutput = {
       run_id: envelope.run_id,
       step_id: envelope.step_id,
@@ -140,6 +163,7 @@ function createStepWorker(deps) {
       tokens_used: (usage?.inputTokens || 0) + (usage?.outputTokens || 0),
       duration_ms: durationMs,
       model_used: plan.modelHint,
+      post_check: postCheckResult,
     };
     artifactStore.writeArtifact(envelope.run_id, envelope.step_id, 'output', agentOutput);
 
@@ -192,6 +216,56 @@ function createStepWorker(deps) {
 }
 
 // --- Helpers (module-level, testable) ---
+
+/**
+ * Check working directory for uncommitted git changes.
+ * Returns { hasUncommittedChanges, files }.
+ * If the directory is not a git repo, returns a clean result (no-op).
+ */
+async function runPostCheck(workDir) {
+  const opts = { cwd: workDir, encoding: 'utf8', timeout: 10000 };
+  const result = { hasUncommittedChanges: false, files: [], hasNewCommit: false };
+
+  if (!workDir) return result;
+
+  try {
+    const porcelain = execSync('git status --porcelain', opts).trim();
+    if (porcelain) {
+      result.hasUncommittedChanges = true;
+      result.files = porcelain.split('\n').map(l => l.trim()).filter(Boolean);
+    }
+  } catch (err) {
+    // Not a git repo or git not available — skip post-check
+    return result;
+  }
+
+  return result;
+}
+
+/**
+ * Attempt to commit all uncommitted changes on behalf of the agent.
+ * Returns { ok, commitHash } on success or { ok, error } on failure.
+ */
+function autoFinalize(workDir, envelope) {
+  const opts = { cwd: workDir, encoding: 'utf8', timeout: 30000 };
+  try {
+    execSync('git add -A', opts);
+    const msg = `chore: auto-finalize step ${envelope.step_id} for ${envelope.task_id}`;
+    execSync(`git commit -m "${msg}"`, opts);
+    const hash = execSync('git log -1 --format=%h', opts).trim();
+
+    // Try to push if on a branch
+    try {
+      execSync('git push', opts);
+    } catch {
+      // Push failed — still consider commit as success
+    }
+
+    return { ok: true, commitHash: hash };
+  } catch (err) {
+    return { ok: false, error: err.message?.slice(0, 200) || 'unknown' };
+  }
+}
 
 /**
  * Parse structured STEP_RESULT from agent stdout.
