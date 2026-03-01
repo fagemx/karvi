@@ -6,6 +6,8 @@
  * POST /api/village/departments  — add/update a department
  * GET  /api/village/status       — current cycle status
  * POST /api/village/trigger      — trigger a meeting (Phase 1)
+ * POST /api/village/config       — update village config (e.g. auto_approve)
+ * POST /api/village/approve      — approve pending plan and dispatch execution tasks
  */
 const bb = require('../blackboard-server');
 const { json } = bb;
@@ -249,6 +251,111 @@ module.exports = function villageRoutes(req, res, helpers, deps) {
           phase: 'proposal',
           tasksCreated: meetingTasks.length,
           taskIds: meetingTasks.map(t => t.id),
+        });
+      } catch (error) {
+        return json(res, 500, { error: error.message });
+      }
+    }).catch(e => json(res, 400, { error: e.message }));
+    return;
+  }
+
+  // ── POST /api/village/config — update village-level config ──
+  if (req.method === 'POST' && pathname === '/api/village/config') {
+    helpers.parseBody(req).then(body => {
+      try {
+        const board = helpers.readBoard();
+        const village = ensureVillage(board);
+        const now = helpers.nowIso();
+
+        if (body.auto_approve !== undefined) {
+          village.auto_approve = Boolean(body.auto_approve);
+        }
+
+        helpers.writeBoard(board);
+        helpers.appendLog({ ts: now, event: 'village_config_updated', config: { auto_approve: village.auto_approve } });
+        return json(res, 200, { ok: true, auto_approve: village.auto_approve });
+      } catch (error) {
+        return json(res, 500, { error: error.message });
+      }
+    }).catch(e => json(res, 400, { error: e.message }));
+    return;
+  }
+
+  // ── POST /api/village/approve — approve pending plan and dispatch tasks ──
+  if (req.method === 'POST' && pathname === '/api/village/approve') {
+    helpers.parseBody(req).then(async body => {
+      try {
+        const board = helpers.readBoard();
+        const village = ensureVillage(board);
+
+        // Validate: must be in awaiting_approval phase
+        if (!village.currentCycle || village.currentCycle.phase !== 'awaiting_approval') {
+          return json(res, 409, {
+            error: 'not_awaiting_approval',
+            message: `Current cycle phase is "${village.currentCycle?.phase || 'none'}", expected "awaiting_approval"`,
+            currentCycle: village.currentCycle || null,
+          });
+        }
+
+        // Find the synthesis task for this cycle
+        const cycleId = village.currentCycle.cycleId;
+        const allTasks = board.taskPlan?.tasks || [];
+        const planDispatcher = require('../village/plan-dispatcher');
+        const synthTask = allTasks.find(t => planDispatcher.isSynthesisTask(t) && t.source?.cycleId === cycleId
+          || planDispatcher.isSynthesisTask(t) && t.id?.includes(cycleId));
+
+        if (!synthTask) {
+          return json(res, 404, {
+            error: 'synthesis_task_not_found',
+            message: `Cannot find synthesis task for cycle ${cycleId}`,
+          });
+        }
+
+        // Determine the last succeeded step and its run_id
+        const steps = synthTask.steps || [];
+        const lastSucceeded = steps.slice().reverse().find(s => s.state === 'succeeded');
+        if (!lastSucceeded) {
+          return json(res, 422, {
+            error: 'no_succeeded_step',
+            message: 'Synthesis task has no succeeded steps — cannot read artifact',
+          });
+        }
+
+        // Read the synthesis artifact
+        const { artifactStore } = deps;
+        const synthArtifact = artifactStore.readArtifact(
+          lastSucceeded.run_id, lastSucceeded.step_id, 'output'
+        );
+        const planData = planDispatcher.extractPlanFromArtifact(synthArtifact);
+
+        if (!planData) {
+          return json(res, 422, {
+            error: 'no_plan_in_artifact',
+            message: 'Synthesis artifact does not contain a parseable plan',
+          });
+        }
+
+        // Dispatch execution tasks
+        const result = planDispatcher.parsePlanAndDispatch(
+          board, planData, helpers, deps, synthTask
+        );
+
+        const now = helpers.nowIso();
+        helpers.appendLog({
+          ts: now,
+          event: 'village_plan_approved',
+          cycleId,
+          approvedBy: body.approvedBy || 'human',
+          taskCount: result.taskIds.length,
+          taskIds: result.taskIds,
+        });
+
+        return json(res, 200, {
+          ok: true,
+          cycleId,
+          phase: 'execution',
+          dispatched: result.dispatched,
+          taskIds: result.taskIds,
         });
       } catch (error) {
         return json(res, 500, { error: error.message });

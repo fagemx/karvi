@@ -177,29 +177,47 @@ function createKernel(deps) {
         // parse the plan from its artifact and create execution tasks.
         // Runs server-side (no LLM tokens). Failures are non-blocking.
         if (latestTask && planDispatcher.isSynthesisTask(latestTask)) {
-          // Push: village.plan_ready — chief's plan is available
-          if (push && PUSH_TOKENS_PATH) {
-            const cycleId = latestBoard.village?.currentCycle?.cycleId;
-            push.notifyTaskEvent(PUSH_TOKENS_PATH, null, 'village.plan_ready', { cycleId })
-              .catch(err => console.error('[kernel] village.plan_ready push error:', err.message));
-          }
-          try {
-            const synthArtifact = artifactStore.readArtifact(
-              step.run_id, stepId, 'output'
-            );
-            const planData = planDispatcher.extractPlanFromArtifact(synthArtifact);
-            if (planData) {
-              planDispatcher.parsePlanAndDispatch(
-                latestBoard, planData, helpers, deps, latestTask
-              );
-              // parsePlanAndDispatch calls writeBoard internally,
-              // so we re-read the board for subsequent operations
-            } else {
-              console.warn('[kernel] synthesis task completed but no plan found in artifact');
+          // Check if auto_approve is enabled (default: true)
+          const autoApprove = latestBoard.village?.auto_approve !== false;
+
+          if (autoApprove) {
+            // Current behavior: dispatch immediately
+            // Push: village.plan_ready — chief's plan is available
+            if (push && PUSH_TOKENS_PATH) {
+              const cycleId = latestBoard.village?.currentCycle?.cycleId;
+              push.notifyTaskEvent(PUSH_TOKENS_PATH, null, 'village.plan_ready', { cycleId })
+                .catch(err => console.error('[kernel] village.plan_ready push error:', err.message));
             }
-          } catch (err) {
-            console.error('[kernel] plan dispatch failed:', err.message);
-            // Non-blocking — pipeline continues even if dispatch fails
+            try {
+              const synthArtifact = artifactStore.readArtifact(
+                step.run_id, stepId, 'output'
+              );
+              const planData = planDispatcher.extractPlanFromArtifact(synthArtifact);
+              if (planData) {
+                planDispatcher.parsePlanAndDispatch(
+                  latestBoard, planData, helpers, deps, latestTask
+                );
+                // parsePlanAndDispatch calls writeBoard internally,
+                // so we re-read the board for subsequent operations
+              } else {
+                console.warn('[kernel] synthesis task completed but no plan found in artifact');
+              }
+            } catch (err) {
+              console.error('[kernel] plan dispatch failed:', err.message);
+              // Non-blocking — pipeline continues even if dispatch fails
+            }
+          } else {
+            // Human gate: update cycle phase and wait for manual approval
+            if (latestBoard.village?.currentCycle) {
+              latestBoard.village.currentCycle.phase = 'awaiting_approval';
+            }
+            // Push notification: plan ready, needs approval
+            if (push && PUSH_TOKENS_PATH) {
+              push.notifyTaskEvent(PUSH_TOKENS_PATH, null, 'village.plan_ready', {
+                cycleId: latestBoard.village?.currentCycle?.cycleId,
+                needsApproval: true,
+              }).catch(err => console.error('[kernel] push error:', err.message));
+            }
           }
         }
 
