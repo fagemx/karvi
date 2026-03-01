@@ -116,6 +116,9 @@ function dispatch(plan) {
         let obj;
         try { obj = JSON.parse(line); } catch { continue; }
 
+        // Activity detected — reset inactivity timer
+        resetInactivityTimer();
+
         if (obj.session_id) sessionId = obj.session_id;
 
         // --- (1) result event: definitive completion (may be missing per known bug) ---
@@ -153,11 +156,19 @@ function dispatch(plan) {
       }
     });
 
-    // --- Timeout: insurance only ---
-    const timer = setTimeout(() => {
-      settle(new Error(`claude timed out after ${plan.timeoutSec || 300}s`));
-      killTree(child.pid);
-    }, timeoutMs);
+    // --- Inactivity timeout: resets on every stream event ---
+    // If claude is producing output, it's alive. Only kill when truly idle.
+    const INACTIVITY_MS = timeoutMs; // use plan timeout as inactivity window
+    let timer = null;
+    function resetInactivityTimer() {
+      if (settled) return;
+      clearTimeout(timer);
+      timer = setTimeout(() => {
+        settle(new Error(`claude idle for ${Math.round(INACTIVITY_MS / 1000)}s (no stream events)`));
+        killTree(child.pid);
+      }, INACTIVITY_MS);
+    }
+    resetInactivityTimer(); // start initial timer
 
     child.on('error', err => settle(err));
 
