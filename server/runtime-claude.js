@@ -36,11 +36,11 @@ function dispatch(plan) {
 
     if (plan.sessionId) args.push('--resume', plan.sessionId);
 
-    // Stream JSON — parse assistant messages in real time, don't wait for exit.
-    // Without --include-partial-messages, we get complete assistant/result events
-    // (no token-level stream_event). This is simpler and sufficient for
-    // detecting STEP_RESULT at message boundaries.
-    args.push('--output-format', 'stream-json');
+    // Stream JSON with partial messages — get token-level events during tool use.
+    // Without --include-partial-messages, only complete turn-boundary events are
+    // emitted. A single turn with many tool calls can take >5 minutes with zero
+    // events, causing the inactivity timer to fire prematurely.
+    args.push('--output-format', 'stream-json', '--verbose', '--include-partial-messages');
 
     if (plan.modelHint) args.push('--model', plan.modelHint);
     if (plan.codexRole) args.push('--agent', plan.codexRole);
