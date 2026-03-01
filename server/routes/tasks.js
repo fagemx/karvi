@@ -273,6 +273,29 @@ function tryAutoDispatch(taskId, deps, helpers) {
     return;
   }
 
+  // Concurrency gate: limit parallel in-progress tasks
+  const inProgressCount = (board.taskPlan?.tasks || [])
+    .filter(t => t.status === 'in_progress').length;
+  if (inProgressCount >= (ctrl.max_concurrent_tasks || 2)) {
+    console.log(`[auto-dispatch:${taskId}] skip: ${inProgressCount} tasks in progress (max: ${ctrl.max_concurrent_tasks || 2})`);
+    return;
+  }
+
+  // Worktree creation: isolate each task in its own git worktree
+  if (ctrl.use_worktrees) {
+    const worktree = require('../worktree');
+    const repoRoot = path.resolve(__dirname, '..', '..');
+    try {
+      const wt = worktree.createWorktree(repoRoot, taskId);
+      task.worktreeDir = wt.worktreePath;
+      task.worktreeBranch = wt.branch;
+      console.log(`[auto-dispatch:${taskId}] worktree created: ${wt.worktreePath}`);
+    } catch (err) {
+      console.error(`[auto-dispatch:${taskId}] worktree creation failed:`, err.message);
+      return;
+    }
+  }
+
   // --- Step-level dispatch (opt-in via controls.use_step_pipeline) ---
   if (ctrl.use_step_pipeline && deps.stepWorker) {
     console.log(`[auto-dispatch] step-pipeline for ${taskId}`);
@@ -645,6 +668,11 @@ module.exports = function tasksRoutes(req, res, helpers, deps) {
           }
         }
 
+        // Auto-dispatch when task transitions to dispatched
+        if (payload.status === 'dispatched') {
+          setImmediate(() => tryAutoDispatch(task.id, deps, helpers));
+        }
+
         // Evolution Layer: emit status_change signal
         if (payload.status) {
           mgmt.ensureEvolutionFields(board);
@@ -866,6 +894,11 @@ module.exports = function tasksRoutes(req, res, helpers, deps) {
           for (const id of unlocked) {
             setImmediate(() => tryAutoDispatch(id, deps, helpers));
           }
+        }
+
+        // Auto-dispatch when task transitions to dispatched
+        if (newStatus === 'dispatched') {
+          setImmediate(() => tryAutoDispatch(task.id, deps, helpers));
         }
 
         // Update phase if all tasks approved

@@ -146,6 +146,17 @@ function createKernel(deps) {
         if (latestTask) {
           latestTask.status = 'blocked';
           latestTask.blocker = { reason: `Dead letter: ${decision.rule}`, askedAt: helpers.nowIso() };
+          // Cleanup worktree on dead letter
+          if (latestTask.worktreeDir) {
+            try {
+              const worktreeHelper = require('./worktree');
+              const repoRoot = require('path').resolve(__dirname, '..');
+              worktreeHelper.removeWorktree(repoRoot, taskId);
+              console.log(`[kernel] worktree cleaned up for dead-lettered ${taskId}`);
+            } catch (wtErr) {
+              console.error(`[kernel] worktree cleanup failed for ${taskId}:`, wtErr.message);
+            }
+          }
         }
         latestBoard.signals.push({
           id: helpers.uid('sig'), ts: helpers.nowIso(), by: 'kernel',
@@ -167,6 +178,17 @@ function createKernel(deps) {
           // Step pipeline includes review as step[3] — all steps succeeded means approved
           latestTask.status = 'approved';
           latestTask.completedAt = helpers.nowIso();
+          // Cleanup worktree on task completion
+          if (latestTask.worktreeDir) {
+            try {
+              const worktreeHelper = require('./worktree');
+              const repoRoot = require('path').resolve(__dirname, '..');
+              worktreeHelper.removeWorktree(repoRoot, taskId);
+              console.log(`[kernel] worktree cleaned up for completed ${taskId}`);
+            } catch (wtErr) {
+              console.error(`[kernel] worktree cleanup failed for ${taskId}:`, wtErr.message);
+            }
+          }
           // Preserve payload from last step's artifact for downstream access
           const lastStepOutput = artifactStore.readArtifact(step.run_id, stepId, 'output');
           latestTask.result = {

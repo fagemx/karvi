@@ -237,6 +237,23 @@ const retryPoller = setInterval(() => {
     for (const task of board.taskPlan?.tasks || []) {
       if (!task.steps || task.status === 'completed' || task.status === 'approved') continue;
       for (const step of task.steps) {
+        // Safety net: recover steps stuck in 'running' with expired locks
+        if (step.state === 'running' && step.lock_expires_at && step.lock_expires_at <= now) {
+          console.log(`[retry-poller] lock expired for ${step.step_id} (locked_by=${step.locked_by}), recovering`);
+          deps.stepSchema.transitionStep(step, 'failed', {
+            error: 'Lock expired — runtime did not complete within timeout',
+          });
+          writeBoard(board);
+          // If step went dead (max_attempts exhausted), trigger kernel for dead-letter routing
+          if (step.state === 'dead') {
+            const signal = { type: 'step_dead', data: { taskId: task.id, stepId: step.step_id } };
+            setImmediate(() => {
+              deps.kernel.onStepEvent(signal, readBoard(), routeHelpers)
+                .catch(err => console.error(`[retry-poller] kernel callback error:`, err.message));
+            });
+          }
+          return; // one step per poll cycle to avoid races
+        }
         if (step.state === 'queued' && step.attempt > 0 && step.scheduled_at && step.scheduled_at <= now) {
           console.log(`[retry-poller] re-dispatching ${step.step_id} (attempt ${step.attempt})`);
           const runState = { task, steps: task.steps, run_id: step.run_id, budget: task.budget };
