@@ -433,8 +433,10 @@ module.exports = function villageRoutes(req, res, helpers, deps) {
         const cycleId = village.currentCycle.cycleId;
         const allTasks = board.taskPlan?.tasks || [];
         const planDispatcher = require('../village/plan-dispatcher');
-        const synthTask = allTasks.find(t => planDispatcher.isSynthesisTask(t) && t.source?.cycleId === cycleId
-          || planDispatcher.isSynthesisTask(t) && t.id?.includes(cycleId));
+        const synthTask = allTasks.find(t =>
+          planDispatcher.isSynthesisTask(t) &&
+          (t.source?.cycleId === cycleId || t.id === `MTG-${cycleId}-synthesis`)
+        );
 
         if (!synthTask) {
           return json(res, 404, {
