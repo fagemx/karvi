@@ -303,6 +303,80 @@ const testRunId = `smoke-${Date.now()}`;
   });
 
   // ══════════════════════════════════════════════════════
+  // DoD 6: gatherRecentSignals filters by goalIds (#159)
+  // ══════════════════════════════════════════════════════
+  console.log('\n── DoD 6: gatherRecentSignals filters by goalIds ──');
+
+  await test('gatherRecentSignals filters signals by goalIds', () => {
+    const board = createVillageBoard();
+    board.village.departments.push({
+      id: 'content', name: 'Content', assignee: 'engineer_lite',
+      promptFile: 'village/roles/engineering.md', goalIds: ['G2'],
+    });
+    board.village.goals.push({ id: 'G2', text: 'Content goal', active: true });
+    board.taskPlan.tasks = [
+      { id: 'T-eng-1', department: 'engineering', status: 'completed' },
+      { id: 'T-con-1', department: 'content', status: 'completed' },
+    ];
+    board.signals = [
+      { id: 's1', type: 'status_change', content: 'eng signal', refs: ['T-eng-1'], data: { taskId: 'T-eng-1' } },
+      { id: 's2', type: 'status_change', content: 'content signal', refs: ['T-con-1'], data: { taskId: 'T-con-1' } },
+      { id: 's3', type: 'lesson_validated', content: 'shared lesson', refs: [], data: {} },
+    ];
+    const result = villageMeeting.gatherRecentSignals(board, ['G1']);
+    assert.ok(result.includes('eng signal'), 'should include engineering signal');
+    assert.ok(!result.includes('content signal'), 'should NOT include content signal');
+    assert.ok(result.includes('shared lesson'), 'should include cross-cutting signal');
+  });
+
+  await test('gatherRecentSignals includes cross-cutting signals for any goalIds', () => {
+    const board = createVillageBoard();
+    board.taskPlan.tasks = [
+      { id: 'T-eng-1', department: 'engineering', status: 'completed' },
+    ];
+    board.signals = [
+      { id: 's1', type: 'lesson_validated', content: 'cross-cutting lesson', data: {} },
+      { id: 's2', type: 'review_result', content: 'generic review' },
+    ];
+    const result = villageMeeting.gatherRecentSignals(board, ['G1']);
+    assert.ok(result.includes('cross-cutting lesson'), 'lesson_validated always included');
+    assert.ok(result.includes('generic review'), 'signal without task ref always included');
+  });
+
+  await test('gatherRecentSignals returns all when goalIds empty', () => {
+    const board = createVillageBoard();
+    board.signals = [
+      { id: 's1', type: 'status_change', content: 'sig A', refs: ['T-1'], data: { taskId: 'T-1' } },
+      { id: 's2', type: 'status_change', content: 'sig B', refs: ['T-2'], data: { taskId: 'T-2' } },
+    ];
+    const result = villageMeeting.gatherRecentSignals(board, []);
+    assert.ok(result.includes('sig A'), 'empty goalIds -> all signals');
+    assert.ok(result.includes('sig B'), 'empty goalIds -> all signals');
+  });
+
+  await test('gatherRecentSignals returns all when goalIds undefined', () => {
+    const board = createVillageBoard();
+    board.signals = [
+      { id: 's1', type: 'status_change', content: 'sig X', refs: ['T-1'], data: { taskId: 'T-1' } },
+    ];
+    const result = villageMeeting.gatherRecentSignals(board);
+    assert.ok(result.includes('sig X'), 'undefined goalIds -> all signals');
+  });
+
+  await test('gatherRecentSignals returns only cross-cutting when no tasks match dept', () => {
+    const board = createVillageBoard();
+    // No tasks in board at all
+    board.taskPlan.tasks = [];
+    board.signals = [
+      { id: 's1', type: 'status_change', content: 'task signal', refs: ['T-unknown'], data: { taskId: 'T-unknown' } },
+      { id: 's2', type: 'lesson_validated', content: 'lesson signal', data: {} },
+    ];
+    const result = villageMeeting.gatherRecentSignals(board, ['G1']);
+    assert.ok(!result.includes('task signal'), 'task signal for unknown task excluded');
+    assert.ok(result.includes('lesson signal'), 'cross-cutting signal included');
+  });
+
+  // ══════════════════════════════════════════════════════
   // BONUS: push notifications for village events
   // ══════════════════════════════════════════════════════
   console.log('\n── Bonus: push notifications ──');

@@ -60,13 +60,47 @@ function gatherRecentSignals(board, goalIds, limit) {
   const signals = (board.signals || []).slice(-max * 3);
   if (signals.length === 0) return '(no recent signals)';
 
-  // Prefer signals related to the department's goals or recent reviews
-  const relevant = signals
-    .filter(s => s.type === 'review_result' || s.type === 'status_change' || s.type === 'lesson_validated')
-    .slice(-max);
+  const typeFilter = s =>
+    s.type === 'review_result' ||
+    s.type === 'status_change' ||
+    s.type === 'lesson_validated';
+
+  // No goalIds provided -> return all relevant signals (backward compat)
+  if (!goalIds || goalIds.length === 0) {
+    const relevant = signals.filter(typeFilter).slice(-max);
+    if (relevant.length === 0) return '(no relevant signals)';
+    return relevant.map(s => `- [${s.type}] ${s.content || s.id}`).join('\n');
+  }
+
+  // Build set of department IDs that own these goals
+  const departments = board.village?.departments || [];
+  const deptIds = new Set();
+  for (const dept of departments) {
+    if ((dept.goalIds || []).some(gid => goalIds.includes(gid))) {
+      deptIds.add(dept.id);
+    }
+  }
+
+  // Build set of task IDs belonging to those departments
+  const tasks = board.taskPlan?.tasks || [];
+  const deptTaskIds = new Set();
+  for (const task of tasks) {
+    if (task.department && deptIds.has(task.department)) {
+      deptTaskIds.add(task.id);
+    }
+  }
+
+  // Filter: include cross-cutting signals and dept-matching task signals
+  const relevant = signals.filter(s => {
+    if (!typeFilter(s)) return false;
+    // Cross-cutting signals (no task reference) -> always include
+    const taskId = s.data?.taskId || (s.refs && s.refs[0]);
+    if (!taskId) return true;
+    // Task-linked signals -> include if task belongs to a matching department
+    return deptTaskIds.has(taskId);
+  }).slice(-max);
 
   if (relevant.length === 0) return '(no relevant signals)';
-
   return relevant.map(s => `- [${s.type}] ${s.content || s.id}`).join('\n');
 }
 
