@@ -265,6 +265,58 @@ test('generateStepsForTask passes revision_target and max_revision_cycles from p
   assert.strictEqual(steps[1].revision_target, null);
 });
 
+// --- Pipeline Templates ---
+
+test('generateStepsForTask resolves string pipeline from board templates', () => {
+  const board = { pipelineTemplates: {
+    'video-ad': [
+      { type: 'shotgen', skill: '/shotgen' },
+      { type: 'shotcheck', revision_target: 'shotgen' },
+    ]
+  }};
+  const task = { id: 'T-TPL1', pipeline: 'video-ad' };
+  const steps = mgmt.generateStepsForTask(task, 'run-tpl', null, board);
+  assert.strictEqual(steps.length, 2);
+  assert.deepStrictEqual(steps.map(s => s.type), ['shotgen', 'shotcheck']);
+  assert.strictEqual(steps[1].revision_target, 'shotgen');
+});
+
+test('generateStepsForTask falls back to default for unknown template', () => {
+  const board = { pipelineTemplates: {} };
+  const task = { id: 'T-TPL2', pipeline: 'nonexistent' };
+  const steps = mgmt.generateStepsForTask(task, 'run-tpl2', null, board);
+  assert.strictEqual(steps.length, 3);
+  assert.deepStrictEqual(steps.map(s => s.type), ['plan', 'implement', 'review']);
+});
+
+test('generateStepsForTask inline array still works with board param', () => {
+  const board = { pipelineTemplates: { 'video-ad': [{ type: 'shotgen' }] } };
+  const task = { id: 'T-TPL3', pipeline: ['plan', 'implement'] };
+  const steps = mgmt.generateStepsForTask(task, 'run-tpl3', null, board);
+  assert.strictEqual(steps.length, 2);
+  assert.deepStrictEqual(steps.map(s => s.type), ['plan', 'implement']);
+});
+
+test('generateStepsForTask caller pipeline arg overrides task.pipeline', () => {
+  const board = { pipelineTemplates: {} };
+  const task = { id: 'T-TPL4', pipeline: ['plan'] };
+  const steps = mgmt.generateStepsForTask(task, 'run-tpl4', ['implement'], board);
+  assert.strictEqual(steps.length, 1);
+  assert.strictEqual(steps[0].type, 'implement');
+});
+
+test('resolvePipeline returns null for invalid inputs', () => {
+  assert.strictEqual(mgmt.resolvePipeline(undefined, {}), null);
+  assert.strictEqual(mgmt.resolvePipeline(42, {}), null);
+  assert.strictEqual(mgmt.resolvePipeline(null, {}), null);
+});
+
+test('resolvePipeline returns array for valid template name', () => {
+  const board = { pipelineTemplates: { 'x': [{ type: 'a' }] } };
+  const result = mgmt.resolvePipeline('x', board);
+  assert.deepStrictEqual(result, [{ type: 'a' }]);
+});
+
 test('buildDispatchPlan includes steps field', () => {
   // Minimal board and task for buildDispatchPlan
   const board = {

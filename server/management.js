@@ -81,7 +81,7 @@ function applyInsightAction(board, insight) {
     case 'set_pipeline': {
       const taskId = action.payload?.taskId || action.payload?.task_id;
       const steps = action.payload?.steps;
-      if (!taskId || !Array.isArray(steps)) break;
+      if (!taskId || (!Array.isArray(steps) && typeof steps !== 'string')) break;
 
       const tasks = board.taskPlan?.tasks || [];
       const task = tasks.find(t => t.id === taskId);
@@ -808,10 +808,22 @@ function normalizePipelineEntry(entry) {
   return null;
 }
 
-function generateStepsForTask(task, runId, pipeline) {
-  const source = Array.isArray(pipeline) ? pipeline
-    : Array.isArray(task?.pipeline) ? task.pipeline
-      : DEFAULT_STEP_PIPELINE;
+function resolvePipeline(pipelineValue, board) {
+  if (Array.isArray(pipelineValue)) return pipelineValue;
+  if (typeof pipelineValue === 'string') {
+    const templates = board?.pipelineTemplates || {};
+    const resolved = templates[pipelineValue];
+    if (Array.isArray(resolved)) return resolved;
+    console.warn(`[pipeline] template "${pipelineValue}" not found, using default`);
+    return null;
+  }
+  return null;
+}
+
+function generateStepsForTask(task, runId, pipeline, board) {
+  const source = resolvePipeline(pipeline, board)
+    || resolvePipeline(task?.pipeline, board)
+    || DEFAULT_STEP_PIPELINE;
 
   const normalized = source.map(normalizePipelineEntry).filter(Boolean);
   if (normalized.length === 0) {
@@ -908,6 +920,8 @@ module.exports = {
   DEFAULT_CODEX_ROLE,
   pickNextTask,
   autoUnlockDependents,
+  resolvePipeline,
+  normalizePipelineEntry,
   generateStepsForTask,
   DEFAULT_STEP_PIPELINE,
 };

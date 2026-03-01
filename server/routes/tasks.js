@@ -300,7 +300,7 @@ function tryAutoDispatch(taskId, deps, helpers) {
   if (ctrl.use_step_pipeline && deps.stepWorker) {
     console.log(`[auto-dispatch] step-pipeline for ${taskId}`);
     const runId = helpers.uid('run');
-    task.steps = mgmt.generateStepsForTask(task, runId, task.pipeline || null);
+    task.steps = mgmt.generateStepsForTask(task, runId, task.pipeline || null, board);
     task.status = 'in_progress';
     task.startedAt = task.startedAt || helpers.nowIso();
     task.history = task.history || [];
@@ -1017,7 +1017,7 @@ module.exports = function tasksRoutes(req, res, helpers, deps) {
         const board = helpers.readBoard();
         const task = (board.taskPlan?.tasks || []).find(t => t.id === taskId);
         if (!task) return json(res, 404, { error: `Task ${taskId} not found` });
-        task.steps = mgmt.generateStepsForTask(task, runId, pipeline);
+        task.steps = mgmt.generateStepsForTask(task, runId, pipeline, board);
         mgmt.ensureEvolutionFields(board);
         board.signals.push({
           id: helpers.uid('sig'), ts: helpers.nowIso(), by: 'kernel',
@@ -1890,6 +1890,72 @@ module.exports = function tasksRoutes(req, res, helpers, deps) {
         json(res, 400, { error: error.message });
       }
     });
+    return;
+  }
+
+  // --- Pipeline Templates ---
+
+  const templatesMatch = req.url.match(/^\/api\/pipeline-templates(?:\/([^/?]+))?$/);
+
+  // GET /api/pipeline-templates — list all templates
+  if (req.method === 'GET' && templatesMatch && !templatesMatch[1]) {
+    const board = helpers.readBoard();
+    json(res, 200, board.pipelineTemplates || {});
+    return;
+  }
+
+  // PUT /api/pipeline-templates/:name — create or update a template
+  if (req.method === 'PUT' && templatesMatch && templatesMatch[1]) {
+    const name = decodeURIComponent(templatesMatch[1]);
+    let body = '';
+    req.on('data', c => (body += c));
+    req.on('end', () => {
+      try {
+        const payload = JSON.parse(body || '{}');
+        const pipeline = payload.pipeline;
+        if (!Array.isArray(pipeline) || pipeline.length === 0) {
+          return json(res, 400, { error: 'pipeline must be a non-empty array' });
+        }
+        const normalized = pipeline.map(mgmt.normalizePipelineEntry).filter(Boolean);
+        if (normalized.length === 0) {
+          return json(res, 400, { error: 'no valid pipeline entries after normalization' });
+        }
+        const board = helpers.readBoard();
+        if (!board.pipelineTemplates) board.pipelineTemplates = {};
+        board.pipelineTemplates[name] = normalized;
+        mgmt.ensureEvolutionFields(board);
+        board.signals.push({
+          id: helpers.uid('sig'), ts: helpers.nowIso(), by: 'api',
+          type: 'pipeline_template_updated', content: `Template "${name}" updated (${normalized.length} steps)`,
+          refs: [], data: { name, count: normalized.length },
+        });
+        if (board.signals.length > 500) board.signals = board.signals.slice(-500);
+        helpers.writeBoard(board);
+        json(res, 200, { ok: true, name, pipeline: normalized });
+      } catch (error) {
+        json(res, 400, { error: error.message });
+      }
+    });
+    return;
+  }
+
+  // DELETE /api/pipeline-templates/:name — delete a template
+  if (req.method === 'DELETE' && templatesMatch && templatesMatch[1]) {
+    const name = decodeURIComponent(templatesMatch[1]);
+    const board = helpers.readBoard();
+    if (!board.pipelineTemplates || !board.pipelineTemplates[name]) {
+      return json(res, 404, { error: `Template "${name}" not found` });
+    }
+    delete board.pipelineTemplates[name];
+    mgmt.ensureEvolutionFields(board);
+    board.signals.push({
+      id: helpers.uid('sig'), ts: helpers.nowIso(), by: 'api',
+      type: 'pipeline_template_deleted', content: `Template "${name}" deleted`,
+      refs: [], data: { name },
+    });
+    if (board.signals.length > 500) board.signals = board.signals.slice(-500);
+    helpers.writeBoard(board);
+    json(res, 200, { ok: true, name, deleted: true });
     return;
   }
 

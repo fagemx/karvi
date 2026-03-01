@@ -12,6 +12,7 @@
  */
 const bb = require('../blackboard-server');
 const { uid, nowIso } = bb;
+const mgmt = require('../management');
 
 /**
  * Extract plan data from a synthesis step's output artifact.
@@ -109,8 +110,8 @@ function parsePlanAndDispatch(board, planData, helpers, deps, synthesisTask) {
     titleToId.set(pt.title, taskId);
     titleToId.set(String(i), taskId);  // allow index-based depends
 
-    // Normalize pipeline — each entry should be { type, instruction }
-    const pipeline = normalizePipeline(pt.pipeline);
+    // Resolve template name or normalize inline pipeline
+    const pipeline = mgmt.resolvePipeline(pt.pipeline, board) || normalizePipeline(pt.pipeline);
 
     // Resolve depends: plan-internal refs + explicit cross-task deps
     const resolvedDepends = resolveDependencies(pt.depends, titleToId);
