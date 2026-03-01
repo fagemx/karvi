@@ -9,6 +9,7 @@
  */
 const routeEngine = require('./route-engine');
 const contextCompiler = require('./context-compiler');
+const planDispatcher = require('./village/plan-dispatcher');
 
 /**
  * Create the kernel event loop.
@@ -171,6 +172,31 @@ function createKernel(deps) {
 
         // Unlock dependent tasks (autoUnlockDependents checks for 'approved')
         const unlocked = mgmt.autoUnlockDependents(latestBoard);
+
+        // Village Plan Dispatcher: when a synthesis task completes,
+        // parse the plan from its artifact and create execution tasks.
+        // Runs server-side (no LLM tokens). Failures are non-blocking.
+        if (latestTask && planDispatcher.isSynthesisTask(latestTask)) {
+          try {
+            const synthArtifact = artifactStore.readArtifact(
+              step.run_id, stepId, 'output'
+            );
+            const planData = planDispatcher.extractPlanFromArtifact(synthArtifact);
+            if (planData) {
+              planDispatcher.parsePlanAndDispatch(
+                latestBoard, planData, helpers, deps, latestTask
+              );
+              // parsePlanAndDispatch calls writeBoard internally,
+              // so we re-read the board for subsequent operations
+            } else {
+              console.warn('[kernel] synthesis task completed but no plan found in artifact');
+            }
+          } catch (err) {
+            console.error('[kernel] plan dispatch failed:', err.message);
+            // Non-blocking — pipeline continues even if dispatch fails
+          }
+        }
+
         helpers.writeBoard(latestBoard);
 
         if (push && PUSH_TOKENS_PATH && latestTask) {
