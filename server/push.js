@@ -106,7 +106,12 @@ function sendPush(tokenStrings, { title, body, data }) {
 // Notification Builder
 // ---------------------------------------------------------------------------
 
-function buildNotification(task, eventType) {
+function buildNotification(task, eventType, extra) {
+  // --- Village events (task may be null, data comes from extra) ---
+  if (eventType.startsWith('village.')) {
+    return buildVillageNotification(eventType, extra || {});
+  }
+
   const map = {
     'task.completed': {
       title: `${task.id} Completed`,
@@ -158,11 +163,60 @@ function buildNotification(task, eventType) {
 }
 
 // ---------------------------------------------------------------------------
+// Village Notification Builder (#124)
+// ---------------------------------------------------------------------------
+
+function buildVillageNotification(eventType, data) {
+  const map = {
+    'village.meeting_started': {
+      title: 'Village: Meeting Started',
+      body: `${data.departmentCount} departments started proposing`,
+      action: 'view_status',
+    },
+    'village.proposals_ready': {
+      title: 'Village: Proposals Ready',
+      body: `${data.departmentCount} department proposals submitted`,
+      action: 'view_plan',
+    },
+    'village.plan_ready': {
+      title: 'Village: Weekly Plan Ready',
+      body: 'Chief synthesized plan \u2014 tap to review',
+      action: 'approve',
+    },
+    'village.plan_executing': {
+      title: 'Village: Plan Executing',
+      body: `${data.taskCount} tasks dispatched for this week`,
+      action: 'view_status',
+    },
+    'village.checkin_summary': {
+      title: 'Village: Check-in Summary',
+      body: `${data.completed}/${data.total} tasks complete, ${data.blocked} blocked`,
+      action: 'view_status',
+    },
+  };
+
+  const entry = map[eventType];
+  if (!entry) return null;
+
+  return {
+    title: entry.title,
+    body: entry.body,
+    data: {
+      type: 'village',
+      cycleId: data.cycleId,
+      action: entry.action,
+      eventType,
+      url: `karvi:///village/${data.cycleId || 'current'}`,
+    },
+  };
+}
+
+// ---------------------------------------------------------------------------
 // High-Level: Notify + Cleanup stale tokens
 // ---------------------------------------------------------------------------
 
-async function notifyTaskEvent(filePath, task, eventType) {
-  const notification = buildNotification(task, eventType);
+async function notifyTaskEvent(filePath, task, eventType, extra) {
+  const notification = buildNotification(task, eventType, extra);
   if (!notification) return;
 
   const data = loadTokens(filePath);

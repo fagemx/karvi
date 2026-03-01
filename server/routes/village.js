@@ -233,6 +233,14 @@ module.exports = function villageRoutes(req, res, helpers, deps) {
         });
         helpers.broadcastSSE('village_meeting', { cycleId, meetingType, phase: 'proposal' });
 
+        // Push notification: meeting started (fire-and-forget)
+        if (deps.push && deps.PUSH_TOKENS_PATH) {
+          deps.push.notifyTaskEvent(deps.PUSH_TOKENS_PATH, null, 'village.meeting_started', {
+            departmentCount: village.departments.length,
+            cycleId,
+          }).catch(err => console.error('[push] village.meeting_started notify failed:', err.message));
+        }
+
         // Auto-dispatch dispatched tasks
         if (deps.tryAutoDispatch) {
           for (const t of meetingTasks) {
