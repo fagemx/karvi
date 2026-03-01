@@ -67,7 +67,7 @@ function extractTextFromContent(content) {
  */
 function dispatch(plan) {
   return new Promise((resolve, reject) => {
-    const args = ['-p', '--output-format', 'stream-json'];
+    const args = ['-p', '--verbose', '--output-format', 'stream-json'];
 
     if (plan.sessionId) args.push('--resume', plan.sessionId);
     if (plan.modelHint) args.push('--model', plan.modelHint);
