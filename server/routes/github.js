@@ -23,7 +23,7 @@ const bb = require('../blackboard-server');
 const { json } = bb;
 
 module.exports = function githubRoutes(req, res, helpers, deps) {
-  const { vault, githubApi, githubIntegration, mgmt } = deps;
+  const { vault, githubApi, githubIntegration } = deps;
 
   // =========================================================================
   // POST /api/webhooks/github — receive GitHub issue webhook (HMAC verified)
@@ -49,7 +49,7 @@ module.exports = function githubRoutes(req, res, helpers, deps) {
 
         const payload = JSON.parse(body || '{}');
         const board = helpers.readBoard();
-        const config = board.integrations?.github || { enabled: true };
+        const config = board.integrations?.github || { enabled: false };
         const result = githubIntegration.handleWebhook(board, payload, config);
 
         if (result.action === 'skipped') {
