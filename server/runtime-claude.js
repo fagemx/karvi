@@ -99,9 +99,24 @@ function dispatch(plan) {
     function settle(err, result) {
       if (settled) return;
       settled = true;
-      clearTimeout(timer);
+      clearTimeout(inactivityTimer);
       if (err) reject(err); else resolve(result);
     }
+
+    // --- Inactivity timeout: resets on every stdout/stderr event ---
+    // If claude is producing output, it's alive. Only kill when truly idle.
+    let inactivityTimer = null;
+    function resetInactivityTimer() {
+      if (settled) return;
+      clearTimeout(inactivityTimer);
+      inactivityTimer = setTimeout(() => {
+        console.log('[claude-rt] idle for %ds (no output), killing (stdout: %d bytes, stderr: %d bytes)',
+          Math.round(timeoutMs / 1000), stdout.length, stderr.length);
+        settle(new Error(`claude idle for ${Math.round(timeoutMs / 1000)}s (no stream events)`));
+        killTree(child.pid);
+      }, timeoutMs);
+    }
+    resetInactivityTimer(); // start initial timer
 
     function buildResult(obj) {
       return {
@@ -121,6 +136,7 @@ function dispatch(plan) {
     // --- stdout: accumulate and try to parse as complete JSON ---
     child.stdout.on('data', chunk => {
       stdout += chunk;
+      resetInactivityTimer();
       try {
         const obj = JSON.parse(stdout);
         // Successfully parsed — CLI has finished outputting result
@@ -140,18 +156,11 @@ function dispatch(plan) {
 
     child.stderr.on('data', chunk => {
       stderr += chunk;
+      resetInactivityTimer();
       if (stderr.length <= 1000) {
         console.log('[claude-rt] stderr:', chunk.slice(0, 200));
       }
     });
-
-    // --- Wall-clock timeout as safety net ---
-    const timer = setTimeout(() => {
-      console.log('[claude-rt] timeout after %ds (stdout: %d bytes, stderr: %d bytes)',
-        Math.round(timeoutMs / 1000), stdout.length, stderr.length);
-      settle(new Error(`claude timed out after ${Math.round(timeoutMs / 1000)}s`));
-      killTree(child.pid);
-    }, timeoutMs);
 
     child.on('error', err => {
       console.log('[claude-rt] spawn error:', err.message);
