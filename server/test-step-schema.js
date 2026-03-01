@@ -239,6 +239,32 @@ test('generateStepsForTask accepts semantic pipeline objects', () => {
   assert.strictEqual(steps[1].runtime_hint, 'claude');
 });
 
+test('default pipeline review step has revision_target=implement', () => {
+  const task = { id: 'T-REV0' };
+  const steps = mgmt.generateStepsForTask(task, 'run-rev0');
+  assert.strictEqual(steps.length, 3);
+  // review step should carry revision_target from DEFAULT_STEP_PIPELINE
+  assert.strictEqual(steps[2].type, 'review');
+  assert.strictEqual(steps[2].revision_target, 'implement');
+  // plan and implement should NOT have revision_target
+  assert.strictEqual(steps[0].revision_target, null);
+  assert.strictEqual(steps[1].revision_target, null);
+});
+
+test('generateStepsForTask passes revision_target and max_revision_cycles from pipeline', () => {
+  const task = { id: 'T-REV1' };
+  const steps = mgmt.generateStepsForTask(task, 'run-rev1', [
+    'plan',
+    'implement',
+    { type: 'review', revision_target: 'implement', max_revision_cycles: 5 },
+  ]);
+  assert.strictEqual(steps.length, 3);
+  assert.strictEqual(steps[2].revision_target, 'implement');
+  assert.strictEqual(steps[2].max_revision_cycles, 5);
+  assert.strictEqual(steps[0].revision_target, null);
+  assert.strictEqual(steps[1].revision_target, null);
+});
+
 test('buildDispatchPlan includes steps field', () => {
   // Minimal board and task for buildDispatchPlan
   const board = {

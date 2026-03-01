@@ -781,7 +781,11 @@ function buildDispatchPlan(board, task, options = {}) {
 
 // --- Step-level helpers ---
 
-const DEFAULT_STEP_PIPELINE = ['plan', 'implement', 'review'];
+const DEFAULT_STEP_PIPELINE = [
+  'plan',
+  'implement',
+  { type: 'review', revision_target: 'implement' },
+];
 
 function normalizePipelineEntry(entry) {
   if (typeof entry === 'string') {
@@ -797,6 +801,8 @@ function normalizePipelineEntry(entry) {
       skill: typeof entry.skill === 'string' ? entry.skill : null,
       runtime_hint: typeof entry.runtime_hint === 'string' ? entry.runtime_hint : null,
       retry_policy: entry.retry_policy && typeof entry.retry_policy === 'object' ? entry.retry_policy : null,
+      revision_target: typeof entry.revision_target === 'string' ? entry.revision_target : null,
+      max_revision_cycles: typeof entry.max_revision_cycles === 'number' ? entry.max_revision_cycles : null,
     };
   }
   return null;
@@ -818,6 +824,8 @@ function generateStepsForTask(task, runId, pipeline) {
     if (stepDef.skill) opts.skill = stepDef.skill;
     if (stepDef.runtime_hint) opts.runtime_hint = stepDef.runtime_hint;
     if (stepDef.retry_policy) opts.retry_policy = stepDef.retry_policy;
+    if (stepDef.revision_target) opts.revision_target = stepDef.revision_target;
+    if (stepDef.max_revision_cycles != null) opts.max_revision_cycles = stepDef.max_revision_cycles;
     return stepSchema.createStep(task.id, runId, stepDef.type, opts);
   });
 }
