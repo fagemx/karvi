@@ -20,6 +20,23 @@ const DEFAULT_VILLAGE = {
 };
 
 /**
+ * Ensure an agent is registered as a participant on the board.
+ * tryAutoDispatch silently skips tasks whose assignee isn't in
+ * board.participants, so we auto-register department assignees.
+ */
+function ensureAgentParticipant(board, agentId) {
+  if (!agentId) return;
+  if (!Array.isArray(board.participants)) board.participants = [];
+  if (board.participants.find(p => p.id === agentId)) return;
+  board.participants.push({
+    id: agentId,
+    type: 'agent',
+    displayName: agentId,
+    agentId: agentId,
+  });
+}
+
+/**
  * Ensure board.village exists with default structure.
  * Called on every request that touches village data.
  */
@@ -136,6 +153,7 @@ module.exports = function villageRoutes(req, res, helpers, deps) {
           if (body.skills !== undefined) existing.skills = body.skills;
           if (body.promptFile !== undefined) existing.promptFile = body.promptFile;
           if (body.goalIds !== undefined) existing.goalIds = body.goalIds;
+          if (existing.assignee) ensureAgentParticipant(board, existing.assignee);
           helpers.writeBoard(board);
           helpers.appendLog({ ts: now, event: 'village_department_updated', deptId: existing.id });
           return json(res, 200, { ok: true, department: existing });
@@ -154,6 +172,7 @@ module.exports = function villageRoutes(req, res, helpers, deps) {
           goalIds: Array.isArray(body.goalIds) ? body.goalIds : [],
         };
         village.departments.push(dept);
+        ensureAgentParticipant(board, dept.assignee);
         helpers.writeBoard(board);
         helpers.appendLog({ ts: now, event: 'village_department_created', deptId: dept.id });
         return json(res, 201, { ok: true, department: dept });
@@ -299,6 +318,11 @@ module.exports = function villageRoutes(req, res, helpers, deps) {
             error: 'no_departments',
             message: 'Cannot trigger meeting without departments. Add departments first via POST /api/village/departments',
           });
+        }
+
+        // Ensure all department assignees are registered as participants
+        for (const dept of village.departments) {
+          ensureAgentParticipant(board, dept.assignee);
         }
 
         // Generate meeting tasks

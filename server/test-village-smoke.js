@@ -247,6 +247,62 @@ const testRunId = `smoke-${Date.now()}`;
   });
 
   // ══════════════════════════════════════════════════════
+  // DoD 5: parsePlanAndDispatch auto-registers assignees as participants
+  // ══════════════════════════════════════════════════════
+  console.log('\n── DoD 5: auto-register assignees as participants ──');
+
+  await test('parsePlanAndDispatch registers missing assignees as agent participants', () => {
+    const board = createVillageBoard();
+    board.village.currentCycle = { cycleId: 'cycle-reg', phase: 'synthesis' };
+    // Board has NO agent participants — only 'owner' (human)
+    assert.ok(!board.participants.find(p => p.id === 'engineer_lite'), 'precondition: no engineer_lite');
+    const helpers = createMockHelpers(board);
+
+    const planData = {
+      cycle: 'cycle-reg',
+      tasks: [
+        { title: 'Task A', assignee: 'engineer_lite', pipeline: ['implement'], priority: 'P1' },
+        { title: 'Task B', assignee: 'engineer_pro', pipeline: ['implement'], priority: 'P2' },
+      ],
+    };
+
+    const deps = { mgmt, tryAutoDispatch: () => {}, push: null, PUSH_TOKENS_PATH: null };
+
+    planDispatcher.parsePlanAndDispatch(currentBoard, planData, helpers, deps, null);
+
+    // Verify assignees were auto-registered
+    const lite = currentBoard.participants.find(p => p.id === 'engineer_lite');
+    const pro = currentBoard.participants.find(p => p.id === 'engineer_pro');
+    assert.ok(lite, 'engineer_lite should be registered');
+    assert.strictEqual(lite.type, 'agent', 'should be agent type');
+    assert.strictEqual(lite.agentId, 'engineer_lite', 'agentId should match');
+    assert.ok(pro, 'engineer_pro should be registered');
+    assert.strictEqual(pro.type, 'agent');
+
+    // Verify VT tasks were created with correct assignees
+    const vtTasks = currentBoard.taskPlan.tasks.filter(t => t.source?.type === 'village_plan');
+    assert.strictEqual(vtTasks.length, 2);
+    observe('auto-registered participants', currentBoard.participants.map(p => `${p.id}(${p.type})`));
+  });
+
+  await test('parsePlanAndDispatch does not duplicate existing participants', () => {
+    const board = createVillageBoard();
+    board.participants.push({ id: 'engineer_lite', type: 'agent', displayName: 'Engineer Lite', agentId: 'engineer_lite' });
+    board.village.currentCycle = { cycleId: 'cycle-dup', phase: 'synthesis' };
+    const helpers = createMockHelpers(board);
+
+    const planData = {
+      cycle: 'cycle-dup',
+      tasks: [{ title: 'Task X', assignee: 'engineer_lite', pipeline: ['implement'], priority: 'P1' }],
+    };
+    const deps = { mgmt, tryAutoDispatch: null, push: null, PUSH_TOKENS_PATH: null };
+    planDispatcher.parsePlanAndDispatch(currentBoard, planData, helpers, deps, null);
+
+    const matches = currentBoard.participants.filter(p => p.id === 'engineer_lite');
+    assert.strictEqual(matches.length, 1, `should not duplicate participant, found ${matches.length}`);
+  });
+
+  // ══════════════════════════════════════════════════════
   // BONUS: push notifications for village events
   // ══════════════════════════════════════════════════════
   console.log('\n── Bonus: push notifications ──');
