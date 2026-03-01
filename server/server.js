@@ -190,6 +190,7 @@ tasksRoutes.init(deps, routeHelpers);
 // --- Ensure board.json exists (support fresh clone) ---
 bb.ensureBoardExists(ctx, {
   taskPlan: { goal: '', phase: 'idle', tasks: [] },
+  pipelineTemplates: {},
   conversations: [],
   participants: [],
   signals: [],
