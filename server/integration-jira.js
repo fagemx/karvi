@@ -479,6 +479,25 @@ async function notifyJira(board, task, event) {
         ]},
       });
     }
+
+    if (event.type === 'pr_merged' && event.prUrl) {
+      const text = `[Karvi] PR merged${event.mergedBy ? ` by ${event.mergedBy}` : ''}: ${event.prUrl}`;
+      await jiraRequest('POST', `/rest/api/3/issue/${issueKey}/comment`, {
+        body: { type: 'doc', version: 1, content: [
+          { type: 'paragraph', content: [{ type: 'text', text }] },
+        ]},
+      });
+    }
+
+    if (event.type === 'pr_closed' && event.prUrl) {
+      await jiraRequest('POST', `/rest/api/3/issue/${issueKey}/comment`, {
+        body: { type: 'doc', version: 1, content: [
+          { type: 'paragraph', content: [
+            { type: 'text', text: `[Karvi] PR closed without merge: ${event.prUrl}` },
+          ]},
+        ]},
+      });
+    }
   } catch (err) {
     console.error(`[jira] notifyJira failed for ${issueKey}:`, err.message);
   }

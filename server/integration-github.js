@@ -171,6 +171,64 @@ function handleWebhook(board, payload, config) {
 }
 
 // ---------------------------------------------------------------------------
+// PR outcome webhook handler
+// ---------------------------------------------------------------------------
+
+/**
+ * handlePRWebhook(board, payload, config)
+ *
+ * Processes GitHub pull_request webhook events to capture PR outcomes.
+ * Only handles 'closed' action (merged or not merged).
+ *
+ * @param {object} board   — current board state
+ * @param {object} payload — parsed GitHub webhook JSON body
+ * @param {object|null} config — board.integrations.github
+ * @returns {{ action: string, taskId?: string, outcome?: string, mergedBy?: string, closedBy?: string, mergeCommitSha?: string, prNumber?: number, error?: string }}
+ */
+function handlePRWebhook(board, payload, config) {
+  if (!config?.enabled) {
+    return { action: 'skipped', error: 'GitHub integration disabled' };
+  }
+
+  // Only handle pull_request.closed (merged or closed-without-merge)
+  if (payload.action !== 'closed') {
+    return { action: 'skipped', error: `Not a pull_request.closed event (action: ${payload.action})` };
+  }
+
+  const pr = payload.pull_request;
+  if (!pr?.number) {
+    return { action: 'skipped', error: 'No pull_request number in payload' };
+  }
+
+  const prNumber = pr.number;
+  const prRepo = payload.repository?.full_name || '';
+  const merged = pr.merged === true;
+  const outcome = merged ? 'merged' : 'closed';
+  const mergedBy = merged ? (pr.merged_by?.login || null) : null;
+  const closedBy = !merged ? (pr.user?.login || null) : null;
+  const mergeCommitSha = merged ? (pr.merge_commit_sha || null) : null;
+
+  // Find matching task by task.pr.number and task.pr.repo
+  const task = (board.taskPlan?.tasks || []).find(t =>
+    t.pr?.number === prNumber && t.pr?.repo === prRepo
+  );
+
+  if (!task) {
+    return { action: 'skipped', error: `No task found with PR #${prNumber} in ${prRepo}` };
+  }
+
+  return {
+    action: 'pr_outcome',
+    taskId: task.id,
+    prNumber,
+    outcome,
+    mergedBy,
+    closedBy,
+    mergeCommitSha,
+  };
+}
+
+// ---------------------------------------------------------------------------
 // Exports
 // ---------------------------------------------------------------------------
 
@@ -178,6 +236,7 @@ module.exports = {
   getConfig,
   verifySignature,
   handleWebhook,
+  handlePRWebhook,
   buildTaskFromIssue,
   isDuplicate,
   mapLabelToPriority,
@@ -310,6 +369,77 @@ if (require.main === module) {
     assert.ok(task.description.endsWith('(truncated)'));
     ok('buildTaskFromIssue: description truncation');
   } catch (e) { fail('buildTaskFromIssue: truncation', e.message); }
+
+  // --- handlePRWebhook: PR merged → pr_outcome with merged ---
+  try {
+    const board = { taskPlan: { tasks: [
+      { id: 'GH-10', pr: { owner: 'owner', repo: 'owner/repo', number: 99, url: 'https://github.com/owner/repo/pull/99', outcome: null } },
+    ] } };
+    const payload = {
+      action: 'closed',
+      pull_request: { number: 99, merged: true, merged_by: { login: 'alice' }, merge_commit_sha: 'abc123', user: { login: 'bob' } },
+      repository: { full_name: 'owner/repo' },
+    };
+    const result = handlePRWebhook(board, payload, { enabled: true });
+    assert.strictEqual(result.action, 'pr_outcome');
+    assert.strictEqual(result.taskId, 'GH-10');
+    assert.strictEqual(result.outcome, 'merged');
+    assert.strictEqual(result.mergedBy, 'alice');
+    assert.strictEqual(result.mergeCommitSha, 'abc123');
+    assert.strictEqual(result.closedBy, null);
+    ok('handlePRWebhook: PR merged → pr_outcome');
+  } catch (e) { fail('handlePRWebhook: PR merged', e.message); }
+
+  // --- handlePRWebhook: PR closed without merge → pr_outcome with closed ---
+  try {
+    const board = { taskPlan: { tasks: [
+      { id: 'GH-11', pr: { owner: 'owner', repo: 'owner/repo', number: 50, url: 'https://github.com/owner/repo/pull/50', outcome: null } },
+    ] } };
+    const payload = {
+      action: 'closed',
+      pull_request: { number: 50, merged: false, user: { login: 'carol' } },
+      repository: { full_name: 'owner/repo' },
+    };
+    const result = handlePRWebhook(board, payload, { enabled: true });
+    assert.strictEqual(result.action, 'pr_outcome');
+    assert.strictEqual(result.taskId, 'GH-11');
+    assert.strictEqual(result.outcome, 'closed');
+    assert.strictEqual(result.mergedBy, null);
+    assert.strictEqual(result.closedBy, 'carol');
+    ok('handlePRWebhook: PR closed without merge → pr_outcome');
+  } catch (e) { fail('handlePRWebhook: PR closed', e.message); }
+
+  // --- handlePRWebhook: no matching task → skipped ---
+  try {
+    const board = { taskPlan: { tasks: [
+      { id: 'GH-12', pr: { owner: 'owner', repo: 'owner/repo', number: 77, url: 'https://github.com/owner/repo/pull/77', outcome: null } },
+    ] } };
+    const payload = {
+      action: 'closed',
+      pull_request: { number: 999, merged: true, merged_by: { login: 'x' } },
+      repository: { full_name: 'owner/repo' },
+    };
+    const result = handlePRWebhook(board, payload, { enabled: true });
+    assert.strictEqual(result.action, 'skipped');
+    assert.ok(result.error.includes('No task found'));
+    ok('handlePRWebhook: no matching task → skipped');
+  } catch (e) { fail('handlePRWebhook: no matching task', e.message); }
+
+  // --- handlePRWebhook: disabled → skipped ---
+  try {
+    const result = handlePRWebhook({}, { action: 'closed', pull_request: { number: 1 } }, { enabled: false });
+    assert.strictEqual(result.action, 'skipped');
+    assert.ok(result.error.includes('disabled'));
+    ok('handlePRWebhook: disabled → skipped');
+  } catch (e) { fail('handlePRWebhook: disabled', e.message); }
+
+  // --- handlePRWebhook: non-closed action → skipped ---
+  try {
+    const result = handlePRWebhook({}, { action: 'opened', pull_request: { number: 1 } }, { enabled: true });
+    assert.strictEqual(result.action, 'skipped');
+    assert.ok(result.error.includes('Not a pull_request.closed'));
+    ok('handlePRWebhook: non-closed action → skipped');
+  } catch (e) { fail('handlePRWebhook: non-closed action', e.message); }
 
   console.log(`\n  ${passed} passed, ${failed} failed`);
   process.exit(failed > 0 ? 1 : 0);

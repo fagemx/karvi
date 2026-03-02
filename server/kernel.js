@@ -261,6 +261,22 @@ function createKernel(deps) {
             summary: lastStepOutput?.summary || `All ${task.steps.length} steps succeeded (including review)`,
             payload: lastStepOutput?.payload || null,
           };
+
+          // Extract structured PR metadata from step artifacts.
+          // The implement step typically creates the PR; scan all steps for prUrl.
+          const prUrl = findPrUrl(task.steps, step.run_id, artifactStore);
+          if (prUrl) {
+            const prMatch = prUrl.match(/github\.com\/([^/]+)\/([^/]+)\/pull\/(\d+)/);
+            if (prMatch) {
+              latestTask.pr = {
+                owner: prMatch[1],
+                repo: `${prMatch[1]}/${prMatch[2]}`,
+                number: Number(prMatch[3]),
+                url: prUrl,
+                outcome: null,
+              };
+            }
+          }
         }
 
         // Unlock dependent tasks (autoUnlockDependents checks for 'approved')
@@ -389,4 +405,18 @@ function createKernel(deps) {
   return { onStepEvent };
 }
 
-module.exports = { createKernel };
+/**
+ * Scan step artifacts for a PR URL.
+ * Returns the first prUrl found (typically from the implement step), or null.
+ */
+function findPrUrl(steps, runId, artifactStore) {
+  if (!steps || !runId) return null;
+  for (const s of steps) {
+    const output = artifactStore.readArtifact(runId, s.step_id, 'output');
+    const url = output?.payload?.prUrl;
+    if (url && typeof url === 'string') return url;
+  }
+  return null;
+}
+
+module.exports = { createKernel, findPrUrl };
