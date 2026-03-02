@@ -85,6 +85,7 @@ function buildEnvelope(decision, runState, deps) {
     idempotency_key: idempotencyKey,
     timeout_ms: targetStep.retry_policy?.timeout_ms || 300_000,
     model_hint: null,
+    contract: task.contract || null,
   };
 
   return envelope;

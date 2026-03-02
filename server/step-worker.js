@@ -185,6 +185,25 @@ function createStepWorker(deps) {
           }
         }
       }
+
+      // 5c. Contract validation — verify declared deliverables exist
+      if (status === 'succeeded' && envelope.contract?.deliverable) {
+        const contractResult = validateContract(
+          envelope.contract,
+          { status, summary, payload: stepResult, failure },
+          postCheckResult,
+          plan.workingDir || plan.cwd,
+        );
+        if (!contractResult.ok) {
+          status = 'failed';
+          failure = {
+            failure_signature: contractResult.reason,
+            failure_mode: 'CONTRACT_VIOLATION',
+            retryable: true,
+          };
+          summary = `Contract violation: ${contractResult.reason}`;
+        }
+      }
     }
 
     // Preserve full STEP_RESULT payload (proposal, plan, etc.) for downstream modules.
@@ -313,6 +332,104 @@ function autoFinalize(workDir, envelope) {
   } catch (err) {
     return { ok: false, error: err.message?.slice(0, 200) || 'unknown' };
   }
+}
+
+/**
+ * Validate a deliverable contract after agent reports success.
+ * Returns { ok: true } or { ok: false, reason: "..." }.
+ *
+ * @param {object} contract      - { deliverable, acceptance, file_path? }
+ * @param {object} agentOutput   - { status, summary, payload, failure }
+ * @param {object} postCheckResult - From runPostCheck()
+ * @param {string} workDir       - Working directory
+ */
+function validateContract(contract, agentOutput, postCheckResult, workDir) {
+  if (!contract || !contract.deliverable) return { ok: true };
+
+  switch (contract.deliverable) {
+    case 'pr':             return validatePrDeliverable(agentOutput, workDir);
+    case 'file':           return validateFileDeliverable(contract, workDir);
+    case 'artifact':       return validateArtifactDeliverable(agentOutput);
+    case 'command_result': return validateCommandResultDeliverable(agentOutput);
+    case 'issue':          return validateIssueDeliverable(agentOutput);
+    default:               return { ok: true }; // unknown type → pass (forward-compat)
+  }
+}
+
+function validatePrDeliverable(agentOutput, workDir) {
+  if (!workDir) return { ok: false, reason: 'deliverable pr: no working directory' };
+  const opts = { cwd: workDir, encoding: 'utf8', timeout: 15000 };
+
+  // Check for new commits
+  try {
+    const log = execSync('git log --oneline -1', opts).trim();
+    if (!log) return { ok: false, reason: 'deliverable pr: no commits found' };
+  } catch {
+    return { ok: false, reason: 'deliverable pr: git log failed (not a git repo?)' };
+  }
+
+  // Check for PR URL in agent summary or try gh pr list
+  const text = agentOutput.summary || '';
+  const hasPrUrl = /github\.com\/[^/]+\/[^/]+\/pull\/\d+/i.test(text);
+  if (hasPrUrl) return { ok: true };
+
+  try {
+    const branch = execSync('git branch --show-current', opts).trim();
+    if (branch) {
+      const prList = execSync(`gh pr list --head "${branch}" --json url --limit 1`, opts).trim();
+      const prs = JSON.parse(prList || '[]');
+      if (prs.length > 0) return { ok: true };
+    }
+  } catch {
+    // gh CLI not available — fall through
+  }
+
+  return { ok: false, reason: 'deliverable pr: no PR found for current branch' };
+}
+
+function validateFileDeliverable(contract, workDir) {
+  if (!workDir) return { ok: false, reason: 'deliverable file: no working directory' };
+  const filePath = contract.file_path;
+  if (!filePath) return { ok: false, reason: 'deliverable file: contract.file_path not specified' };
+
+  const fs = require('fs');
+  const path = require('path');
+  const resolved = path.resolve(workDir, filePath);
+
+  if (!fs.existsSync(resolved)) {
+    return { ok: false, reason: `deliverable file: ${filePath} does not exist` };
+  }
+  const stat = fs.statSync(resolved);
+  if (stat.size === 0) {
+    return { ok: false, reason: `deliverable file: ${filePath} is empty` };
+  }
+  return { ok: true };
+}
+
+function validateArtifactDeliverable(agentOutput) {
+  if (!agentOutput.payload) {
+    return { ok: false, reason: 'deliverable artifact: payload is null/empty' };
+  }
+  const summary = agentOutput.summary || '';
+  if (summary.length < 50) {
+    return { ok: false, reason: `deliverable artifact: summary too short (${summary.length} chars, need 50+)` };
+  }
+  return { ok: true };
+}
+
+function validateCommandResultDeliverable(agentOutput) {
+  const summary = agentOutput.summary || '';
+  if (!summary) {
+    return { ok: false, reason: 'deliverable command_result: summary is empty' };
+  }
+  return { ok: true };
+}
+
+function validateIssueDeliverable(agentOutput) {
+  const text = [agentOutput.summary || '', JSON.stringify(agentOutput.payload || '')].join(' ');
+  const hasIssueUrl = /github\.com\/[^/]+\/[^/]+\/issues\/\d+/i.test(text);
+  if (hasIssueUrl) return { ok: true };
+  return { ok: false, reason: 'deliverable issue: no GitHub issue URL found in output' };
 }
 
 /**
@@ -537,4 +654,4 @@ function recoverExpiredLocks(board) {
   return recovered;
 }
 
-module.exports = { createStepWorker, parseStepResult, buildStepMessage, recoverExpiredLocks, runPreflight, extractPreflightTargets };
+module.exports = { createStepWorker, parseStepResult, buildStepMessage, recoverExpiredLocks, runPreflight, extractPreflightTargets, validateContract };
