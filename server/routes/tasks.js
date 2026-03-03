@@ -97,7 +97,7 @@ function redispatchTask(board, task, deps, helpers) {
 
   // S5: Build dispatch plan via management layer
   const sessionId = task.childSessionKey || board.conversations?.[0]?.sessionIds?.[task.assignee] || null;
-  const plan = mgmt.buildDispatchPlan(board, task, { mode: 'redispatch' });
+  const plan = mgmt.buildDispatchPlan(board, task, { mode: 'redispatch', workingDir: task.worktreeDir || null });
   plan.sessionId = plan.sessionId || sessionId;
   logDispatchPreflight(plan, task, deps, helpers);
 
@@ -381,7 +381,7 @@ function tryAutoDispatch(taskId, deps, helpers) {
   console.log(`[auto-dispatch] dispatching ${taskId} to ${task.assignee}`);
 
   const sessionId = board.conversations?.[0]?.sessionIds?.[task.assignee] || null;
-  const plan = mgmt.buildDispatchPlan(board, task, { mode: 'dispatch' });
+  const plan = mgmt.buildDispatchPlan(board, task, { mode: 'dispatch', workingDir: task.worktreeDir || null });
   plan.sessionId = plan.sessionId || sessionId;
   logDispatchPreflight(plan, task, deps, helpers);
 
@@ -1210,9 +1210,12 @@ module.exports = function tasksRoutes(req, res, helpers, deps) {
   }
 
   // --- Per-task dispatch: send task directly to assigned agent ---
-  const taskDispatchMatch = req.url.match(/^\/api\/tasks\/([^/]+)\/dispatch$/);
+  const taskDispatchMatch = req.url.match(/^\/api\/tasks\/([^/]+)\/dispatch(\?|$)/);
   if (req.method === 'POST' && taskDispatchMatch) {
     const taskId = decodeURIComponent(taskDispatchMatch[1]);
+    // Parse ?runtime= query param for per-dispatch runtime override
+    const dispatchUrl = new URL(req.url, 'http://localhost');
+    const runtimeOverride = dispatchUrl.searchParams.get('runtime') || null;
     try {
       const board = helpers.readBoard();
       const task = (board.taskPlan?.tasks || []).find(t => t.id === taskId);
@@ -1235,7 +1238,9 @@ module.exports = function tasksRoutes(req, res, helpers, deps) {
       const sessionId = board.conversations?.[0]?.sessionIds?.[task.assignee] || null;
 
       // S5: Build dispatch plan via management layer
-      const plan = mgmt.buildDispatchPlan(board, task, { mode: 'dispatch', requireTaskResult: false });
+      const dispatchOpts = { mode: 'dispatch', requireTaskResult: false, workingDir: task.worktreeDir || null };
+      if (runtimeOverride) dispatchOpts.runtimeHint = runtimeOverride;
+      const plan = mgmt.buildDispatchPlan(board, task, dispatchOpts);
       plan.sessionId = plan.sessionId || sessionId;
       logDispatchPreflight(plan, task, deps, helpers);
 
@@ -1622,7 +1627,7 @@ module.exports = function tasksRoutes(req, res, helpers, deps) {
 
       const assignee = participantById(board, task.assignee);
       const sessionId = board.conversations?.[0]?.sessionIds?.[task.assignee] || null;
-      const plan = mgmt.buildDispatchPlan(board, task, { mode: 'dispatch' });
+      const plan = mgmt.buildDispatchPlan(board, task, { mode: 'dispatch', workingDir: task.worktreeDir || null });
       plan.sessionId = plan.sessionId || sessionId;
       logDispatchPreflight(plan, task, deps, helpers);
 
@@ -1838,7 +1843,7 @@ module.exports = function tasksRoutes(req, res, helpers, deps) {
         if (payload.autoStart) {
           const nextTask = mgmt.pickNextTask(board);
           if (nextTask) {
-            const plan = mgmt.buildDispatchPlan(board, nextTask, { mode: 'dispatch' });
+            const plan = mgmt.buildDispatchPlan(board, nextTask, { mode: 'dispatch', workingDir: nextTask.worktreeDir || null });
             const sid = board.conversations?.[0]?.sessionIds?.[nextTask.assignee] || null;
             plan.sessionId = plan.sessionId || sid;
             logDispatchPreflight(plan, nextTask, deps, helpers);

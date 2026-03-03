@@ -169,12 +169,15 @@ function dispatch(plan) {
           }
         }
 
-        // step_finish — definitive completion
+        // step_finish — only settle on terminal reasons
         if (obj.type === 'step_finish') {
           lastFinish = obj.part || {};
           if (obj.sessionID) sessionId = obj.sessionID;
           console.log('[opencode-rt] step_finish: reason=%s cost=%s tokens=%j',
             lastFinish.reason, lastFinish.cost, lastFinish.tokens);
+          if (lastFinish.reason === 'tool-calls') {
+            continue; // more steps coming
+          }
           settle(null, buildResult(lastText));
           killTree(child.pid);
           return;

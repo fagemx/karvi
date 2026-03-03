@@ -138,7 +138,7 @@ async function runTests() {
 
   // Dispatch should fail when vault is null
   await assertRejects(
-    () => rtNoVault.dispatch({ userId: 'user1', message: 'test' }),
+    () => rtNoVault.dispatch({ userId: 'user1', message: 'test', workingDir: os.tmpdir() }),
     '2c. dispatch without vault throws clear error',
     'Vault is not configured'
   );
@@ -373,7 +373,7 @@ async function runTests() {
   console.log('\n--- Dispatch Edge Cases ---');
 
   await assertRejects(
-    () => rt.dispatch({ message: 'test' }),
+    () => rt.dispatch({ message: 'test', workingDir: os.tmpdir() }),
     '18a. dispatch rejects when userId is missing',
     'userId is required'
   );
@@ -381,7 +381,7 @@ async function runTests() {
   // dispatch with disabled vault
   const rtDisabled = runtimeModule.create({ vault: disabledVault });
   await assertRejects(
-    () => rtDisabled.dispatch({ userId: 'user1', message: 'test' }),
+    () => rtDisabled.dispatch({ userId: 'user1', message: 'test', workingDir: os.tmpdir() }),
     '18b. dispatch rejects when vault is disabled',
     'Vault is not configured'
   );
@@ -706,6 +706,25 @@ async function runTests() {
       'network error'
     );
     _internal.httpsPost = origFn;
+  }
+
+  // Test: null workingDir should reject
+  {
+    const rt = runtimeModule.create({ vault: mockVault });
+    const plan = {
+      taskId: 'TEST-NULL-WD',
+      workingDir: null,
+      message: 'Test message',
+      timeoutSec: 30,
+      userId: 'test-user',
+      controlsSnapshot: {},
+    };
+
+    await assertRejects(
+      () => rt.dispatch(plan),
+      '23. runtime rejects null workingDir with CRITICAL error',
+      'CRITICAL: workingDir is null'
+    );
   }
 
   // ----------------------------------------------------------
