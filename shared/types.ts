@@ -172,6 +172,27 @@ export interface Task {
   jiraUrl?: string;
   source?: string;
   priority?: string;
+  projectId?: string;
+  completionTrigger?: 'pr_merged' | 'approved';
+}
+
+// ---------------------------------------------------------------------------
+// Project Orchestrator
+// ---------------------------------------------------------------------------
+
+export type ProjectStatus = 'created' | 'executing' | 'paused' | 'done';
+
+/** Project — dependency-driven batch execution of GitHub issues */
+export interface Project {
+  id: string;
+  title: string;
+  repo: string;
+  status: ProjectStatus;
+  concurrency: number;
+  completionTrigger: 'pr_merged' | 'approved';
+  taskIds: string[];
+  createdAt: string;
+  completedAt?: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -350,6 +371,7 @@ export interface Integrations {
 /** Board — accessed via GET/POST /api/board */
 export interface Board {
   taskPlan: TaskPlan;
+  projects?: Project[];
   conversations: Conversation[];
   participants: Participant[];
   signals: Signal[];

@@ -118,6 +118,38 @@ module.exports = function githubRoutes(req, res, helpers, deps) {
                 push.notifyTaskEvent(PUSH_TOKENS_PATH, task, `task.${signalType}`)
                   .catch(err => console.error('[push] pr outcome notify failed:', err.message));
               }
+
+              // Project Orchestrator: pr_merged → unlock dependents + check completion
+              if (result.outcome === 'merged' && task.projectId) {
+                const project = (board.projects || []).find(p => p.id === task.projectId);
+                if (project && project.status === 'executing') {
+                  const unlocked = mgmt.autoUnlockDependents(board);
+                  if (unlocked.length > 0) {
+                    helpers.writeBoard(board);
+                    if (deps.tryAutoDispatch) {
+                      for (const unlockedId of unlocked) {
+                        setImmediate(() => deps.tryAutoDispatch(unlockedId));
+                      }
+                    }
+                  }
+                  // Check project completion
+                  const projectTasks = (board.taskPlan?.tasks || [])
+                    .filter(t => t.projectId === project.id);
+                  const allDone = projectTasks.every(t => t.pr?.outcome === 'merged');
+                  if (allDone) {
+                    project.status = 'done';
+                    project.completedAt = helpers.nowIso();
+                    board.signals.push({
+                      id: helpers.uid('sig'), ts: helpers.nowIso(),
+                      by: 'project-orchestrator', type: 'project_done',
+                      content: `Project "${project.title}" completed (${projectTasks.length} tasks)`,
+                      refs: project.taskIds,
+                      data: { projectId: project.id },
+                    });
+                    helpers.writeBoard(board);
+                  }
+                }
+              }
             }
             json(res, 200, { ok: true, action: 'pr_outcome', taskId: result.taskId, outcome: result.outcome });
             return;
