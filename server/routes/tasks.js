@@ -530,6 +530,37 @@ module.exports = function tasksRoutes(req, res, helpers, deps) {
 
   // --- Task Engine APIs ---
 
+  // GET /api/tasks/:id/progress — one-shot progress snapshot
+  const progressMatch = req.method === 'GET' && req.url.match(/^\/api\/tasks\/([^/]+)\/progress/);
+  if (progressMatch) {
+    const taskId = decodeURIComponent(progressMatch[1]);
+    const board = helpers.readBoard();
+    const task = (board.taskPlan?.tasks || []).find(t => t.id === taskId);
+    if (!task) return json(res, 404, { error: `Task ${taskId} not found` });
+
+    const currentStep = task.steps?.find(s => s.state === 'running');
+    const pipeline = (task.steps || []).map(s => ({
+      step: s.step_id,
+      type: s.type,
+      state: s.state,
+      progress: s.progress || null,
+      duration_ms: s.duration_ms || null,
+    }));
+
+    return json(res, 200, {
+      taskId: task.id,
+      status: task.status,
+      currentStep: currentStep ? {
+        step_id: currentStep.step_id,
+        type: currentStep.type,
+        state: currentStep.state,
+        progress: currentStep.progress || null,
+      } : null,
+      pipeline,
+      budget: task.budget || null,
+    });
+  }
+
   if (req.method === 'GET' && req.url.startsWith('/api/tasks') && !req.url.includes('/steps')) {
     try {
       const board = helpers.readBoard();

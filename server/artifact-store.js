@@ -59,6 +59,22 @@ function listArtifacts(runId) {
   }
 }
 
+/**
+ * Append a JSONL entry to a step's progress log.
+ * Creates the file if it doesn't exist. Useful for `tail -f` style monitoring.
+ */
+function appendLog(runId, stepId, entry) {
+  const safeStepId = stepId.replace(/:/g, '_');
+  const logPath = path.join(ARTIFACT_DIR, runId, `${safeStepId}.log`);
+  fs.mkdirSync(path.dirname(logPath), { recursive: true });
+  fs.appendFileSync(logPath, JSON.stringify(entry) + '\n');
+}
+
+function logPath(runId, stepId) {
+  const safeStepId = stepId.replace(/:/g, '_');
+  return path.join(ARTIFACT_DIR, runId, `${safeStepId}.log`);
+}
+
 module.exports = {
   ARTIFACT_DIR,
   artifactPath,
@@ -66,4 +82,6 @@ module.exports = {
   readArtifact,
   artifactExists,
   listArtifacts,
+  appendLog,
+  logPath,
 };

@@ -124,6 +124,7 @@ function createContext(opts = {}) {
     apiToken,
     corsOrigins,
     sseClients: new Set(),
+    taskSseClients: new Map(),  // taskId → Set<res>
     rateLimiter,
     rateLimitPerMin,
     maxBodyBytes,
@@ -149,7 +150,7 @@ function checkAuth(ctx, req) {
   if (!url.pathname.startsWith('/api/')) return true;
   if (url.pathname.startsWith('/api/webhooks/')) return true;
 
-  if (url.pathname === '/api/events') {
+  if (url.pathname === '/api/events' || url.pathname.match(/^\/api\/tasks\/[^/]+\/stream$/)) {
     const qtoken = url.searchParams.get('token') || '';
     return tokenMatch(ctx.apiToken, qtoken);
   }
@@ -212,6 +213,75 @@ function broadcastSSE(ctx, event, data) {
   for (const client of ctx.sseClients) {
     try { client.write(payload); } catch { ctx.sseClients.delete(client); }
   }
+
+  // Per-task SSE: broadcast step progress to task-specific subscribers
+  if (event === 'board' && data?.taskPlan?.tasks && ctx.taskSseClients.size > 0) {
+    for (const task of data.taskPlan.tasks) {
+      if (!ctx.taskSseClients.has(task.id)) continue;
+      const runningStep = task.steps?.find(s => s.state === 'running');
+      if (runningStep?.progress) {
+        broadcastTaskSSE(ctx, task.id, 'step_progress', {
+          taskId: task.id,
+          step: runningStep.step_id,
+          state: runningStep.state,
+          progress: runningStep.progress,
+        });
+      }
+      // Also broadcast terminal step events
+      const latestSignal = data.signals?.findLast?.(s => s.refs?.includes(task.id) && s.type?.startsWith('step_'));
+      if (latestSignal) {
+        broadcastTaskSSE(ctx, task.id, latestSignal.type, {
+          taskId: task.id,
+          step: latestSignal.data?.stepId,
+          content: latestSignal.content,
+        });
+      }
+    }
+  }
+}
+
+function broadcastTaskSSE(ctx, taskId, event, data) {
+  const clients = ctx.taskSseClients.get(taskId);
+  if (!clients || clients.size === 0) return;
+  const payload = `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`;
+  for (const client of clients) {
+    try { client.write(payload); } catch { clients.delete(client); }
+  }
+}
+
+function handleTaskSSE(ctx, req, res, taskId) {
+  if (ctx.sseClients.size + totalTaskSseClients(ctx) >= ctx.sseLimit) {
+    return json(res, 429, { error: 'too_many_sse_connections' });
+  }
+
+  res.writeHead(200, {
+    'Content-Type': 'text/event-stream',
+    'Cache-Control': 'no-cache, no-transform',
+    'Connection': 'keep-alive',
+    'Access-Control-Allow-Origin': getCorsOrigin(ctx, req),
+    'X-Accel-Buffering': 'no',
+  });
+  res.write(`event: connected\ndata: ${JSON.stringify({ ts: nowIso(), taskId })}\n\n`);
+
+  if (!ctx.taskSseClients.has(taskId)) ctx.taskSseClients.set(taskId, new Set());
+  ctx.taskSseClients.get(taskId).add(res);
+
+  const heartbeat = setInterval(() => {
+    try { res.write(': heartbeat\n\n'); }
+    catch { clearInterval(heartbeat); ctx.taskSseClients.get(taskId)?.delete(res); }
+  }, 30000);
+
+  req.on('close', () => {
+    clearInterval(heartbeat);
+    const set = ctx.taskSseClients.get(taskId);
+    if (set) { set.delete(res); if (set.size === 0) ctx.taskSseClients.delete(taskId); }
+  });
+}
+
+function totalTaskSseClients(ctx) {
+  let n = 0;
+  for (const set of ctx.taskSseClients.values()) n += set.size;
+  return n;
 }
 
 function json(res, code, payload) {
@@ -407,6 +477,12 @@ function createServer(ctx, routeHandler) {
       return handleSSE(ctx, req, res);
     }
 
+    // Per-task SSE stream: GET /api/tasks/:id/stream
+    const taskStreamMatch = req.method === 'GET' && pathname.match(/^\/api\/tasks\/([^/]+)\/stream$/);
+    if (taskStreamMatch) {
+      return handleTaskSSE(ctx, req, res, decodeURIComponent(taskStreamMatch[1]));
+    }
+
     if (req.method === 'GET' && pathname === '/api/board') {
       return handleBoardGet(ctx, req, res);
     }
@@ -454,6 +530,7 @@ module.exports = {
   writeBoard,
   appendLog,
   broadcastSSE,
+  broadcastTaskSSE,
   json,
   parseBody,
   serveStatic,

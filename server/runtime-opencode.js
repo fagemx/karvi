@@ -122,6 +122,7 @@ function dispatch(plan) {
     let lastFinish = null;
     let totalTokens = { input: 0, output: 0 };
     let totalCost = 0;
+    let toolCallCount = 0;
 
     child.stdout.setEncoding('utf8');
     child.stderr.setEncoding('utf8');
@@ -211,6 +212,21 @@ function dispatch(plan) {
           // Settlement happens via: STEP_RESULT marker, process exit, or inactivity timeout.
         }
         // @end-protected
+
+        // Emit progress for tool_call events (consumed by step-worker onProgress)
+        if (obj.type === 'tool_call') {
+          toolCallCount++;
+          if (plan.onProgress) {
+            try {
+              plan.onProgress({
+                type: 'tool_call',
+                tool_name: obj.part?.name || null,
+                tool_calls: toolCallCount,
+                tokens: { ...totalTokens },
+              });
+            } catch {}
+          }
+        }
       }
     });
 
