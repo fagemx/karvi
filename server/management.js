@@ -748,9 +748,9 @@ function buildDispatchPlan(board, task, options = {}) {
     runtimeHint,
     userId,
     agentId: task.assignee,
-    // AGENT_MODEL_MAP contains OpenClaw/API model IDs — skip for Claude Code CLI
-    // which uses its own model selection (--model flag not needed).
-    modelHint: runtimeHint === 'claude' ? null : preferredModelFor(task.assignee),
+    // AGENT_MODEL_MAP contains OpenClaw/API model IDs — skip for CLI-based runtimes
+    // (claude, opencode) which use their own model selection.
+    modelHint: (runtimeHint === 'claude' || runtimeHint === 'opencode') ? null : preferredModelFor(task.assignee),
     timeoutSec: options.timeoutSec || 300,
     sessionId: task.childSessionKey || null,
     message,
