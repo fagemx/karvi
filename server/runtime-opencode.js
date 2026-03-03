@@ -89,6 +89,17 @@ function dispatch(plan) {
     console.log('[opencode-rt] message file:', msgFile);
     console.log('[opencode-rt] cwd:', workDir, 'timeout:', timeoutMs);
 
+    // Heartbeat: notify caller that runtime is alive (for lock renewal)
+    let lastHeartbeat = 0;
+    const HEARTBEAT_INTERVAL_MS = 60_000;
+    function heartbeat() {
+      if (!plan.onActivity) return;
+      const now = Date.now();
+      if (now - lastHeartbeat < HEARTBEAT_INTERVAL_MS) return;
+      lastHeartbeat = now;
+      try { plan.onActivity(); } catch {}
+    }
+
     const env = { ...process.env };
 
     // Windows: .cmd shims must be invoked via cmd.exe
@@ -155,6 +166,7 @@ function dispatch(plan) {
     child.stdout.on('data', chunk => {
       lineBuf += chunk;
       resetInactivityTimer();
+      heartbeat();
 
       const lines = lineBuf.split('\n');
       lineBuf = lines.pop();
