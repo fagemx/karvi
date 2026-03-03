@@ -357,6 +357,20 @@ test('buildDispatchPlan workingDir defaults to null', () => {
   assert.strictEqual(plan.workingDir, null);
 });
 
+test('buildDispatchPlan includes modelHint for opencode runtime', () => {
+  const board = {
+    taskPlan: { tasks: [{ id: 'T-00001', assignee: 'engineer_lite', status: 'dispatched' }] },
+    controls: {},
+    lessons: [],
+    participants: [{ id: 'owner', type: 'human' }],
+  };
+  const task = board.taskPlan.tasks[0];
+  // Before this fix: opencode runtime got null modelHint (hardcoded skip)
+  // After this fix: opencode runtime receives modelHint via preferredModelFor
+  const plan = mgmt.buildDispatchPlan(board, task, { runtimeHint: 'opencode' });
+  assert.notStrictEqual(plan.modelHint, null);
+});
+
 // ─────────────────────────────────────
 // Cleanup & Summary
 // ─────────────────────────────────────
