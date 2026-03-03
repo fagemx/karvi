@@ -438,7 +438,8 @@ function listen(server, ctx) {
   const host = ctx.host || undefined; // undefined = all interfaces (Node default)
   server.listen(ctx.port, host, () => {
     const addr = server.address();
-    console.log(`Blackboard server running at http://${addr.address}:${addr.port}`);
+    const displayHost = addr.address === '::' ? 'localhost' : addr.address;
+    console.log(`Blackboard server running at http://${displayHost}:${addr.port}`);
   });
 }
 

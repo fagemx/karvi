@@ -352,14 +352,14 @@ process.on('SIGINT', gracefulShutdown);
 }
 
 // Security guard: block startup on non-localhost bind without API token
+// Only fires when HOST is explicitly set — default (undefined) is safe for local dev
 {
-  const bindAddr = HOST || '0.0.0.0';
-  const isLocal = ['127.0.0.1', 'localhost', '::1'].includes(bindAddr);
+  const isLocal = !HOST || ['127.0.0.1', 'localhost', '::1'].includes(HOST);
   if (!isLocal && !ctx.apiToken) {
     if (process.argv.includes('--force')) {
-      console.warn('[SECURITY] API token not set but --force used. Proceeding without auth on %s:%d', bindAddr, ctx.port);
+      console.warn('[SECURITY] API token not set but --force used. Proceeding without auth on %s:%d', HOST, ctx.port);
     } else {
-      console.error('[SECURITY] API token not set but server is binding to %s:%d', bindAddr, ctx.port);
+      console.error('[SECURITY] API token not set but server is binding to %s:%d', HOST, ctx.port);
       console.error('           Set KARVI_API_TOKEN or use --force to bypass this check');
       process.exit(1);
     }
