@@ -201,7 +201,17 @@ function createKernel(deps) {
             cycleWatchdog.closeStalledCycle(latestBoard, helpers, health.reason, health);
             if (push && PUSH_TOKENS_PATH && latestTask) {
               push.notifyTaskEvent(PUSH_TOKENS_PATH, latestTask, 'task.blocked')
-                .catch(err => console.error('[kernel] push error:', err.message));
+                .catch(err => {
+                  console.error(`[kernel] push error for task ${taskId}, event task.blocked:`, err.message);
+                  latestBoard.signals.push({
+                    id: helpers.uid('sig'), ts: helpers.nowIso(), by: 'kernel',
+                    type: 'push_failed',
+                    content: `Push notification failed for ${taskId}: ${err.message}`,
+                    refs: [taskId],
+                    data: { taskId, eventType: 'task.blocked', error: err.message },
+                  });
+                  if (latestBoard.signals.length > 500) latestBoard.signals = latestBoard.signals.slice(-500);
+                });
             }
             return;
           }
@@ -210,7 +220,17 @@ function createKernel(deps) {
         // Push notification
         if (push && PUSH_TOKENS_PATH && latestTask) {
           push.notifyTaskEvent(PUSH_TOKENS_PATH, latestTask, 'task.blocked')
-            .catch(err => console.error('[kernel] push error:', err.message));
+            .catch(err => {
+              console.error(`[kernel] push error for task ${taskId}, event task.blocked:`, err.message);
+              latestBoard.signals.push({
+                id: helpers.uid('sig'), ts: helpers.nowIso(), by: 'kernel',
+                type: 'push_failed',
+                content: `Push notification failed for ${taskId}: ${err.message}`,
+                refs: [taskId],
+                data: { taskId, eventType: 'task.blocked', error: err.message },
+              });
+              if (latestBoard.signals.length > 500) latestBoard.signals = latestBoard.signals.slice(-500);
+            });
         }
         return;
       }
@@ -237,7 +257,17 @@ function createKernel(deps) {
             cycleWatchdog.closeStalledCycle(latestBoard, helpers, health.reason, health);
             if (push && PUSH_TOKENS_PATH && latestTask) {
               push.notifyTaskEvent(PUSH_TOKENS_PATH, latestTask, 'task.blocked')
-                .catch(err => console.error('[kernel] push error:', err.message));
+                .catch(err => {
+                  console.error(`[kernel] push error for task ${taskId}, event task.blocked:`, err.message);
+                  latestBoard.signals.push({
+                    id: helpers.uid('sig'), ts: helpers.nowIso(), by: 'kernel',
+                    type: 'push_failed',
+                    content: `Push notification failed for ${taskId}: ${err.message}`,
+                    refs: [taskId],
+                    data: { taskId, eventType: 'task.blocked', error: err.message },
+                  });
+                  if (latestBoard.signals.length > 500) latestBoard.signals = latestBoard.signals.slice(-500);
+                });
             }
             return;
           }
@@ -245,7 +275,17 @@ function createKernel(deps) {
         helpers.writeBoard(latestBoard);
         if (push && PUSH_TOKENS_PATH && latestTask) {
           push.notifyTaskEvent(PUSH_TOKENS_PATH, latestTask, 'task.blocked')
-            .catch(err => console.error('[kernel] push error:', err.message));
+            .catch(err => {
+              console.error(`[kernel] push error for task ${taskId}, event task.blocked:`, err.message);
+              latestBoard.signals.push({
+                id: helpers.uid('sig'), ts: helpers.nowIso(), by: 'kernel',
+                type: 'push_failed',
+                content: `Push notification failed for ${taskId}: ${err.message}`,
+                refs: [taskId],
+                data: { taskId, eventType: 'task.blocked', error: err.message },
+              });
+              if (latestBoard.signals.length > 500) latestBoard.signals = latestBoard.signals.slice(-500);
+            });
         }
         return;
       }
@@ -297,7 +337,17 @@ function createKernel(deps) {
             if (push && PUSH_TOKENS_PATH) {
               const cycleId = latestBoard.village?.currentCycle?.cycleId;
               push.notifyTaskEvent(PUSH_TOKENS_PATH, null, 'village.plan_ready', { cycleId })
-                .catch(err => console.error('[kernel] village.plan_ready push error:', err.message));
+                .catch(err => {
+                  console.error(`[kernel] village.plan_ready push error:`, err.message);
+                  latestBoard.signals.push({
+                    id: helpers.uid('sig'), ts: helpers.nowIso(), by: 'kernel',
+                    type: 'push_failed',
+                    content: `Push notification failed for village.plan_ready: ${err.message}`,
+                    refs: [],
+                    data: { taskId: null, eventType: 'village.plan_ready', error: err.message },
+                  });
+                  if (latestBoard.signals.length > 500) latestBoard.signals = latestBoard.signals.slice(-500);
+                });
             }
             try {
               const synthArtifact = artifactStore.readArtifact(
@@ -327,7 +377,17 @@ function createKernel(deps) {
               push.notifyTaskEvent(PUSH_TOKENS_PATH, null, 'village.plan_ready', {
                 cycleId: latestBoard.village?.currentCycle?.cycleId,
                 needsApproval: true,
-              }).catch(err => console.error('[kernel] push error:', err.message));
+              }).catch(err => {
+                console.error(`[kernel] push error for village.plan_ready (needsApproval):`, err.message);
+                latestBoard.signals.push({
+                  id: helpers.uid('sig'), ts: helpers.nowIso(), by: 'kernel',
+                  type: 'push_failed',
+                  content: `Push notification failed for village.plan_ready (needsApproval): ${err.message}`,
+                  refs: [],
+                  data: { taskId: null, eventType: 'village.plan_ready', error: err.message },
+                });
+                if (latestBoard.signals.length > 500) latestBoard.signals = latestBoard.signals.slice(-500);
+              });
             }
           }
         }
@@ -360,7 +420,17 @@ function createKernel(deps) {
                 push.notifyTaskEvent(PUSH_TOKENS_PATH, null, 'village.checkin_summary', {
                   cycleId, completed: completedCount, total: execTaskIds.length,
                   blocked: execTaskIds.length - completedCount,
-                }).catch(err => console.error('[kernel] retro push error:', err.message));
+                }).catch(err => {
+                  console.error(`[kernel] retro push error for village.checkin_summary:`, err.message);
+                  latestBoard.signals.push({
+                    id: helpers.uid('sig'), ts: helpers.nowIso(), by: 'kernel',
+                    type: 'push_failed',
+                    content: `Push notification failed for village.checkin_summary: ${err.message}`,
+                    refs: [],
+                    data: { taskId: null, eventType: 'village.checkin_summary', error: err.message },
+                  });
+                  if (latestBoard.signals.length > 500) latestBoard.signals = latestBoard.signals.slice(-500);
+                });
               }
             }
           }
@@ -372,7 +442,17 @@ function createKernel(deps) {
 
         if (push && PUSH_TOKENS_PATH && latestTask) {
           push.notifyTaskEvent(PUSH_TOKENS_PATH, latestTask, 'task.completed')
-            .catch(err => console.error('[kernel] push error:', err.message));
+            .catch(err => {
+              console.error(`[kernel] push error for task ${taskId}, event task.completed:`, err.message);
+              latestBoard.signals.push({
+                id: helpers.uid('sig'), ts: helpers.nowIso(), by: 'kernel',
+                type: 'push_failed',
+                content: `Push notification failed for ${taskId}: ${err.message}`,
+                refs: [taskId],
+                data: { taskId, eventType: 'task.completed', error: err.message },
+              });
+              if (latestBoard.signals.length > 500) latestBoard.signals = latestBoard.signals.slice(-500);
+            });
         }
 
         // Push: village.proposals_ready — when synthesis task unlocks, all proposals are done
@@ -385,7 +465,17 @@ function createKernel(deps) {
               const deptCount = latestBoard.village?.departments?.length || 0;
               push.notifyTaskEvent(PUSH_TOKENS_PATH, null, 'village.proposals_ready', {
                 cycleId, departmentCount: deptCount,
-              }).catch(err => console.error('[kernel] village.proposals_ready push error:', err.message));
+              }).catch(err => {
+                console.error(`[kernel] village.proposals_ready push error:`, err.message);
+                latestBoard.signals.push({
+                  id: helpers.uid('sig'), ts: helpers.nowIso(), by: 'kernel',
+                  type: 'push_failed',
+                  content: `Push notification failed for village.proposals_ready: ${err.message}`,
+                  refs: [],
+                  data: { taskId: null, eventType: 'village.proposals_ready', error: err.message },
+                });
+                if (latestBoard.signals.length > 500) latestBoard.signals = latestBoard.signals.slice(-500);
+              });
             }
           }
         }
