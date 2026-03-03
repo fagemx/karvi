@@ -37,6 +37,21 @@ function createWorktree(repoRoot, taskId) {
     fs.mkdirSync(parentDir, { recursive: true });
   }
 
+  // Clean up ghost branch from previous crashed run (prevents "branch already exists" error)
+  try {
+    execFileSync('git', ['branch', '-D', branch], { cwd: repoRoot, stdio: 'pipe', timeout: 5000 });
+    console.log(`[worktree] cleaned up ghost branch ${branch}`);
+  } catch {
+    // Branch doesn't exist — expected for first run
+  }
+
+  // Prune stale worktree references that point to deleted directories
+  try {
+    execFileSync('git', ['worktree', 'prune'], { cwd: repoRoot, stdio: 'pipe', timeout: 5000 });
+  } catch {
+    // Non-fatal
+  }
+
   execFileSync('git', ['worktree', 'add', worktreePath, '-b', branch], {
     cwd: repoRoot,
     stdio: 'pipe',
@@ -66,18 +81,26 @@ function removeWorktree(repoRoot, taskId) {
   const worktreePath = path.join(repoRoot, '.claude', 'worktrees', sanitized);
   const branch = `agent/${sanitized}`;
 
-  if (!fs.existsSync(worktreePath)) return;
-
+  // Prune stale worktree references first
   try {
-    execFileSync('git', ['worktree', 'remove', worktreePath, '--force'], {
-      cwd: repoRoot,
-      stdio: 'pipe',
-      timeout: 15000,
-    });
-  } catch (err) {
-    console.error(`[worktree] remove failed for ${taskId}:`, err.message);
+    execFileSync('git', ['worktree', 'prune'], { cwd: repoRoot, stdio: 'pipe', timeout: 5000 });
+  } catch {}
+
+  // Remove worktree directory if it exists
+  if (fs.existsSync(worktreePath)) {
+    try {
+      execFileSync('git', ['worktree', 'remove', worktreePath, '--force'], {
+        cwd: repoRoot,
+        stdio: 'pipe',
+        timeout: 15000,
+      });
+    } catch (err) {
+      console.error(`[worktree] remove failed for ${taskId}:`, err.message);
+      // Fall through — still try to delete branch
+    }
   }
 
+  // Always try to delete branch (even if worktree remove failed/skipped)
   try {
     execFileSync('git', ['branch', '-D', branch], {
       cwd: repoRoot,

@@ -120,6 +120,8 @@ function redispatchTask(board, task, deps, helpers) {
 // opts.runtimeOverride — force specific runtime
 // opts.onActivity — heartbeat callback (lock renewal)
 // ---------------------------------------------------------------------------
+const _dispatchLocks = new Map(); // taskId → ISO timestamp (prevents concurrent dispatch for same task)
+
 function dispatchTask(task, board, deps, helpers, opts = {}) {
   const { mgmt, usage, push, PUSH_TOKENS_PATH } = deps;
   const ctrl = mgmt.getControls(board);
@@ -127,42 +129,61 @@ function dispatchTask(task, board, deps, helpers, opts = {}) {
   const source = opts.source || 'dispatch';
   const mode = opts.mode || 'dispatch';
 
+  // Guard: reject concurrent dispatch for same task
+  if (_dispatchLocks.has(taskId)) {
+    console.log(`[dispatchTask:${taskId}] skip: dispatch already in progress (locked since ${_dispatchLocks.get(taskId)})`);
+    return { dispatched: false, reason: 'dispatch already in progress' };
+  }
+  _dispatchLocks.set(taskId, helpers.nowIso());
+
   const assignee = participantById(board, task.assignee);
   if (!assignee || assignee.type !== 'agent') {
+    _dispatchLocks.delete(taskId);
     console.log(`[dispatchTask:${taskId}] skip: assignee ${task.assignee} is not an agent`);
     return { dispatched: false, reason: 'assignee not agent' };
   }
 
-  // --- Phase 1: Worktree (if enabled and not yet created) ---
-  if (ctrl.use_worktrees && !task.worktreeDir) {
-    const worktree = require('../worktree');
-    const { resolveRepoRoot, validateRepoRoot } = require('../repo-resolver');
-    const repoRoot = resolveRepoRoot(task, board) || path.resolve(__dirname, '..', '..');
-
-    const validation = validateRepoRoot(repoRoot, task.source?.repo);
-    if (!validation.valid) {
-      console.error(`[dispatchTask:${taskId}] repo validation failed: ${validation.error}`);
-      task.status = 'blocked';
-      task.blocker = { reason: `Repo validation failed: ${validation.error}`, askedAt: helpers.nowIso() };
-      helpers.writeBoard(board);
-      helpers.appendLog({ ts: helpers.nowIso(), event: 'dispatch_blocked', taskId, source, error: validation.error });
-      helpers.broadcastSSE('board', board);
-      return { dispatched: false, reason: validation.error };
+  // --- Phase 1: Worktree (ensure exists on disk) ---
+  if (ctrl.use_worktrees) {
+    // Validate worktree exists on disk (may have been manually deleted)
+    if (task.worktreeDir && !fs.existsSync(task.worktreeDir)) {
+      console.log(`[dispatchTask:${taskId}] worktree missing on disk, re-creating`);
+      task.worktreeDir = null;
+      task.worktreeBranch = null;
     }
 
-    try {
-      const wt = worktree.createWorktree(repoRoot, taskId);
-      task.worktreeDir = wt.worktreePath;
-      task.worktreeBranch = wt.branch;
-      console.log(`[dispatchTask:${taskId}] worktree: ${wt.worktreePath}`);
-    } catch (err) {
-      console.error(`[dispatchTask:${taskId}] worktree failed: ${err.message}`);
-      task.status = 'blocked';
-      task.blocker = { reason: `Worktree creation failed: ${err.message}`, askedAt: helpers.nowIso() };
-      helpers.writeBoard(board);
-      helpers.appendLog({ ts: helpers.nowIso(), event: 'dispatch_blocked', taskId, source, error: err.message });
-      helpers.broadcastSSE('board', board);
-      return { dispatched: false, reason: err.message };
+    if (!task.worktreeDir) {
+      const worktree = require('../worktree');
+      const { resolveRepoRoot, validateRepoRoot } = require('../repo-resolver');
+      const repoRoot = resolveRepoRoot(task, board) || path.resolve(__dirname, '..', '..');
+
+      const validation = validateRepoRoot(repoRoot, task.source?.repo);
+      if (!validation.valid) {
+        _dispatchLocks.delete(taskId);
+        console.error(`[dispatchTask:${taskId}] repo validation failed: ${validation.error}`);
+        task.status = 'blocked';
+        task.blocker = { reason: `Repo validation failed: ${validation.error}`, askedAt: helpers.nowIso() };
+        helpers.writeBoard(board);
+        helpers.appendLog({ ts: helpers.nowIso(), event: 'dispatch_blocked', taskId, source, error: validation.error });
+        helpers.broadcastSSE('board', board);
+        return { dispatched: false, reason: validation.error };
+      }
+
+      try {
+        const wt = worktree.createWorktree(repoRoot, taskId);
+        task.worktreeDir = wt.worktreePath;
+        task.worktreeBranch = wt.branch;
+        console.log(`[dispatchTask:${taskId}] worktree: ${wt.worktreePath}`);
+      } catch (err) {
+        _dispatchLocks.delete(taskId);
+        console.error(`[dispatchTask:${taskId}] worktree failed: ${err.message}`);
+        task.status = 'blocked';
+        task.blocker = { reason: `Worktree creation failed: ${err.message}`, askedAt: helpers.nowIso() };
+        helpers.writeBoard(board);
+        helpers.appendLog({ ts: helpers.nowIso(), event: 'dispatch_blocked', taskId, source, error: err.message });
+        helpers.broadcastSSE('board', board);
+        return { dispatched: false, reason: err.message };
+      }
     }
   }
 
@@ -203,9 +224,16 @@ function dispatchTask(task, board, deps, helpers, opts = {}) {
       deps.stepWorker.executeStep(envelope, helpers.readBoard(), helpers).catch(err =>
         console.error(`[dispatchTask:${taskId}] step execution error:`, err.message));
     } else {
+      // Envelope build failed — mark first step as failed to avoid orphaned pipeline
+      if (firstStep.state === 'queued') {
+        deps.stepSchema.transitionStep(firstStep, 'running', { locked_by: source });
+        deps.stepSchema.transitionStep(firstStep, 'failed', { error: 'Failed to build dispatch envelope' });
+      }
       helpers.writeBoard(board);
+      helpers.appendLog({ ts: helpers.nowIso(), event: 'dispatch_envelope_failed', taskId, source });
       console.error(`[dispatchTask:${taskId}] failed to build envelope for first step`);
     }
+    _dispatchLocks.delete(taskId);
     return { dispatched: true, mode: 'step-pipeline', runId };
   }
 
@@ -354,6 +382,8 @@ function dispatchTask(task, board, deps, helpers, opts = {}) {
       push.notifyTaskEvent(PUSH_TOKENS_PATH, latestTask, 'dispatch.failed')
         .catch(err2 => console.error('[push] dispatch-failed notify:', err2.message));
     }
+  }).finally(() => {
+    _dispatchLocks.delete(taskId);
   });
 
   return { dispatched: true, planId: plan.planId, mode: 'legacy' };
