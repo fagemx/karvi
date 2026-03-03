@@ -20,3 +20,13 @@ brief-panel/output/
 .claude/
 .edda/
 .env
+
+# Temp / scratch files
+.tmp/
+.deep-dive/
+.git-commit-msg.tmp
+server/.board-*.tmp
+server/_reset-*.js
+server/log.jsonl
+server/usage/
+server/docs/launch/
