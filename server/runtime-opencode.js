@@ -67,7 +67,6 @@ function dispatch(plan) {
     const args = ['run', '--format', 'json'];
 
     if (plan.sessionId) args.push('--session', plan.sessionId);
-    // Model priority: plan.modelHint > OPENCODE_MODEL env > opencode default config
     const model = plan.modelHint || process.env.OPENCODE_MODEL || null;
     if (model) args.push('--model', model);
 
@@ -75,11 +74,9 @@ function dispatch(plan) {
     args.push('--dir', workDir);
 
     // Write message to temp file and attach via --file.
-    // cmd.exe truncates multi-line positional args at the first newline,
-    // so the full task prompt goes into the file attachment.
+    // cmd.exe truncates multi-line positional args at first newline.
     const msgFile = path.join(os.tmpdir(), `karvi-dispatch-${Date.now()}.md`);
     fs.writeFileSync(msgFile, plan.message, 'utf8');
-    // --file must come before positional message to avoid yargs misparse
     args.push('--file', msgFile, '--', 'Read the attached file for your task. Implement everything it describes.');
 
     const timeoutMs = (plan.timeoutSec || 300) * 1000;
@@ -180,16 +177,14 @@ function dispatch(plan) {
           }
         }
 
-        // step_finish — only settle on terminal reasons (not tool-calls which means more steps coming)
+        // step_finish — only settle on terminal reasons
         if (obj.type === 'step_finish') {
           lastFinish = obj.part || {};
           if (obj.sessionID) sessionId = obj.sessionID;
           console.log('[opencode-rt] step_finish: reason=%s cost=%s tokens=%j',
             lastFinish.reason, lastFinish.cost, lastFinish.tokens);
-          // reason=tool-calls means opencode is about to execute tools and continue
           if (lastFinish.reason === 'tool-calls') {
-            console.log('[opencode-rt] tool-calls step — waiting for next step');
-            continue;
+            continue; // more steps coming
           }
           settle(null, buildResult(lastText));
           killTree(child.pid);
