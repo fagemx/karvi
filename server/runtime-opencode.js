@@ -17,15 +17,22 @@ const STEP_RESULT_RE = /STEP_RESULT:\s*(\{.*\})/;
 
 /**
  * Resolve the absolute path to opencode executable.
+ * On Windows, npm packages install as .cmd shims — we must use that,
+ * not the POSIX shell script that `where` returns first.
  */
 function resolveOpencodePath() {
   if (process.env.OPENCODE_CMD) return process.env.OPENCODE_CMD;
 
   if (process.platform === 'win32') {
     try {
-      const p = execSync('where opencode', { encoding: 'utf8', timeout: 5000 })
-        .trim().split('\n')[0].trim();
-      if (p && fs.existsSync(p)) return p;
+      const lines = execSync('where opencode', { encoding: 'utf8', timeout: 5000 })
+        .trim().split(/\r?\n/);
+      // Prefer .cmd shim over POSIX shell script
+      const cmd = lines.find(l => l.trim().endsWith('.cmd'));
+      if (cmd && fs.existsSync(cmd.trim())) return cmd.trim();
+      // Fallback to first result
+      const first = lines[0]?.trim();
+      if (first && fs.existsSync(first)) return first;
     } catch {}
   }
 
