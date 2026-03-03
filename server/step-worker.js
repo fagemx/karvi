@@ -94,6 +94,19 @@ function createStepWorker(deps) {
       postCheckResult = null;
     } else {
       // 4. Dispatch with duration tracking (catch failures to transition step properly)
+      //    Heartbeat callback: refresh lock while runtime is alive (prevents retry-poller conflicts)
+      plan.onActivity = () => {
+        try {
+          const hbBoard = helpers.readBoard();
+          const hbTask = (hbBoard.taskPlan?.tasks || []).find(t => t.id === envelope.task_id);
+          const hbStep = hbTask?.steps?.find(s => s.step_id === envelope.step_id);
+          if (hbStep && hbStep.state === 'running' && hbStep.locked_by === 'step-worker') {
+            hbStep.lock_expires_at = new Date(Date.now() + envelope.timeout_ms + LOCK_GRACE_MS).toISOString();
+            helpers.writeBoard(hbBoard);
+          }
+        } catch {}
+      };
+
       const startMs = Date.now();
       let result;
       try {

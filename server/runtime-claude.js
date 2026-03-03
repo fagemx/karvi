@@ -115,6 +115,17 @@ function dispatch(plan) {
       if (err) reject(err); else resolve(result);
     }
 
+    // Heartbeat: notify caller that runtime is alive (for lock renewal)
+    let lastHeartbeat = 0;
+    const HEARTBEAT_INTERVAL_MS = 60_000;
+    function heartbeat() {
+      if (!plan.onActivity) return;
+      const now = Date.now();
+      if (now - lastHeartbeat < HEARTBEAT_INTERVAL_MS) return;
+      lastHeartbeat = now;
+      try { plan.onActivity(); } catch {}
+    }
+
     // --- Inactivity timeout: resets on every stream event ---
     let inactivityTimer = null;
     function resetInactivityTimer() {
@@ -148,6 +159,7 @@ function dispatch(plan) {
     child.stdout.on('data', chunk => {
       lineBuf += chunk;
       resetInactivityTimer();
+      heartbeat();
 
       const lines = lineBuf.split('\n');
       lineBuf = lines.pop(); // keep incomplete last line
