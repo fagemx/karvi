@@ -138,6 +138,7 @@ const briefsRoutes = require('./routes/briefs');
 const chatRoutes = require('./routes/chat');
 const jiraRoutes = require('./routes/jira');
 const villageRoutes = require('./routes/village');
+const projectsRoutes = require('./routes/projects');
 const tasksRoutes = require('./routes/tasks');
 
 // --- Route chain ---
@@ -152,6 +153,7 @@ const routes = [
   chatRoutes,
   jiraRoutes,
   villageRoutes,
+  projectsRoutes,
   tasksRoutes,
 ];
 
@@ -191,6 +193,7 @@ tasksRoutes.init(deps, routeHelpers);
 bb.ensureBoardExists(ctx, {
   taskPlan: { goal: '', phase: 'idle', tasks: [] },
   pipelineTemplates: {},
+  projects: [],
   conversations: [],
   participants: [],
   signals: [],
@@ -218,6 +221,7 @@ let dirty = false;
 if (!Array.isArray(initBoard.signals)) { initBoard.signals = []; dirty = true; }
 if (!Array.isArray(initBoard.insights)) { initBoard.insights = []; dirty = true; }
 if (!Array.isArray(initBoard.lessons)) { initBoard.lessons = []; dirty = true; }
+if (!Array.isArray(initBoard.projects)) { initBoard.projects = []; dirty = true; }
 // Village Chief: ensure village block exists on startup
 if (!initBoard.village) { villageRoutes.ensureVillage(initBoard); dirty = true; }
 if (dirty) writeBoard(initBoard);

@@ -875,14 +875,19 @@ function autoUnlockDependents(board) {
   const unlocked = [];
   allTasks.forEach(t => {
     if (t.status === 'pending' && t.depends?.length > 0) {
-      const allDepsApproved = t.depends.every(depId => {
+      const allDepsMet = t.depends.every(depId => {
         const dep = allTasks.find(d => d.id === depId);
-        return dep && dep.status === 'approved';
+        if (!dep) return false;
+        // completionTrigger === 'pr_merged' requires PR actually merged
+        if (dep.completionTrigger === 'pr_merged') {
+          return dep.status === 'approved' && dep.pr?.outcome === 'merged';
+        }
+        return dep.status === 'approved';
       });
-      if (allDepsApproved) {
+      if (allDepsMet) {
         t.status = 'dispatched';
         t.history = t.history || [];
-        t.history.push({ ts: nowIso(), status: 'dispatched', reason: 'dependencies_approved' });
+        t.history.push({ ts: nowIso(), status: 'dispatched', reason: 'dependencies_met' });
         unlocked.push(t.id);
       }
     }

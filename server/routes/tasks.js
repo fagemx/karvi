@@ -281,6 +281,23 @@ function tryAutoDispatch(taskId, deps, helpers) {
     return;
   }
 
+  // Project concurrency gate
+  if (task.projectId) {
+    const project = (board.projects || []).find(p => p.id === task.projectId);
+    if (project) {
+      if (project.status === 'paused') {
+        console.log(`[auto-dispatch:${taskId}] skip: project ${project.id} is paused`);
+        return;
+      }
+      const projectInProgress = (board.taskPlan?.tasks || [])
+        .filter(t => t.projectId === project.id && t.status === 'in_progress').length;
+      if (projectInProgress >= (project.concurrency || 3)) {
+        console.log(`[auto-dispatch:${taskId}] skip: project concurrency ${projectInProgress}/${project.concurrency}`);
+        return;
+      }
+    }
+  }
+
   // Worktree creation: isolate each task in its own git worktree
   if (ctrl.use_worktrees) {
     const worktree = require('../worktree');
