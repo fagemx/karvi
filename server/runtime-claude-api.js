@@ -367,6 +367,15 @@ function create(opts = {}) {
    * @returns {Promise<{code: number, stdout: string, stderr: string, parsed: object, usage: object}>}
    */
   async function dispatch(plan) {
+    // 0. Validate workingDir first (before any expensive operations)
+    if (!plan.workingDir) {
+      throw new Error(
+        `[claude-api-rt] CRITICAL: workingDir is null for task ${plan.taskId}. ` +
+        `Cannot dispatch agent without target directory. ` +
+        `This indicates a bug in the dispatch chain.`
+      );
+    }
+
     // 1. Resolve API key
     const apiKey = resolveApiKey(vault, plan.userId);
 
@@ -381,8 +390,8 @@ function create(opts = {}) {
       plan.controlsSnapshot ? `Quality threshold: ${plan.controlsSnapshot.quality_threshold || 70}/100.` : '',
     ].filter(Boolean).join('\n');
 
-    // 4. Working directory
-    const workingDir = plan.workingDir || path.resolve(__dirname, '..');
+    // 4. Working directory (already validated)
+    const workingDir = plan.workingDir;
 
     // 5. Run conversation loop with tools
     const result = await runConversationLoop({
