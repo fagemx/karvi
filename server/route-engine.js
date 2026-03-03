@@ -167,7 +167,9 @@ function decideNext(agentOutput, runState) {
     // Guard: limit revision cycles to avoid infinite loops.
     if (fromStep?.revision_target && needsRevision(agentOutput)) {
       const targetStep = steps.find(s => s.type === fromStep.revision_target);
-      if (targetStep) {
+      if (!targetStep) {
+        console.warn("[route-engine] revision_target '%s' not found in pipeline", fromStep.revision_target);
+      } else {
         const maxCycles = fromStep.max_revision_cycles || MAX_REVISION_CYCLES;
         const revisionCount = task._revisionCounts?.[targetStep.step_id] || 0;
         if (revisionCount < maxCycles) {
