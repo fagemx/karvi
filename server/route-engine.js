@@ -21,9 +21,9 @@ const FAILURE_MODES = {
 };
 
 const BUDGET_DEFAULTS = {
-  max_llm_calls: 12,
-  max_tokens: 40000,
-  max_wall_clock_ms: 1_200_000,  // 20 min
+  max_llm_calls: 50,       // was 12 — too low for 3-step pipeline with retries
+  max_tokens: 500_000,     // was 40000 — single plan step can use 20K tokens
+  max_wall_clock_ms: 1_800_000,  // 30 min (was 20 min)
   max_steps: 20,
 };
 
