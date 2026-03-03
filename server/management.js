@@ -696,6 +696,50 @@ function buildRedispatchMessage(board, task, options = {}) {
 }
 
 /**
+ * Build an English dispatch message for CLI-based runtimes (opencode, claude).
+ * These runtimes use models that may not understand Chinese dispatch templates.
+ */
+function buildGenericDispatchMessage(board, task, options = {}) {
+  const lines = [];
+  lines.push(`You are a coding agent. Implement the following task in this repository.`);
+  lines.push('');
+  lines.push(`Task ID: ${task.id}`);
+  lines.push(`Title: ${task.title}`);
+  if (task.description) {
+    lines.push('');
+    lines.push('Description:');
+    lines.push(task.description);
+  }
+  lines.push('');
+
+  // Upstream artifacts
+  const upstream = gatherUpstreamArtifacts(board, task);
+  if (upstream.length > 0) {
+    lines.push('Upstream task outputs (your task builds on these):');
+    for (const u of upstream) {
+      lines.push(`  ${u.id} (${u.title}) [${u.status}]`);
+      if (u.summary) lines.push(`    Summary: ${u.summary}`);
+    }
+    lines.push('');
+  }
+
+  lines.push('Instructions:');
+  lines.push('1. Read the relevant source files before making changes');
+  lines.push('2. Implement the changes described above');
+  lines.push('3. Run "node -c <file>" on every modified file to verify syntax');
+  lines.push('4. Summarize what you changed and any verification results');
+
+  // Preflight lessons
+  const preflight = buildPreflightSection(board, task, options);
+  if (preflight.lines.length > 0) {
+    lines.push('');
+    lines.push(...preflight.lines);
+  }
+
+  return lines.join('\n');
+}
+
+/**
  * Resolve the owner (human) participant's ID from the board.
  * Used by API-key-based runtimes (e.g. claude-api) to retrieve per-user credentials from vault.
  * @param {object} board - The board object
@@ -709,21 +753,26 @@ function resolveOwnerId(board) {
 function buildDispatchPlan(board, task, options = {}) {
   const mode = options.mode === 'redispatch' ? 'redispatch' : 'dispatch';
 
-  // Compute lesson matching once, pass to message builders
-  const lessonResult = matchLessonsForTask(board, task);
-
-  const message = mode === 'redispatch'
-    ? buildRedispatchMessage(board, task, { lessonResult })
-    : buildTaskDispatchMessage(board, task, {
-        requireTaskResult: options.requireTaskResult || false,
-        lessonResult,
-      });
-
   const controls = getControls(board);
 
   const runtimeHint = options.runtimeHint
     || board.controls?.preferred_runtime
     || 'openclaw';
+
+  // Compute lesson matching once, pass to message builders
+  const lessonResult = matchLessonsForTask(board, task);
+
+  // CLI-based runtimes (opencode, claude) need English prompts
+  const usesGenericMessage = runtimeHint === 'opencode' || runtimeHint === 'claude';
+
+  const message = mode === 'redispatch'
+    ? buildRedispatchMessage(board, task, { lessonResult })
+    : usesGenericMessage
+      ? buildGenericDispatchMessage(board, task, { lessonResult })
+      : buildTaskDispatchMessage(board, task, {
+          requireTaskResult: options.requireTaskResult || false,
+          lessonResult,
+        });
 
   // Runtime selection rationale
   const runtimeRationale = options.runtimeHint
