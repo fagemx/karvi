@@ -18,7 +18,7 @@ Karvi 是多 agent 任務引擎。使用者定義任務，Karvi 派發給 AI age
 3. **不知道停了什麼** — UI 沒有顯示哪些 execution 在跑、哪些被停了
 4. **殭屍殘留** — 有時 agent process 沒被殺乾淨，佔住資源但 board 上看不到
 
-這在自用時還能忍（重啟就好），但如果要讓其他開發者用 Karvi，「按 Stop 結果不可預期」是致命的信任問題。
+「按 Stop 結果不可預期」是致命的信任問題 — 無論是單人使用還是多租戶部署，execution 控制必須可靠。
 
 ### 原始規劃的提案
 
@@ -105,17 +105,9 @@ function dispatch(plan) {
 
 **建議：** 先只改 claude + opencode（最常用的兩個），其他 runtime 延後。
 
-### 風險 2: 複雜度 vs 當前規模不匹配
+### 風險 2: 一次性全做 vs 介面先行、實作分層
 
-Karvi 現在的規模：
-
-- **v0.1.0** — 還沒有正式 release
-- **單程序** Node.js，零外部依賴
-- **JSON 檔案儲存** — board.json 是 single source of truth
-- **max_concurrent_tasks = 2-10** — 不是 100 個 concurrent 的系統
-- **使用者 = 1 人**（自用）
-
-原始規劃提出的系統：
+原始規劃一口氣提出 6 個新系統：
 
 - Execution Registry（新模組 + 持久化）
 - Stop Policy Engine（依任務類型自動決策）
@@ -124,9 +116,13 @@ Karvi 現在的規模：
 - UI Stop Modal（三選一 + risk label）
 - Runtime Contract V2（5 個 adapter 重寫）
 
-**這套設計解決的是「100 個用戶跑 500 個 concurrent task」的問題，不是「1 個人跑 3 個 task」的問題。**
+問題不是這些功能不需要，而是**同時實作所有功能的交付風險太高**。正確的做法是：
 
-實際上，最小改動就能解決 80% 痛點：
+1. **API 介面一次設計對** — `POST /api/steps/:id/kill`、`GET /api/executions` 的 contract 現在就定義
+2. **實作分層替換** — 第一版 in-memory Map，多節點時換成 Redis-backed，API 不變
+3. **每層交付後驗證** — 確認 kill 語義正確，再加 policy engine
+
+最小改動就能解決 80% 痛點：
 
 ```javascript
 // 改動 1: dispatch() 多回傳一個 kill()                   ← ~20 行
@@ -155,13 +151,13 @@ const activeExecutions = new Map();  // stepId → kill()
 
 原始規劃的核心概念之一是 `detached_job` — 不受 session stop 影響的長任務。
 
-但 Karvi 的現實是：
+Detached job 需要解決的底層問題（無論單機或多節點部署）：
 
-1. **單程序** — server process 重啟 = 所有 in-memory 狀態消失
-2. **5 秒 graceful shutdown** — `setTimeout(() => process.exit(1), 5000)`
-3. **Windows 平台** — `taskkill /T /F` 是 tree kill，detached child 不會被自動殺，但也不會被自動管理
-4. **無 process supervisor** — 沒有 PM2、systemd、或任何 daemon manager
-5. **重啟後 PID 失效** — 作業系統可能把同一個 PID 分配給完全不同的 process
+1. **Process 生命週期跨越 server 重啟** — in-memory 狀態消失，需要持久化 registry
+2. **Graceful shutdown 時間窗** — 當前 5 秒 timeout，長任務需要 drain 機制
+3. **跨平台 process 管理** — Windows `taskkill /T /F` vs Unix signal handling，detached child 不會被自動管理
+4. **PID 漂移** — 重啟後 OS 可能把同一個 PID 分配給不同 process，registry 需要驗證機制
+5. **Orphan 清掃** — 沒有 supervisor 的情況下，server crash 後的殭屍 process 需要偵測和回收
 
 要真正做 detached job：
 
@@ -211,7 +207,7 @@ const activeExecutions = new Map();  // stepId → kill()
 
 **完成後的能力：** 使用者呼叫 `POST /api/steps/S3/kill` → 對應的 agent process 被終止 → step 標記 cancelled → 其他 step 不受影響。
 
-### Tier 2: 完整控制面（v0.3, 1 週）
+### Tier 2: 完整控制面（1 週）
 
 目標：UI 上有完整的停止/保留體驗。
 
@@ -225,9 +221,9 @@ const activeExecutions = new Map();  // stepId → kill()
 
 **完成後的能力：** 使用者按 Stop 時看到三個選項（只停 queue / soft stop / hard kill），長任務可標記為 background 預設保留。
 
-### Tier 3: 產品級（v1.0 SaaS, 2-3 週）
+### Tier 3: 多節點 + 持久化（2-3 週）
 
-目標：多用戶環境下的可靠執行控制。
+目標：多節點部署下的可靠執行控制。Registry 持久化、跨機器 kill、crash recovery。
 
 | 項目 | 改動 | 預估 |
 |------|------|------|
@@ -264,9 +260,9 @@ const activeExecutions = new Map();  // stepId → kill()
 | 分期規劃 | **6/10** | Phase 1「1 週」包含 Runtime V2 + Registry + 狀態機 + stop hook，實際 2 週起跳 |
 | 驗收標準 | **8/10** | 6 條 DoD 清晰可測，尤其「重啟後不遺失 execution 控制資訊」是好的測試案例 |
 
-**總評：這是一份好的產品 spec，但不是一份好的工程 spec。**
+**總評：產品方向正確，工程交付策略需要調整。**
 
-它準確描述了「最終要到哪裡」（使用者能精準控制每個 execution 的生命週期），但缺少「從現在的 45 行最小改動開始」的漸進路徑。工程上應該從 Tier 1 開始，驗證了再往 Tier 2 推，而不是一口氣做 4 Phase。
+它準確描述了目標（使用者能精準控制每個 execution 的生命週期），但缺少漸進交付路徑。正確的策略是：**API 介面一次設計到位（包含多租戶場景），實作分層替換（memory → file → DB → job queue），每層交付後驗證再推下一層。** Tier 不是「小 → 大」的規模分級，是交付風險控制。
 
 ---
 
