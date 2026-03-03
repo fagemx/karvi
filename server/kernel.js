@@ -77,11 +77,14 @@ function createKernel(deps) {
       tokens_used: output?.tokens_used || 0,
     };
 
-    // Update budget with token usage
+    // Update budget with token usage and wall clock
     if (agentOutput.tokens_used) {
       task.budget.used.tokens = (task.budget.used.tokens || 0) + agentOutput.tokens_used;
     }
     task.budget.used.llm_calls = (task.budget.used.llm_calls || 0) + 1;
+    if (output?.duration_ms) {
+      task.budget.used.wall_clock_ms = (task.budget.used.wall_clock_ms || 0) + output.duration_ms;
+    }
 
     // Route
     const runState = { task, steps: task.steps, run_id: step.run_id, budget: task.budget };

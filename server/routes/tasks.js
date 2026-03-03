@@ -192,13 +192,16 @@ function dispatchTask(task, board, deps, helpers, opts = {}) {
     console.log(`[dispatchTask:${taskId}] step-pipeline via ${source}`);
     const runId = helpers.uid('run');
     task.steps = mgmt.generateStepsForTask(task, runId, task.pipeline || null, board);
+    task._revisionCounts = {};  // Clear stale revision counts from previous runs
     task.status = 'in_progress';
     task.startedAt = task.startedAt || helpers.nowIso();
     task.history = task.history || [];
     task.history.push({ ts: helpers.nowIso(), status: 'in_progress', by: source, runtime: 'step-pipeline' });
     if (board.taskPlan) board.taskPlan.phase = 'executing';
 
-    task.budget = { limits: { ...routeEngine.BUDGET_DEFAULTS }, used: { llm_calls: 0, tokens: 0, wall_clock_ms: 0, steps: 0 } };
+    if (!task.budget) {
+      task.budget = { limits: { ...routeEngine.BUDGET_DEFAULTS }, used: { llm_calls: 0, tokens: 0, wall_clock_ms: 0, steps: 0 } };
+    }
 
     mgmt.ensureEvolutionFields(board);
     board.signals.push({
