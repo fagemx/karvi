@@ -74,11 +74,13 @@ function dispatch(plan) {
     const workDir = plan.workingDir || path.resolve(DIR, '..');
     args.push('--dir', workDir);
 
-    // Write message to temp file to avoid cmd.exe newline truncation on Windows
+    // Write message to temp file and attach via --file.
+    // cmd.exe truncates multi-line positional args at the first newline,
+    // so the full task prompt goes into the file attachment.
     const msgFile = path.join(os.tmpdir(), `karvi-dispatch-${Date.now()}.md`);
     fs.writeFileSync(msgFile, plan.message, 'utf8');
-    args.push('--file', msgFile);
-    args.push('Implement the task described in the attached file.');
+    // --file must come before positional message to avoid yargs misparse
+    args.push('--file', msgFile, '--', 'Read the attached file for your task. Implement everything it describes.');
 
     const timeoutMs = (plan.timeoutSec || 300) * 1000;
     console.log('[opencode-rt] spawn:', OPENCODE_EXE);
