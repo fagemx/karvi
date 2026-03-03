@@ -120,6 +120,8 @@ function dispatch(plan) {
     let sessionId = null;
     let lastText = '';
     let lastFinish = null;
+    let totalTokens = { input: 0, output: 0 };
+    let totalCost = 0;
 
     child.stdout.setEncoding('utf8');
     child.stderr.setEncoding('utf8');
@@ -145,7 +147,6 @@ function dispatch(plan) {
     resetInactivityTimer();
 
     function buildResult(text) {
-      const tokens = lastFinish?.tokens || {};
       return {
         code: 0,
         stdout: text || lastText || '',
@@ -153,9 +154,9 @@ function dispatch(plan) {
         parsed: {
           result: text || lastText || null,
           session_id: sessionId,
-          input_tokens: tokens.input ?? null,
-          output_tokens: tokens.output ?? null,
-          total_cost: lastFinish?.cost ?? null,
+          input_tokens: totalTokens.input || null,
+          output_tokens: totalTokens.output || null,
+          total_cost: totalCost || null,
         },
       };
     }
@@ -190,21 +191,21 @@ function dispatch(plan) {
           }
         }
 
-        // @protected decision:runtime.opencode.settle — only settle on terminal step_finish reasons; tool-calls means more steps coming
+        // @protected decision:runtime.opencode.settle — never settle on step_finish; let process exit naturally (opencode run is headless)
         if (obj.type === 'step_finish') {
           lastFinish = obj.part || {};
           if (obj.sessionID) sessionId = obj.sessionID;
-          console.log('[opencode-rt] step_finish: reason=%s cost=%s tokens=%j',
-            lastFinish.reason, lastFinish.cost, lastFinish.tokens);
-          // reason=tool-calls means opencode is about to execute tools and continue
-          if (lastFinish.reason === 'tool-calls') {
-            console.log('[opencode-rt] tool-calls step — waiting for next step');
-            continue;
-          }
-          settle(null, buildResult(lastText));
-          killTree(child.pid);
-          return;
+          // Accumulate tokens and cost across all steps
+          const tokens = lastFinish.tokens || {};
+          totalTokens.input += tokens.input || 0;
+          totalTokens.output += tokens.output || 0;
+          totalCost += lastFinish.cost || 0;
+          console.log('[opencode-rt] step_finish: reason=%s cost=%s tokens=%j (cumulative: cost=%s tokens=%j)',
+            lastFinish.reason, lastFinish.cost, lastFinish.tokens, totalCost, totalTokens);
+          // Do NOT settle here. opencode's agentic loop may have more steps.
+          // Settlement happens via: STEP_RESULT marker, process exit, or inactivity timeout.
         }
+        // @end-protected
       }
     });
 
