@@ -67,20 +67,21 @@ function dispatch(plan) {
     const args = ['run', '--format', 'json'];
 
     if (plan.sessionId) args.push('--session', plan.sessionId);
-    if (plan.modelHint) args.push('--model', plan.modelHint);
+    const model = plan.modelHint || process.env.OPENCODE_MODEL || null;
+    if (model) args.push('--model', model);
 
     const workDir = plan.workingDir || path.resolve(DIR, '..');
     args.push('--dir', workDir);
 
-    // Write message to temp file to avoid cmd.exe newline truncation on Windows
+    // Write message to temp file and attach via --file.
+    // cmd.exe truncates multi-line positional args at first newline.
     const msgFile = path.join(os.tmpdir(), `karvi-dispatch-${Date.now()}.md`);
     fs.writeFileSync(msgFile, plan.message, 'utf8');
-    args.push('--file', msgFile);
-    args.push('Implement the task described in the attached file.');
+    args.push('--file', msgFile, '--', 'Read the attached file for your task. Implement everything it describes.');
 
     const timeoutMs = (plan.timeoutSec || 300) * 1000;
     console.log('[opencode-rt] spawn:', OPENCODE_EXE);
-    console.log('[opencode-rt] model:', plan.modelHint || '(default)');
+    console.log('[opencode-rt] model:', model || '(default)');
     console.log('[opencode-rt] message length:', plan.message?.length || 0);
     console.log('[opencode-rt] message file:', msgFile);
     console.log('[opencode-rt] cwd:', workDir, 'timeout:', timeoutMs);
