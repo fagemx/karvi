@@ -119,6 +119,7 @@ function createContext(opts = {}) {
     boardPath,
     logPath,
     port,
+    host: opts.host || undefined,
     boardType,
     apiToken,
     corsOrigins,
@@ -434,9 +435,10 @@ function ensureBoardExists(ctx, defaultBoard) {
 
 function listen(server, ctx) {
   storage.ensureLogFile(ctx.logPath);
-  server.listen(ctx.port, () => {
-    const actualPort = server.address().port;
-    console.log(`Blackboard server running at http://localhost:${actualPort}`);
+  const host = ctx.host || undefined; // undefined = all interfaces (Node default)
+  server.listen(ctx.port, host, () => {
+    const addr = server.address();
+    console.log(`Blackboard server running at http://${addr.address}:${addr.port}`);
   });
 }
 
