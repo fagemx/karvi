@@ -80,7 +80,14 @@ function dispatch(plan) {
     console.log('[opencode-rt] cwd:', workDir, 'timeout:', timeoutMs);
 
     const env = { ...process.env };
-    const child = spawn(OPENCODE_EXE, args, {
+
+    // Windows: .cmd shims must be invoked via cmd.exe
+    const spawnCmd = process.platform === 'win32' ? 'cmd.exe' : OPENCODE_EXE;
+    const spawnArgs = process.platform === 'win32'
+      ? ['/d', '/s', '/c', OPENCODE_EXE, ...args]
+      : args;
+
+    const child = spawn(spawnCmd, spawnArgs, {
       cwd: workDir,
       env,
       windowsHide: true,
