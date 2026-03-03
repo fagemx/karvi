@@ -331,4 +331,13 @@ function gracefulShutdown() {
 process.on('SIGTERM', gracefulShutdown);
 process.on('SIGINT', gracefulShutdown);
 
+// Warn if auto_dispatch is on but no target_repo is configured
+{
+  const board = bb.readBoard(ctx);
+  const ctrl = mgmt.getControls(board);
+  if (ctrl.auto_dispatch && !ctrl.target_repo) {
+    console.warn('[WARN] auto_dispatch is ON but target_repo is not set. Tasks will dispatch against karvi codebase (dogfood mode).');
+  }
+}
+
 bb.listen(server, ctx);

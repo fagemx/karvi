@@ -75,7 +75,7 @@ function buildEnvelope(decision, runState, deps) {
       previous_output: previousOutputRef,
       task_description: task.description || task.title || '',
       task_source: task.source || task.githubIssue || null,
-      codebase_context: null,
+      codebase_context: task.worktreeDir || task.target_repo || null,
       lessons: [],
     },
     retry_context: retryContext,
