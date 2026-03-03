@@ -23,7 +23,7 @@ const bb = require('../blackboard-server');
 const { json } = bb;
 
 module.exports = function githubRoutes(req, res, helpers, deps) {
-  const { vault, githubApi, githubIntegration } = deps;
+  const { vault, githubApi, githubIntegration, mgmt, push, jiraIntegration, PUSH_TOKENS_PATH } = deps;
 
   // =========================================================================
   // POST /api/webhooks/github — receive GitHub issue webhook (HMAC verified)
@@ -50,6 +50,84 @@ module.exports = function githubRoutes(req, res, helpers, deps) {
         const payload = JSON.parse(body || '{}');
         const board = helpers.readBoard();
         const config = board.integrations?.github || { enabled: false };
+
+        // Route by GitHub event type
+        const ghEvent = req.headers['x-github-event'] || '';
+
+        // --- pull_request events: capture PR outcomes ---
+        if (ghEvent === 'pull_request') {
+          const result = githubIntegration.handlePRWebhook(board, payload, config);
+
+          if (result.action === 'skipped') {
+            json(res, 200, { ok: true, skipped: true, reason: result.error });
+            return;
+          }
+
+          if (result.action === 'pr_outcome') {
+            const task = (board.taskPlan?.tasks || []).find(t => t.id === result.taskId);
+            if (task && task.pr) {
+              task.pr.outcome = result.outcome;
+              if (result.outcome === 'merged') {
+                task.pr.mergedAt = helpers.nowIso();
+                task.pr.mergedBy = result.mergedBy || null;
+              } else {
+                task.pr.closedAt = helpers.nowIso();
+                task.pr.closedBy = result.closedBy || null;
+              }
+
+              // Emit signal
+              const signalType = result.outcome === 'merged' ? 'pr_merged' : 'pr_closed';
+              mgmt.ensureEvolutionFields(board);
+              board.signals.push({
+                id: helpers.uid('sig'), ts: helpers.nowIso(), by: 'github-webhook',
+                type: signalType,
+                content: `${result.taskId} PR #${result.prNumber} ${result.outcome}${result.mergedBy ? ` by ${result.mergedBy}` : ''}`,
+                refs: [result.taskId],
+                data: {
+                  taskId: result.taskId,
+                  prNumber: result.prNumber,
+                  outcome: result.outcome,
+                  mergedBy: result.mergedBy || null,
+                  closedBy: result.closedBy || null,
+                  mergeCommitSha: result.mergeCommitSha || null,
+                },
+              });
+              if (board.signals.length > 500) board.signals = board.signals.slice(-500);
+
+              helpers.writeBoard(board);
+              helpers.appendLog({
+                ts: helpers.nowIso(),
+                event: signalType,
+                taskId: result.taskId,
+                prNumber: result.prNumber,
+                outcome: result.outcome,
+                source: 'github-webhook',
+              });
+
+              // Jira notification (fire-and-forget)
+              if (jiraIntegration?.isEnabled(board)) {
+                jiraIntegration.notifyJira(board, task, {
+                  type: signalType,
+                  prUrl: task.pr.url,
+                  mergedBy: result.mergedBy,
+                }).catch(err => console.error('[jira] pr outcome notify failed:', err.message));
+              }
+
+              // Push notification (fire-and-forget)
+              if (push && PUSH_TOKENS_PATH) {
+                push.notifyTaskEvent(PUSH_TOKENS_PATH, task, `task.${signalType}`)
+                  .catch(err => console.error('[push] pr outcome notify failed:', err.message));
+              }
+            }
+            json(res, 200, { ok: true, action: 'pr_outcome', taskId: result.taskId, outcome: result.outcome });
+            return;
+          }
+
+          json(res, 200, { ok: true, action: result.action });
+          return;
+        }
+
+        // --- issues events: create tasks (existing behavior) ---
         const result = githubIntegration.handleWebhook(board, payload, config);
 
         if (result.action === 'skipped') {

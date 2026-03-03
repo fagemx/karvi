@@ -82,6 +82,20 @@ export interface TaskResult {
   summary?: string;
   reason?: string;
   prUrl?: string;
+  payload?: Record<string, unknown> | null;
+}
+
+/** PR metadata — stored on task.pr when a pipeline produces a PR */
+export interface PRInfo {
+  owner: string;
+  repo: string;
+  number: number;
+  url: string;
+  outcome: 'merged' | 'closed' | null;
+  mergedAt?: string;
+  closedAt?: string;
+  mergedBy?: string;
+  closedBy?: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -150,6 +164,7 @@ export interface Task {
   childSessionKey?: string | null;
   dispatch?: DispatchState;
   result?: TaskResult;
+  pr?: PRInfo;
   review?: ReviewResult;
   blocker?: { reason: string; askedAt: string } | null;
   history?: HistoryEntry[];

@@ -309,7 +309,152 @@ function createFullDeps(runtimeOverrides = {}) {
   });
 
   // ------------------------------------------------------------------
-  // Test 7: Contract validation — artifact deliverable with null payload → CONTRACT_VIOLATION
+  // Test 6: Kernel done → task.pr populated from implement step artifact
+  // ------------------------------------------------------------------
+  await test('kernel done → extracts PR URL and sets task.pr', async () => {
+    const taskId = `T-BRIDGE-${++testCounter}`;
+    const task = { id: taskId, title: 'PR test', description: 'desc', assignee: 'engineer_lite', status: 'in_progress' };
+    const { deps, mockRuntime } = createFullDeps();
+    const runId = `run-${Date.now()}`;
+    const board = createBoard([task]);
+    const helpers = createMockHelpers(board);
+
+    const t1 = currentBoard.taskPlan.tasks[0];
+    t1.steps = mgmt.generateStepsForTask(t1, runId);
+    t1.budget = { limits: { ...require('./route-engine').BUDGET_DEFAULTS }, used: { llm_calls: 0, tokens: 0, wall_clock_ms: 0, steps: 0 } };
+
+    // Succeed all steps (plan, implement, test, review)
+    for (let i = 0; i < t1.steps.length; i++) {
+      stepSchema.transitionStep(t1.steps[i], 'running');
+      stepSchema.transitionStep(t1.steps[i], 'succeeded');
+      const output = { status: 'succeeded', summary: 'done', tokens_used: 100 };
+      // Implement step (index 1) carries the prUrl in payload
+      if (i === 1) {
+        output.payload = { prUrl: 'https://github.com/owner/repo/pull/42' };
+      }
+      artifactStore.writeArtifact(runId, t1.steps[i].step_id, 'output', output);
+    }
+
+    helpers.writeBoard(currentBoard);
+
+    // Fire kernel for last step (review) completed
+    const reviewStep = t1.steps[t1.steps.length - 1];
+    const signal = {
+      type: 'step_completed',
+      data: { taskId, stepId: reviewStep.step_id, from: 'running', to: 'succeeded' },
+    };
+    await deps.kernel.onStepEvent(signal, helpers.readBoard(), helpers);
+
+    const finalTask = currentBoard.taskPlan.tasks[0];
+    assert.strictEqual(finalTask.status, 'approved');
+    assert.ok(finalTask.pr, 'task.pr should be set');
+    assert.strictEqual(finalTask.pr.owner, 'owner');
+    assert.strictEqual(finalTask.pr.repo, 'owner/repo');
+    assert.strictEqual(finalTask.pr.number, 42);
+    assert.strictEqual(finalTask.pr.url, 'https://github.com/owner/repo/pull/42');
+    assert.strictEqual(finalTask.pr.outcome, null);
+  });
+
+  // ------------------------------------------------------------------
+  // Test 7: handlePRWebhook + board update → task.pr.outcome set + signal emitted
+  // ------------------------------------------------------------------
+  await test('PR webhook merged → task.pr.outcome=merged + pr_merged signal', async () => {
+    const githubIntegration = require('./integration-github');
+
+    const taskId = `T-BRIDGE-${++testCounter}`;
+    const task = {
+      id: taskId, title: 'PR outcome test', description: 'desc', assignee: 'engineer_lite', status: 'approved',
+      pr: { owner: 'owner', repo: 'owner/repo', number: 88, url: 'https://github.com/owner/repo/pull/88', outcome: null },
+    };
+    const board = createBoard([task]);
+    const helpers = createMockHelpers(board);
+    const config = { enabled: true };
+
+    // Simulate merged PR webhook
+    const payload = {
+      action: 'closed',
+      pull_request: { number: 88, merged: true, merged_by: { login: 'alice' }, merge_commit_sha: 'deadbeef', user: { login: 'bob' } },
+      repository: { full_name: 'owner/repo' },
+    };
+    const result = githubIntegration.handlePRWebhook(currentBoard, payload, config);
+    assert.strictEqual(result.action, 'pr_outcome');
+    assert.strictEqual(result.outcome, 'merged');
+    assert.strictEqual(result.mergedBy, 'alice');
+
+    // Apply outcome to board (simulating what routes/github.js does)
+    const t = currentBoard.taskPlan.tasks[0];
+    t.pr.outcome = result.outcome;
+    t.pr.mergedAt = helpers.nowIso();
+    t.pr.mergedBy = result.mergedBy;
+
+    mgmt.ensureEvolutionFields(currentBoard);
+    currentBoard.signals.push({
+      id: helpers.uid('sig'), ts: helpers.nowIso(), by: 'github-webhook',
+      type: 'pr_merged',
+      content: `${result.taskId} PR #88 merged by alice`,
+      refs: [result.taskId],
+      data: { taskId: result.taskId, prNumber: 88, outcome: 'merged', mergedBy: 'alice', mergeCommitSha: 'deadbeef' },
+    });
+
+    assert.strictEqual(t.pr.outcome, 'merged');
+    assert.strictEqual(t.pr.mergedBy, 'alice');
+    assert.ok(t.pr.mergedAt);
+    const mergeSignal = currentBoard.signals.find(s => s.type === 'pr_merged');
+    assert.ok(mergeSignal, 'pr_merged signal should exist');
+    assert.strictEqual(mergeSignal.data.prNumber, 88);
+    assert.strictEqual(mergeSignal.data.mergedBy, 'alice');
+  });
+
+  // ------------------------------------------------------------------
+  // Test 8: handlePRWebhook closed (not merged) → task.pr.outcome=closed
+  // ------------------------------------------------------------------
+  await test('PR webhook closed → task.pr.outcome=closed + pr_closed signal', async () => {
+    const githubIntegration = require('./integration-github');
+
+    const taskId = `T-BRIDGE-${++testCounter}`;
+    const task = {
+      id: taskId, title: 'PR close test', description: 'desc', assignee: 'engineer_lite', status: 'approved',
+      pr: { owner: 'owner', repo: 'owner/repo', number: 77, url: 'https://github.com/owner/repo/pull/77', outcome: null },
+    };
+    const board = createBoard([task]);
+    const helpers = createMockHelpers(board);
+    const config = { enabled: true };
+
+    const payload = {
+      action: 'closed',
+      pull_request: { number: 77, merged: false, user: { login: 'carol' } },
+      repository: { full_name: 'owner/repo' },
+    };
+    const result = githubIntegration.handlePRWebhook(currentBoard, payload, config);
+    assert.strictEqual(result.action, 'pr_outcome');
+    assert.strictEqual(result.outcome, 'closed');
+    assert.strictEqual(result.closedBy, 'carol');
+
+    // Apply outcome
+    const t = currentBoard.taskPlan.tasks[0];
+    t.pr.outcome = result.outcome;
+    t.pr.closedAt = helpers.nowIso();
+    t.pr.closedBy = result.closedBy;
+
+    mgmt.ensureEvolutionFields(currentBoard);
+    currentBoard.signals.push({
+      id: helpers.uid('sig'), ts: helpers.nowIso(), by: 'github-webhook',
+      type: 'pr_closed',
+      content: `${result.taskId} PR #77 closed`,
+      refs: [result.taskId],
+      data: { taskId: result.taskId, prNumber: 77, outcome: 'closed', closedBy: 'carol' },
+    });
+
+    assert.strictEqual(t.pr.outcome, 'closed');
+    assert.strictEqual(t.pr.closedBy, 'carol');
+    assert.ok(t.pr.closedAt);
+    const closeSignal = currentBoard.signals.find(s => s.type === 'pr_closed');
+    assert.ok(closeSignal, 'pr_closed signal should exist');
+    assert.strictEqual(closeSignal.data.prNumber, 77);
+  });
+
+  // ------------------------------------------------------------------
+  // Test 9: Contract validation — artifact deliverable with null payload → CONTRACT_VIOLATION
   // ------------------------------------------------------------------
   await test('contract: artifact deliverable with null payload → CONTRACT_VIOLATION', async () => {
     const { validateContract } = require('./step-worker');
