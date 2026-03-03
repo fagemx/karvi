@@ -333,6 +333,30 @@ test('buildDispatchPlan includes steps field', () => {
   assert.strictEqual(planNoSteps.steps, null);
 });
 
+test('buildDispatchPlan includes workingDir when provided', () => {
+  const board = {
+    taskPlan: { tasks: [{ id: 'T-00001', assignee: 'engineer_lite', status: 'dispatched' }] },
+    controls: {},
+    lessons: [],
+    participants: [{ id: 'owner', type: 'human' }],
+  };
+  const task = board.taskPlan.tasks[0];
+  const plan = mgmt.buildDispatchPlan(board, task, { workingDir: '/path/to/worktree' });
+  assert.strictEqual(plan.workingDir, '/path/to/worktree');
+});
+
+test('buildDispatchPlan workingDir defaults to null', () => {
+  const board = {
+    taskPlan: { tasks: [{ id: 'T-00001', assignee: 'engineer_lite', status: 'dispatched' }] },
+    controls: {},
+    lessons: [],
+    participants: [{ id: 'owner', type: 'human' }],
+  };
+  const task = board.taskPlan.tasks[0];
+  const plan = mgmt.buildDispatchPlan(board, task);
+  assert.strictEqual(plan.workingDir, null);
+});
+
 // ─────────────────────────────────────
 // Cleanup & Summary
 // ─────────────────────────────────────

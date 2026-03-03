@@ -80,7 +80,14 @@ function dispatch(plan) {
 
     args.push(plan.message);
 
-    const workDir = plan.workingDir || path.resolve(DIR, '..');
+    if (!plan.workingDir) {
+      return reject(new Error(
+        `[claude-rt] CRITICAL: workingDir is null for task ${plan.taskId}. ` +
+        `Cannot dispatch agent without target directory. ` +
+        `This indicates a bug in the dispatch chain.`
+      ));
+    }
+    const workDir = plan.workingDir;
     const env = { ...process.env };
     delete env.CLAUDECODE;
 
