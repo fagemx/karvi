@@ -139,7 +139,35 @@ test('buildEnvelope returns null for null steps', () => {
   assert.strictEqual(contextCompiler.buildEnvelope(decision, runState, { artifactStore, stepSchema }), null);
 });
 
+test('buildEnvelope uses per-step-type timeout from controls', () => {
+  const decision = { action: 'next_step', next_step: { step_id: 'T-1:plan', step_type: 'plan' } };
+  const steps = [{ step_id: 'T-1:plan', type: 'plan', state: 'queued', run_id: testRunId, attempt: 0 }];
+  const runState = {
+    task: { id: 'T-1' },
+    steps,
+    run_id: testRunId,
+    controls: { default_step_timeout_sec: { plan: 123 } }
+  };
+  const deps = { artifactStore, stepSchema };
+
+  const env = contextCompiler.buildEnvelope(decision, runState, deps);
+  assert.strictEqual(env.timeout_ms, 123000);
+
+  // Check fallback when step type missing in controls
+  const decision2 = { action: 'next_step', next_step: { step_id: 'T-1:other', step_type: 'other' } };
+  const steps2 = [{ step_id: 'T-1:other', type: 'other', state: 'queued', run_id: testRunId, attempt: 0 }];
+  const runState2 = {
+    task: { id: 'T-1' },
+    steps: steps2,
+    run_id: testRunId,
+    controls: { default_step_timeout_sec: { plan: 123 } }
+  };
+  const env2 = contextCompiler.buildEnvelope(decision2, runState2, deps);
+  assert.strictEqual(env2.timeout_ms, 300000); // hardcoded fallback
+});
+
 // Cleanup
+
 try {
   fs.rmSync(path.join(artifactStore.ARTIFACT_DIR, testRunId), { recursive: true, force: true });
 } catch {}

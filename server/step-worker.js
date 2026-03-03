@@ -36,8 +36,11 @@ function createStepWorker(deps) {
     if (!task) throw new Error(`Task ${envelope.task_id} not found`);
 
     // 1. Build dispatch plan — compute timeout once, share between lock and runtime
-    const timeoutMs = envelope.timeout_ms || 300_000;
+    const controls = mgmt.getControls(board);
+    const typeDefaultSec = controls.default_step_timeout_sec?.[envelope.step_type] || 300;
+    const timeoutMs = envelope.timeout_ms || (typeDefaultSec * 1000);
     const timeoutSec = Math.ceil(timeoutMs / 1000);
+
     const plan = mgmt.buildDispatchPlan(board, task, {
       mode: 'dispatch',
       timeoutSec,

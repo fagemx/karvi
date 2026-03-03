@@ -317,7 +317,49 @@ function createMockEnvelope(overrides = {}) {
     assert.strictEqual(targets[0].step_id, 'T-B1:impl');
   });
 
+  // Test 12: executeStep uses per-step-type defaults for timeout
+  await test('executeStep uses per-step-type defaults for timeout', async () => {
+    let capturedPlan = null;
+    const mockRt = createMockRuntime({
+      dispatch: async (plan) => {
+        capturedPlan = plan;
+        return { code: 0, stdout: '', stderr: '', parsed: {} };
+      },
+    });
+    const deps = {
+      artifactStore, stepSchema, mgmt,
+      getRuntime: () => mockRt,
+      kernel: null,
+    };
+    const worker = createStepWorker(deps);
+
+    const board = createMockBoard();
+    // Set custom defaults in board
+    board.controls.default_step_timeout_sec = { plan: 123, implement: 456 };
+    const helpers = createMockHelpers(board);
+
+    // 1. Check 'plan' step
+    const planStep = currentBoard.taskPlan.tasks[0].steps[0];
+    stepSchema.transitionStep(planStep, 'running');
+    const envelopePlan = createMockEnvelope({ step_type: 'plan', timeout_ms: null });
+    await worker.executeStep(envelopePlan, currentBoard, helpers);
+    assert.strictEqual(capturedPlan.timeoutSec, 123);
+
+    // 2. Check 'implement' step
+    const implStep = currentBoard.taskPlan.tasks[0].steps[1];
+    stepSchema.transitionStep(implStep, 'running');
+    const envelopeImpl = createMockEnvelope({ step_id: 'T-W1:impl', step_type: 'implement', timeout_ms: null });
+    await worker.executeStep(envelopeImpl, currentBoard, helpers);
+    assert.strictEqual(capturedPlan.timeoutSec, 456);
+
+    // 3. Check explicit timeout_ms in envelope still takes precedence
+    const envelopeExplicit = createMockEnvelope({ step_id: 'T-W1:explicit', step_type: 'plan', timeout_ms: 99000 });
+    await worker.executeStep(envelopeExplicit, currentBoard, helpers);
+    assert.strictEqual(capturedPlan.timeoutSec, 99);
+  });
+
   // Cleanup
+
   try {
     fs.rmSync(path.join(artifactStore.ARTIFACT_DIR, testRunId), { recursive: true, force: true });
   } catch {}

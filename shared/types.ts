@@ -252,9 +252,11 @@ export interface Controls {
   review_timeout_sec: number;
   review_agent: string;
   auto_apply_insights: boolean;
+  default_step_timeout_sec?: Record<string, number>;
   dispatch_hints?: DispatchHint[];
   preferred_runtime?: string;
 }
+
 
 export interface DispatchHint {
   [key: string]: unknown;

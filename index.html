@@ -731,15 +731,32 @@
         </div>
         <div class="row" style="margin-top:6px;">
           <div>
-            <label>Timeout (sec)</label>
-            <input type="number" id="ctrl-timeout" min="30" max="600" value="180" style="width:100%;" />
+            <label>Plan Timeout (s)</label>
+            <input type="number" id="ctrl-timeout-plan" min="30" max="3600" value="300" style="width:100%;" />
+          </div>
+          <div>
+            <label>Implement Timeout (s)</label>
+            <input type="number" id="ctrl-timeout-implement" min="30" max="3600" value="600" style="width:100%;" />
+          </div>
+        </div>
+        <div class="row" style="margin-top:6px;">
+          <div>
+            <label>Review Timeout (s)</label>
+            <input type="number" id="ctrl-timeout-review" min="30" max="3600" value="300" style="width:100%;" />
           </div>
           <div>
             <label>Review Agent</label>
             <input type="text" id="ctrl-agent" value="engineer_lite" style="width:100%;" />
           </div>
         </div>
+        <div class="row" style="margin-top:6px;">
+          <div>
+            <label>LLM Review Timeout (s)</label>
+            <input type="number" id="ctrl-timeout" min="30" max="600" value="180" style="width:100%;" />
+          </div>
+        </div>
         <button class="secondary" id="save-controls-btn" style="margin-top:8px; width:100%;">儲存 Controls</button>
+
       </div>
 
       <hr style="border-color:#2a3862; opacity:.5; margin:14px 0;" />
@@ -962,6 +979,11 @@
           el('ctrl-max-attempts').value = ctrl.max_review_attempts || 3;
           el('ctrl-timeout').value = ctrl.review_timeout_sec || 180;
           el('ctrl-agent').value = ctrl.review_agent || 'engineer_lite';
+          if (ctrl.default_step_timeout_sec) {
+            if (ctrl.default_step_timeout_sec.plan) el('ctrl-timeout-plan').value = ctrl.default_step_timeout_sec.plan;
+            if (ctrl.default_step_timeout_sec.implement) el('ctrl-timeout-implement').value = ctrl.default_step_timeout_sec.implement;
+            if (ctrl.default_step_timeout_sec.review) el('ctrl-timeout-review').value = ctrl.default_step_timeout_sec.review;
+          }
         }
       } catch {}
     }
@@ -975,6 +997,11 @@
       if (ctrl.max_review_attempts !== undefined) el('ctrl-max-attempts').value = ctrl.max_review_attempts;
       if (ctrl.review_timeout_sec !== undefined) el('ctrl-timeout').value = ctrl.review_timeout_sec;
       if (ctrl.review_agent) el('ctrl-agent').value = ctrl.review_agent;
+      if (ctrl.default_step_timeout_sec) {
+        if (ctrl.default_step_timeout_sec.plan) el('ctrl-timeout-plan').value = ctrl.default_step_timeout_sec.plan;
+        if (ctrl.default_step_timeout_sec.implement) el('ctrl-timeout-implement').value = ctrl.default_step_timeout_sec.implement;
+        if (ctrl.default_step_timeout_sec.review) el('ctrl-timeout-review').value = ctrl.default_step_timeout_sec.review;
+      }
     }
 
     async function saveControls() {
@@ -986,10 +1013,16 @@
         max_review_attempts: Number(el('ctrl-max-attempts').value),
         review_timeout_sec: Number(el('ctrl-timeout').value),
         review_agent: el('ctrl-agent').value.trim(),
+        default_step_timeout_sec: {
+          plan: Number(el('ctrl-timeout-plan').value),
+          implement: Number(el('ctrl-timeout-implement').value),
+          review: Number(el('ctrl-timeout-review').value),
+        }
       };
       await post('/api/controls', payload);
       await loadBoard();
     }
+
 
     // Task Board rendering logic
     function renderTaskBoard() {

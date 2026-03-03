@@ -83,8 +83,9 @@ function buildEnvelope(decision, runState, deps) {
     budget_remaining: budgetRemaining,
     retry_policy: targetStep.retry_policy,
     idempotency_key: idempotencyKey,
-    timeout_ms: targetStep.retry_policy?.timeout_ms || 300_000,
+    timeout_ms: targetStep.retry_policy?.timeout_ms || (runState.controls?.default_step_timeout_sec?.[stepType] * 1000) || 300_000,
     model_hint: null,
+
     contract: task.contract || null,
   };
 

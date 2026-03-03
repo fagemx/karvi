@@ -40,7 +40,17 @@ module.exports = function controlsRoutes(req, res, helpers, deps) {
             else if (key === 'usage_alert_threshold' && Number.isFinite(val)) board.controls[key] = Math.max(0, Math.min(1, val));
             else if (key === 'max_concurrent_tasks' && Number.isFinite(val)) board.controls[key] = Math.max(1, Math.min(10, val));
             else if (key === 'target_repo' && (val === null || typeof val === 'string')) board.controls[key] = val ? val.trim() : null;
+            else if (key === 'default_step_timeout_sec' && typeof val === 'object' && val !== null) {
+              const cleaned = {};
+              for (const [type, sec] of Object.entries(val)) {
+                if (Number.isFinite(sec)) {
+                  cleaned[type] = Math.max(30, Math.min(3600, sec));
+                }
+              }
+              board.controls[key] = cleaned;
+            }
           }
+
         }
         helpers.writeBoard(board);
         helpers.appendLog({ ts: helpers.nowIso(), event: 'controls_updated', controls: board.controls });
