@@ -75,7 +75,7 @@ function buildEnvelope(decision, runState, deps) {
       previous_output: previousOutputRef,
       task_description: task.description || task.title || '',
       task_source: task.source || task.githubIssue || null,
-      codebase_context: null,
+      codebase_context: task.worktreeDir || task.target_repo || null,
       lessons: [],
     },
     retry_context: retryContext,
@@ -85,6 +85,7 @@ function buildEnvelope(decision, runState, deps) {
     idempotency_key: idempotencyKey,
     timeout_ms: targetStep.retry_policy?.timeout_ms || 300_000,
     model_hint: null,
+    contract: task.contract || null,
   };
 
   return envelope;

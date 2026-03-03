@@ -12,6 +12,7 @@ const contextCompiler = require('./context-compiler');
 const planDispatcher = require('./village/plan-dispatcher');
 const cycleWatchdog = require('./village/cycle-watchdog');
 const worktreeHelper = require('./worktree');
+const { resolveRepoRoot } = require('./repo-resolver');
 const path = require('path');
 
 /**
@@ -24,10 +25,11 @@ const path = require('path');
  */
 function createKernel(deps) {
   const { artifactStore, stepSchema, mgmt, push, PUSH_TOKENS_PATH } = deps;
-  const repoRoot = path.resolve(__dirname, '..');
+  const defaultRepoRoot = path.resolve(__dirname, '..');
 
-  function cleanupWorktree(task, taskId) {
+  function cleanupWorktree(task, taskId, board) {
     if (!task?.worktreeDir) return;
+    const repoRoot = resolveRepoRoot(task, board) || defaultRepoRoot;
     try {
       worktreeHelper.removeWorktree(repoRoot, taskId);
       console.log(`[kernel] worktree cleaned up for ${taskId}`);
@@ -217,7 +219,7 @@ function createKernel(deps) {
         if (latestTask) {
           latestTask.status = 'blocked';
           latestTask.blocker = { reason: `Dead letter: ${decision.rule}`, askedAt: helpers.nowIso() };
-          cleanupWorktree(latestTask, taskId);
+          cleanupWorktree(latestTask, taskId, latestBoard);
         }
         latestBoard.signals.push({
           id: helpers.uid('sig'), ts: helpers.nowIso(), by: 'kernel',
@@ -253,7 +255,7 @@ function createKernel(deps) {
           // Step pipeline includes review as step[3] — all steps succeeded means approved
           latestTask.status = 'approved';
           latestTask.completedAt = helpers.nowIso();
-          cleanupWorktree(latestTask, taskId);
+          cleanupWorktree(latestTask, taskId, latestBoard);
           // Preserve payload from last step's artifact for downstream access
           const lastStepOutput = artifactStore.readArtifact(step.run_id, stepId, 'output');
           latestTask.result = {

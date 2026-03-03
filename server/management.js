@@ -24,6 +24,7 @@ const DEFAULT_CONTROLS = {
   usage_alert_threshold: 0.8,    // Alert when usage > 80% of limit
   max_concurrent_tasks: 2,       // max in-progress tasks at once (worktree or not)
   use_worktrees: true,           // create git worktree per task for parallel execution
+  target_repo: null,             // absolute path to target repo (null = karvi itself / dogfood mode)
 };
 
 // --- Evolution Layer: Schema validation ---

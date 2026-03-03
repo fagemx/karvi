@@ -454,6 +454,176 @@ function createFullDeps(runtimeOverrides = {}) {
   });
 
   // ------------------------------------------------------------------
+  // Test 9: Contract validation — artifact deliverable with null payload → CONTRACT_VIOLATION
+  // ------------------------------------------------------------------
+  await test('contract: artifact deliverable with null payload → CONTRACT_VIOLATION', async () => {
+    const { validateContract } = require('./step-worker');
+
+    const contract = { deliverable: 'artifact', acceptance: 'payload non-empty' };
+    const agentOutput = { status: 'succeeded', summary: 'short', payload: null, failure: null };
+    const result = validateContract(contract, agentOutput, null, null);
+
+    assert.strictEqual(result.ok, false, 'should fail when payload is null');
+    assert.ok(result.reason.includes('payload'), `reason should mention payload: ${result.reason}`);
+  });
+
+  // ------------------------------------------------------------------
+  // Test 8: Contract validation — artifact deliverable with short summary → CONTRACT_VIOLATION
+  // ------------------------------------------------------------------
+  await test('contract: artifact deliverable with short summary → CONTRACT_VIOLATION', async () => {
+    const { validateContract } = require('./step-worker');
+
+    const contract = { deliverable: 'artifact', acceptance: 'summary > 50 chars' };
+    const agentOutput = { status: 'succeeded', summary: 'too short', payload: { data: 'exists' }, failure: null };
+    const result = validateContract(contract, agentOutput, null, null);
+
+    assert.strictEqual(result.ok, false, 'should fail when summary < 50 chars');
+    assert.ok(result.reason.includes('summary too short'), `reason should mention summary: ${result.reason}`);
+  });
+
+  // ------------------------------------------------------------------
+  // Test 9: Contract validation — artifact deliverable passes when valid
+  // ------------------------------------------------------------------
+  await test('contract: artifact deliverable passes with payload + long summary', async () => {
+    const { validateContract } = require('./step-worker');
+
+    const contract = { deliverable: 'artifact', acceptance: 'payload non-empty' };
+    const longSummary = 'This is a sufficiently long summary that exceeds the fifty character minimum threshold for artifacts';
+    const agentOutput = { status: 'succeeded', summary: longSummary, payload: { data: 'exists' }, failure: null };
+    const result = validateContract(contract, agentOutput, null, null);
+
+    assert.strictEqual(result.ok, true, 'should pass with valid payload and long summary');
+  });
+
+  // ------------------------------------------------------------------
+  // Test 10: Contract validation — command_result deliverable with empty summary → fail
+  // ------------------------------------------------------------------
+  await test('contract: command_result with empty summary → CONTRACT_VIOLATION', async () => {
+    const { validateContract } = require('./step-worker');
+
+    const contract = { deliverable: 'command_result', acceptance: 'exit 0 + output' };
+    const agentOutput = { status: 'succeeded', summary: '', payload: null, failure: null };
+    const result = validateContract(contract, agentOutput, null, null);
+
+    assert.strictEqual(result.ok, false, 'should fail when summary is empty');
+    assert.ok(result.reason.includes('summary is empty'), `reason should mention empty summary: ${result.reason}`);
+  });
+
+  // ------------------------------------------------------------------
+  // Test 11: Contract validation — command_result passes with non-empty summary
+  // ------------------------------------------------------------------
+  await test('contract: command_result passes with non-empty summary', async () => {
+    const { validateContract } = require('./step-worker');
+
+    const contract = { deliverable: 'command_result', acceptance: 'exit 0' };
+    const agentOutput = { status: 'succeeded', summary: 'Command executed successfully with output', payload: null, failure: null };
+    const result = validateContract(contract, agentOutput, null, null);
+
+    assert.strictEqual(result.ok, true, 'should pass when summary is non-empty');
+  });
+
+  // ------------------------------------------------------------------
+  // Test 12: Contract validation — issue deliverable with URL in summary → passes
+  // ------------------------------------------------------------------
+  await test('contract: issue deliverable with GitHub URL → passes', async () => {
+    const { validateContract } = require('./step-worker');
+
+    const contract = { deliverable: 'issue', acceptance: 'issue URL exists' };
+    const agentOutput = { status: 'succeeded', summary: 'Created https://github.com/org/repo/issues/42', payload: null, failure: null };
+    const result = validateContract(contract, agentOutput, null, null);
+
+    assert.strictEqual(result.ok, true, 'should pass when issue URL found in summary');
+  });
+
+  // ------------------------------------------------------------------
+  // Test 13: Contract validation — issue deliverable without URL → fail
+  // ------------------------------------------------------------------
+  await test('contract: issue deliverable without GitHub URL → CONTRACT_VIOLATION', async () => {
+    const { validateContract } = require('./step-worker');
+
+    const contract = { deliverable: 'issue', acceptance: 'issue URL exists' };
+    const agentOutput = { status: 'succeeded', summary: 'I created an issue', payload: null, failure: null };
+    const result = validateContract(contract, agentOutput, null, null);
+
+    assert.strictEqual(result.ok, false, 'should fail when no issue URL found');
+    assert.ok(result.reason.includes('issue URL'), `reason should mention issue URL: ${result.reason}`);
+  });
+
+  // ------------------------------------------------------------------
+  // Test 14: No contract on envelope → legacy behavior (passes)
+  // ------------------------------------------------------------------
+  await test('no contract → legacy behavior (passes)', async () => {
+    const { validateContract } = require('./step-worker');
+
+    // null contract
+    const result1 = validateContract(null, { status: 'succeeded', summary: 'done', payload: null }, null, null);
+    assert.strictEqual(result1.ok, true, 'null contract should pass');
+
+    // contract without deliverable
+    const result2 = validateContract({}, { status: 'succeeded', summary: 'done', payload: null }, null, null);
+    assert.strictEqual(result2.ok, true, 'empty contract should pass');
+  });
+
+  // ------------------------------------------------------------------
+  // Test 15: Unknown deliverable type → passes (forward-compat)
+  // ------------------------------------------------------------------
+  await test('unknown deliverable type → passes (forward-compat)', async () => {
+    const { validateContract } = require('./step-worker');
+
+    const contract = { deliverable: 'future_type', acceptance: 'something' };
+    const agentOutput = { status: 'succeeded', summary: 'done', payload: null, failure: null };
+    const result = validateContract(contract, agentOutput, null, null);
+
+    assert.strictEqual(result.ok, true, 'unknown deliverable type should pass');
+  });
+
+  // ------------------------------------------------------------------
+  // Test 16: Contract passed through envelope via context-compiler
+  // ------------------------------------------------------------------
+  await test('context-compiler passes contract through envelope', async () => {
+    const taskId = `T-BRIDGE-${++testCounter}`;
+    const contract = { deliverable: 'pr', acceptance: 'PR exists' };
+    const task = { id: taskId, title: 'Contract test', description: 'desc', assignee: 'engineer_lite', status: 'dispatched', contract };
+    const { deps } = createFullDeps();
+    const board = createBoard([task]);
+    const helpers = createMockHelpers(board);
+
+    const runId = helpers.uid('run');
+    const t = currentBoard.taskPlan.tasks[0];
+    t.steps = mgmt.generateStepsForTask(t, runId);
+    const routeEngine = require('./route-engine');
+    t.budget = { limits: { ...routeEngine.BUDGET_DEFAULTS }, used: { llm_calls: 0, tokens: 0, wall_clock_ms: 0, steps: 0 } };
+
+    const firstStep = t.steps[0];
+    const runState = { task: t, steps: t.steps, run_id: runId, budget: t.budget };
+    const decision = { action: 'next_step', next_step: { step_id: firstStep.step_id, step_type: firstStep.type } };
+    const envelope = deps.contextCompiler.buildEnvelope(decision, runState, deps);
+
+    assert.ok(envelope, 'envelope should exist');
+    assert.deepStrictEqual(envelope.contract, contract, 'contract should be passed through');
+  });
+
+  // ------------------------------------------------------------------
+  // Test 17: CONTRACT_VIOLATION classified correctly by route-engine
+  // ------------------------------------------------------------------
+  await test('route-engine classifies CONTRACT_VIOLATION failure mode', async () => {
+    const { classifyFailure, FAILURE_MODES } = require('./route-engine');
+
+    // Explicit failure_mode
+    const result1 = classifyFailure({
+      failure: { failure_signature: 'some error', failure_mode: 'CONTRACT_VIOLATION', retryable: true },
+    });
+    assert.strictEqual(result1, 'CONTRACT_VIOLATION', 'explicit failure_mode should be classified');
+
+    // Pattern-match
+    const result2 = classifyFailure({
+      failure: { failure_signature: 'Contract violation: deliverable missing' },
+      summary: '',
+    });
+    assert.strictEqual(result2, 'CONTRACT_VIOLATION', 'pattern should match contract violation text');
+  });
+
+  // ------------------------------------------------------------------
   // Summary
   // ------------------------------------------------------------------
   console.log(`\n${'─'.repeat(40)}`);
