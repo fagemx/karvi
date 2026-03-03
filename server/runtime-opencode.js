@@ -11,6 +11,7 @@
 const { spawn, execSync } = require('child_process');
 const path = require('path');
 const fs = require('fs');
+const os = require('os');
 
 const DIR = __dirname;
 const STEP_RESULT_RE = /STEP_RESULT:\s*(\{.*\})/;
@@ -71,12 +72,17 @@ function dispatch(plan) {
     const workDir = plan.workingDir || path.resolve(DIR, '..');
     args.push('--dir', workDir);
 
-    args.push(plan.message);
+    // Write message to temp file to avoid cmd.exe newline truncation on Windows
+    const msgFile = path.join(os.tmpdir(), `karvi-dispatch-${Date.now()}.md`);
+    fs.writeFileSync(msgFile, plan.message, 'utf8');
+    args.push('--file', msgFile);
+    args.push('Implement the task described in the attached file.');
 
     const timeoutMs = (plan.timeoutSec || 300) * 1000;
     console.log('[opencode-rt] spawn:', OPENCODE_EXE);
     console.log('[opencode-rt] model:', plan.modelHint || '(default)');
     console.log('[opencode-rt] message length:', plan.message?.length || 0);
+    console.log('[opencode-rt] message file:', msgFile);
     console.log('[opencode-rt] cwd:', workDir, 'timeout:', timeoutMs);
 
     const env = { ...process.env };
@@ -109,6 +115,7 @@ function dispatch(plan) {
       if (settled) return;
       settled = true;
       clearTimeout(inactivityTimer);
+      try { fs.unlinkSync(msgFile); } catch {}
       if (err) reject(err); else resolve(result);
     }
 
