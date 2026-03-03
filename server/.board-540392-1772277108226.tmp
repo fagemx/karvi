@@ -1,0 +1,298 @@
+{
+  "taskPlan": {
+    "goal": "",
+    "phase": "idle",
+    "tasks": []
+  },
+  "conversations": [],
+  "participants": [],
+  "signals": [
+    {
+      "id": "sig-1772277108048-truhpi",
+      "ts": "2026-02-28T11:11:48.048Z",
+      "by": "test-evo-loop",
+      "type": "review_result",
+      "content": "T-test1 審查未通過 (score: 40/70)",
+      "refs": [
+        "T-test1"
+      ],
+      "data": {
+        "taskId": "T-test1",
+        "assignee": "engineer_lite",
+        "result": "needs_revision",
+        "score": 40,
+        "threshold": 70,
+        "attempt": 1
+      }
+    },
+    {
+      "id": "sig-1772277108057-xul5ex",
+      "ts": "2026-02-28T11:11:48.057Z",
+      "by": "test-evo-loop",
+      "type": "review_result",
+      "content": "T-test2 審查未通過 (score: 43/70)",
+      "refs": [
+        "T-test2"
+      ],
+      "data": {
+        "taskId": "T-test2",
+        "assignee": "engineer_lite",
+        "result": "needs_revision",
+        "score": 43,
+        "threshold": 70,
+        "attempt": 1
+      }
+    },
+    {
+      "id": "sig-1772277108061-9y6gn2",
+      "ts": "2026-02-28T11:11:48.061Z",
+      "by": "test-evo-loop",
+      "type": "review_result",
+      "content": "T-test3 審查未通過 (score: 46/70)",
+      "refs": [
+        "T-test3"
+      ],
+      "data": {
+        "taskId": "T-test3",
+        "assignee": "engineer_lite",
+        "result": "needs_revision",
+        "score": 46,
+        "threshold": 70,
+        "attempt": 1
+      }
+    },
+    {
+      "id": "sig-1772277108164-pdsb57",
+      "ts": "2026-02-28T11:11:48.164Z",
+      "by": "gate",
+      "type": "insight_applied",
+      "content": "Auto-applied: engineer_lite avg score 43 in last 3 reviews, below threshold 70",
+      "refs": [
+        "ins-1772277108164-v33rwt"
+      ],
+      "data": {
+        "insightId": "ins-1772277108164-v33rwt",
+        "actionType": "noop",
+        "auto": true,
+        "snapshot": null
+      }
+    },
+    {
+      "id": "sig-1772277108202-pr83q3",
+      "ts": "2026-02-28T11:11:48.202Z",
+      "by": "test-evo-loop",
+      "type": "review_result",
+      "content": "T-improved1 審查通過 (score: 75/70)",
+      "refs": [
+        "T-improved1"
+      ],
+      "data": {
+        "taskId": "T-improved1",
+        "assignee": "engineer_pro",
+        "result": "approved",
+        "score": 75,
+        "threshold": 70,
+        "attempt": 1
+      }
+    },
+    {
+      "id": "sig-1772277108206-ns2v37",
+      "ts": "2026-02-28T11:11:48.206Z",
+      "by": "test-evo-loop",
+      "type": "review_result",
+      "content": "T-improved2 審查通過 (score: 78/70)",
+      "refs": [
+        "T-improved2"
+      ],
+      "data": {
+        "taskId": "T-improved2",
+        "assignee": "engineer_pro",
+        "result": "approved",
+        "score": 78,
+        "threshold": 70,
+        "attempt": 1
+      }
+    },
+    {
+      "id": "sig-1772277108209-hiwyi5",
+      "ts": "2026-02-28T11:11:48.209Z",
+      "by": "test-evo-loop",
+      "type": "review_result",
+      "content": "T-improved3 審查通過 (score: 81/70)",
+      "refs": [
+        "T-improved3"
+      ],
+      "data": {
+        "taskId": "T-improved3",
+        "assignee": "engineer_pro",
+        "result": "approved",
+        "score": 81,
+        "threshold": 70,
+        "attempt": 1
+      }
+    },
+    {
+      "id": "sig-1772277108210-bk8xny",
+      "ts": "2026-02-28T11:11:48.210Z",
+      "by": "gate",
+      "type": "lesson_validated",
+      "content": "Insight ins-1772277108164-v33rwt verified: avg score 43 → 78",
+      "refs": [
+        "ins-1772277108164-v33rwt"
+      ],
+      "data": {
+        "insightId": "ins-1772277108164-v33rwt",
+        "avgBefore": 43,
+        "avgAfter": 78,
+        "delta": 35
+      }
+    },
+    {
+      "id": "sig-1772277108215-t18e96",
+      "ts": "2026-02-28T11:11:48.215Z",
+      "by": "gate",
+      "type": "insight_applied",
+      "content": "Auto-applied: threshold 應降到 30（故意製造惡化）",
+      "refs": [
+        "ins-1772277108214-l5vwgm"
+      ],
+      "data": {
+        "insightId": "ins-1772277108214-l5vwgm",
+        "actionType": "controls_patch",
+        "auto": true,
+        "snapshot": {
+          "quality_threshold": 70
+        }
+      }
+    },
+    {
+      "id": "sig-1772277108219-myattn",
+      "ts": "2026-02-28T11:11:48.219Z",
+      "by": "test-evo-loop",
+      "type": "review_result",
+      "content": "T-degraded1 惡化 (score: 25/70)",
+      "data": {
+        "taskId": "T-degraded1",
+        "result": "needs_revision",
+        "score": 25,
+        "threshold": 70
+      }
+    },
+    {
+      "id": "sig-1772277108223-78lcsf",
+      "ts": "2026-02-28T11:11:48.223Z",
+      "by": "test-evo-loop",
+      "type": "review_result",
+      "content": "T-degraded2 惡化 (score: 27/70)",
+      "data": {
+        "taskId": "T-degraded2",
+        "result": "needs_revision",
+        "score": 27,
+        "threshold": 70
+      }
+    },
+    {
+      "id": "sig-1772277108226-hr0auc",
+      "ts": "2026-02-28T11:11:48.226Z",
+      "by": "test-evo-loop",
+      "type": "review_result",
+      "content": "T-degraded3 惡化 (score: 29/70)",
+      "data": {
+        "taskId": "T-degraded3",
+        "result": "needs_revision",
+        "score": 29,
+        "threshold": 70
+      }
+    },
+    {
+      "id": "sig-1772277108226-0mnerk",
+      "ts": "2026-02-28T11:11:48.226Z",
+      "by": "gate",
+      "type": "insight_rolled_back",
+      "content": "Rolled back insight ins-1772277108214-l5vwgm: avg score 78 → 27 (-51)",
+      "refs": [
+        "ins-1772277108214-l5vwgm"
+      ],
+      "data": {
+        "insightId": "ins-1772277108214-l5vwgm",
+        "avgBefore": 78,
+        "avgAfter": 27,
+        "delta": -51,
+        "restoredControls": {
+          "quality_threshold": 70
+        }
+      }
+    }
+  ],
+  "insights": [
+    {
+      "id": "ins-1772277108164-v33rwt",
+      "ts": "2026-02-28T11:11:48.164Z",
+      "by": "retro.js",
+      "about": null,
+      "judgement": "engineer_lite avg score 43 in last 3 reviews, below threshold 70",
+      "reasoning": "Consecutive 3 scores: [40, 43, 46]",
+      "suggestedAction": {
+        "type": "noop",
+        "payload": {}
+      },
+      "risk": "low",
+      "status": "applied",
+      "snapshot": null,
+      "appliedAt": "2026-02-28T11:11:48.164Z",
+      "verifyAfter": 3,
+      "data": {
+        "patternType": "agent_underperform",
+        "agent": "engineer_lite"
+      }
+    },
+    {
+      "id": "ins-1772277108214-l5vwgm",
+      "ts": "2026-02-28T11:11:48.214Z",
+      "by": "test-evo-loop",
+      "about": null,
+      "judgement": "threshold 應降到 30（故意製造惡化）",
+      "reasoning": null,
+      "suggestedAction": {
+        "type": "controls_patch",
+        "payload": {
+          "quality_threshold": 30
+        }
+      },
+      "risk": "low",
+      "status": "rolled_back",
+      "snapshot": {
+        "quality_threshold": 70
+      },
+      "appliedAt": "2026-02-28T11:11:48.215Z",
+      "verifyAfter": 3
+    }
+  ],
+  "lessons": [
+    {
+      "id": "les-1772277108209-6tnmv1",
+      "ts": "2026-02-28T11:11:48.210Z",
+      "by": "gate",
+      "fromInsight": "ins-1772277108164-v33rwt",
+      "rule": "engineer_lite avg score 43 in last 3 reviews, below threshold 70",
+      "effect": "avg score 43 → 78 (+35)",
+      "status": "validated",
+      "validatedAt": "2026-02-28T11:11:48.210Z",
+      "supersededBy": null
+    }
+  ],
+  "controls": {
+    "auto_review": true,
+    "auto_redispatch": false,
+    "max_review_attempts": 3,
+    "quality_threshold": 70,
+    "review_timeout_sec": 180,
+    "review_agent": "engineer_lite",
+    "auto_apply_insights": true
+  },
+  "meta": {
+    "updatedAt": "2026-02-28T11:11:48.226Z",
+    "boardType": "task-engine",
+    "version": 1
+  }
+}

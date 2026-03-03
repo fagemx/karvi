@@ -1,0 +1,10 @@
+const fs = require('fs');
+const bp = require('path').join(__dirname, 'board.json');
+const b = JSON.parse(fs.readFileSync(bp, 'utf8'));
+const t = b.taskPlan.tasks.find(t => t.id === 'GH-183');
+t.status = 'dispatched'; t.blocker = null; t.dispatch = null;
+t.lastReply = null; t.lastReplyAt = null;
+t.history.push({ ts: new Date().toISOString(), status: 'dispatched', reason: 'final_retry' });
+b.meta.updatedAt = new Date().toISOString();
+fs.writeFileSync(bp, JSON.stringify(b, null, 2));
+console.log('GH-183 reset');

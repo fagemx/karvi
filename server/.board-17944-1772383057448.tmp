@@ -1,0 +1,1181 @@
+{
+  "taskPlan": {
+    "goal": "Fix gatherRecentSignals goalIds parameter",
+    "phase": "executing",
+    "createdAt": "2026-03-01T15:22:48.858Z",
+    "tasks": [
+      {
+        "id": "GH-159",
+        "title": "bug: gatherRecentSignals ignores goalIds parameter",
+        "description": "village-meeting.js:58 �X gatherRecentSignals(board, goalIds, limit) accepts a goalIds parameter but never uses it to filter signals. All departments receive the same signals regardless of their assigned goals.",
+        "status": "approved",
+        "assignee": "engineer_lite",
+        "priority": "P2",
+        "depends": [],
+        "source": {
+          "type": "github_issue",
+          "number": 159,
+          "repo": "fagemx/karvi",
+          "url": "https://github.com/fagemx/karvi/issues/159"
+        },
+        "githubIssue": {
+          "number": 159,
+          "repo": "fagemx/karvi"
+        },
+        "history": [
+          {
+            "ts": "2026-03-01T22:00:00Z",
+            "status": "dispatched",
+            "by": "manual"
+          },
+          {
+            "ts": "2026-03-01T15:22:48.861Z",
+            "status": "in_progress",
+            "by": "auto-dispatch-steps",
+            "runtime": "step-pipeline"
+          }
+        ],
+        "steps": [
+          {
+            "step_id": "GH-159:plan",
+            "task_id": "GH-159",
+            "run_id": "run-1772378568861-p6r9nl",
+            "type": "plan",
+            "state": "succeeded",
+            "attempt": 2,
+            "max_attempts": 3,
+            "scheduled_at": "2026-03-01T15:33:07.539Z",
+            "locked_by": "step-worker",
+            "lock_expires_at": "2026-03-01T15:38:37.557Z",
+            "idempotency_key": null,
+            "input_ref": "C:\\ai_agent\\karvi\\server\\artifacts\\run-1772378568861-p6r9nl\\GH-159_plan.input.json",
+            "output_ref": "C:\\ai_agent\\karvi\\server\\artifacts\\run-1772378568861-p6r9nl\\GH-159_plan.output.json",
+            "instruction": null,
+            "skill": null,
+            "runtime_hint": null,
+            "retry_policy": {
+              "max_attempts": 3,
+              "backoff_base_ms": 5000,
+              "backoff_multiplier": 2,
+              "timeout_ms": 300000
+            },
+            "error": "claude timed out after 300s",
+            "started_at": "2026-03-01T15:22:48.863Z",
+            "completed_at": "2026-03-01T15:37:39.228Z"
+          },
+          {
+            "step_id": "GH-159:implement",
+            "task_id": "GH-159",
+            "run_id": "run-1772378568861-p6r9nl",
+            "type": "implement",
+            "state": "succeeded",
+            "attempt": 0,
+            "max_attempts": 3,
+            "scheduled_at": "2026-03-01T15:22:48.861Z",
+            "locked_by": "step-worker",
+            "lock_expires_at": "2026-03-01T15:43:09.234Z",
+            "idempotency_key": null,
+            "input_ref": "C:\\ai_agent\\karvi\\server\\artifacts\\run-1772378568861-p6r9nl\\GH-159_implement.input.json",
+            "output_ref": "C:\\ai_agent\\karvi\\server\\artifacts\\run-1772378568861-p6r9nl\\GH-159_implement.output.json",
+            "instruction": null,
+            "skill": null,
+            "runtime_hint": null,
+            "retry_policy": {
+              "max_attempts": 3,
+              "backoff_base_ms": 5000,
+              "backoff_multiplier": 2,
+              "timeout_ms": 300000
+            },
+            "error": null,
+            "started_at": "2026-03-01T15:37:39.232Z",
+            "completed_at": "2026-03-01T15:39:58.384Z"
+          },
+          {
+            "step_id": "GH-159:review",
+            "task_id": "GH-159",
+            "run_id": "run-1772378568861-p6r9nl",
+            "type": "review",
+            "state": "succeeded",
+            "attempt": 0,
+            "max_attempts": 3,
+            "scheduled_at": "2026-03-01T15:22:48.861Z",
+            "locked_by": "step-worker",
+            "lock_expires_at": "2026-03-01T15:45:28.390Z",
+            "idempotency_key": null,
+            "input_ref": "C:\\ai_agent\\karvi\\server\\artifacts\\run-1772378568861-p6r9nl\\GH-159_review.input.json",
+            "output_ref": "C:\\ai_agent\\karvi\\server\\artifacts\\run-1772378568861-p6r9nl\\GH-159_review.output.json",
+            "instruction": null,
+            "skill": null,
+            "runtime_hint": null,
+            "retry_policy": {
+              "max_attempts": 3,
+              "backoff_base_ms": 5000,
+              "backoff_multiplier": 2,
+              "timeout_ms": 300000
+            },
+            "error": null,
+            "started_at": "2026-03-01T15:39:58.388Z",
+            "completed_at": "2026-03-01T15:40:57.906Z"
+          }
+        ],
+        "startedAt": "2026-03-01T15:22:48.861Z",
+        "budget": {
+          "limits": {
+            "max_llm_calls": 12,
+            "max_tokens": 40000,
+            "max_wall_clock_ms": 1200000,
+            "max_steps": 20
+          },
+          "used": {
+            "llm_calls": 3,
+            "tokens": 18261,
+            "wall_clock_ms": 0,
+            "steps": 3
+          }
+        },
+        "completedAt": "2026-03-01T15:40:57.909Z",
+        "result": {
+          "status": "approved",
+          "summary": "Reviewed PR #166: LGTM — goalIds filtering is correct, backward compatible, 5 new tests pass, 2 non-blocking suggestions posted",
+          "payload": null
+        }
+      },
+      {
+        "id": "GH-155",
+        "title": "bug: operator precedence / substring match in /api/village/approve",
+        "description": "See https://github.com/fagemx/karvi/issues/155",
+        "status": "in_progress",
+        "source": {
+          "type": "github_issue",
+          "number": 155,
+          "repo": "fagemx/karvi",
+          "url": "https://github.com/fagemx/karvi/issues/155"
+        },
+        "githubIssue": {
+          "number": 155,
+          "repo": "fagemx/karvi"
+        },
+        "priority": "P1",
+        "assignee": "engineer_lite",
+        "depends": [],
+        "history": [
+          {
+            "ts": "2026-03-01T16:21:19.815Z",
+            "status": "created",
+            "by": "manual-dispatch"
+          },
+          {
+            "ts": "2026-03-01T16:21:24.909Z",
+            "status": "in_progress",
+            "by": "dispatch",
+            "model": "custom-ai-t8star-cn/gpt-5.3-codex-high",
+            "runtime": "claude",
+            "runtimeRationale": "board_preferred: claude",
+            "injectedLessons": 0
+          },
+          {
+            "ts": "2026-03-01T16:21:28.786Z",
+            "status": "blocked",
+            "reason": "There's an issue with the selected model (custom-ai-t8star-cn/gpt-5.3-codex-high). It may not exist or you may not have access to it. Run --model to pick a different model."
+          },
+          {
+            "ts": "2026-03-01T16:37:37.446Z",
+            "status": "in_progress",
+            "by": "dispatch",
+            "model": "custom-ai-t8star-cn/gpt-5.3-codex-high",
+            "runtime": "claude",
+            "runtimeRationale": "board_preferred: claude",
+            "injectedLessons": 0
+          }
+        ],
+        "startedAt": "2026-03-01T16:21:24.909Z",
+        "lastDispatchModel": "custom-ai-t8star-cn/gpt-5.3-codex-high",
+        "blocker": {
+          "reason": "Dispatch failed: There's an issue with the selected model (custom-ai-t8star-cn/gpt-5.3-codex-high). It may not exist or you may not have access to it. Run --model to pick a different model.",
+          "askedAt": "2026-03-01T16:21:28.786Z"
+        },
+        "dispatch": {
+          "version": 1,
+          "state": "dispatching",
+          "planId": "disp-1772383057445-uhmaj6",
+          "runtime": "claude",
+          "agentId": "engineer_lite",
+          "model": "custom-ai-t8star-cn/gpt-5.3-codex-high",
+          "timeoutSec": 300,
+          "preparedAt": "2026-03-01T16:37:37.445Z",
+          "startedAt": "2026-03-01T16:37:37.448Z",
+          "finishedAt": null,
+          "sessionId": null,
+          "lastError": null
+        }
+      },
+      {
+        "id": "GH-156",
+        "title": "bug: scheduler can re-trigger meetings within same hour window",
+        "description": "See https://github.com/fagemx/karvi/issues/156",
+        "status": "dispatched",
+        "source": {
+          "type": "github_issue",
+          "number": 156,
+          "repo": "fagemx/karvi",
+          "url": "https://github.com/fagemx/karvi/issues/156"
+        },
+        "githubIssue": {
+          "number": 156,
+          "repo": "fagemx/karvi"
+        },
+        "priority": "P1",
+        "assignee": "engineer_lite",
+        "depends": [],
+        "history": [
+          {
+            "ts": "2026-03-01T16:21:19.819Z",
+            "status": "created",
+            "by": "manual-dispatch"
+          },
+          {
+            "ts": "2026-03-01T16:21:24.982Z",
+            "status": "in_progress",
+            "by": "dispatch",
+            "model": "custom-ai-t8star-cn/gpt-5.3-codex-high",
+            "runtime": "claude",
+            "runtimeRationale": "board_preferred: claude",
+            "injectedLessons": 0
+          },
+          {
+            "ts": "2026-03-01T16:21:30.137Z",
+            "status": "blocked",
+            "reason": "There's an issue with the selected model (custom-ai-t8star-cn/gpt-5.3-codex-high). It may not exist or you may not have access to it. Run --model to pick a different model."
+          }
+        ],
+        "startedAt": "2026-03-01T16:21:24.982Z",
+        "lastDispatchModel": "custom-ai-t8star-cn/gpt-5.3-codex-high",
+        "blocker": {
+          "reason": "Dispatch failed: There's an issue with the selected model (custom-ai-t8star-cn/gpt-5.3-codex-high). It may not exist or you may not have access to it. Run --model to pick a different model.",
+          "askedAt": "2026-03-01T16:21:30.137Z"
+        }
+      },
+      {
+        "id": "GH-157",
+        "title": "feat: add cycle-level stall detection watchdog",
+        "description": "See https://github.com/fagemx/karvi/issues/157",
+        "status": "dispatched",
+        "source": {
+          "type": "github_issue",
+          "number": 157,
+          "repo": "fagemx/karvi",
+          "url": "https://github.com/fagemx/karvi/issues/157"
+        },
+        "githubIssue": {
+          "number": 157,
+          "repo": "fagemx/karvi"
+        },
+        "priority": "P1",
+        "assignee": "engineer_lite",
+        "depends": [],
+        "history": [
+          {
+            "ts": "2026-03-01T16:21:19.820Z",
+            "status": "created",
+            "by": "manual-dispatch"
+          },
+          {
+            "ts": "2026-03-01T16:21:25.096Z",
+            "status": "in_progress",
+            "by": "dispatch",
+            "model": "custom-ai-t8star-cn/gpt-5.3-codex-high",
+            "runtime": "claude",
+            "runtimeRationale": "board_preferred: claude",
+            "injectedLessons": 0
+          },
+          {
+            "ts": "2026-03-01T16:21:29.662Z",
+            "status": "blocked",
+            "reason": "There's an issue with the selected model (custom-ai-t8star-cn/gpt-5.3-codex-high). It may not exist or you may not have access to it. Run --model to pick a different model."
+          }
+        ],
+        "startedAt": "2026-03-01T16:21:25.096Z",
+        "lastDispatchModel": "custom-ai-t8star-cn/gpt-5.3-codex-high",
+        "blocker": {
+          "reason": "Dispatch failed: There's an issue with the selected model (custom-ai-t8star-cn/gpt-5.3-codex-high). It may not exist or you may not have access to it. Run --model to pick a different model.",
+          "askedAt": "2026-03-01T16:21:29.662Z"
+        }
+      },
+      {
+        "id": "GH-158",
+        "title": "bug: recoverExpiredLocks only runs at startup, not periodically",
+        "description": "See https://github.com/fagemx/karvi/issues/158",
+        "status": "dispatched",
+        "source": {
+          "type": "github_issue",
+          "number": 158,
+          "repo": "fagemx/karvi",
+          "url": "https://github.com/fagemx/karvi/issues/158"
+        },
+        "githubIssue": {
+          "number": 158,
+          "repo": "fagemx/karvi"
+        },
+        "priority": "P1",
+        "assignee": "engineer_lite",
+        "depends": [],
+        "history": [
+          {
+            "ts": "2026-03-01T16:21:19.820Z",
+            "status": "created",
+            "by": "manual-dispatch"
+          },
+          {
+            "ts": "2026-03-01T16:21:25.183Z",
+            "status": "in_progress",
+            "by": "dispatch",
+            "model": "custom-ai-t8star-cn/gpt-5.3-codex-high",
+            "runtime": "claude",
+            "runtimeRationale": "board_preferred: claude",
+            "injectedLessons": 0
+          },
+          {
+            "ts": "2026-03-01T16:21:29.237Z",
+            "status": "blocked",
+            "reason": "There's an issue with the selected model (custom-ai-t8star-cn/gpt-5.3-codex-high). It may not exist or you may not have access to it. Run --model to pick a different model."
+          }
+        ],
+        "startedAt": "2026-03-01T16:21:25.183Z",
+        "lastDispatchModel": "custom-ai-t8star-cn/gpt-5.3-codex-high",
+        "blocker": {
+          "reason": "Dispatch failed: There's an issue with the selected model (custom-ai-t8star-cn/gpt-5.3-codex-high). It may not exist or you may not have access to it. Run --model to pick a different model.",
+          "askedAt": "2026-03-01T16:21:29.237Z"
+        }
+      }
+    ]
+  },
+  "conversations": [],
+  "participants": [
+    {
+      "id": "engineer_lite",
+      "type": "agent",
+      "displayName": "engineer_lite",
+      "agentId": "engineer_lite"
+    },
+    {
+      "id": "engineer_pro",
+      "type": "agent",
+      "displayName": "engineer_pro",
+      "agentId": "engineer_pro"
+    }
+  ],
+  "signals": [
+    {
+      "id": "sig-1772372547286-euzoy7",
+      "ts": "2026-03-01T13:42:27.286Z",
+      "by": "auto-dispatch",
+      "type": "steps_created",
+      "content": "MTG-cycle-2026-W09-proposal-engineering steps created (1)",
+      "refs": [
+        "MTG-cycle-2026-W09-proposal-engineering"
+      ],
+      "data": {
+        "taskId": "MTG-cycle-2026-W09-proposal-engineering",
+        "runId": "run-1772372547285-noewhw",
+        "count": 1
+      }
+    },
+    {
+      "id": "sig-1772372794568-bpyjdd",
+      "ts": "2026-03-01T13:46:34.568Z",
+      "by": "step-worker",
+      "type": "step_completed",
+      "content": "MTG-cycle-2026-W09-proposal-engineering step MTG-cycle-2026-W09-proposal-engineering:propose running → succeeded",
+      "refs": [
+        "MTG-cycle-2026-W09-proposal-engineering"
+      ],
+      "data": {
+        "taskId": "MTG-cycle-2026-W09-proposal-engineering",
+        "stepId": "MTG-cycle-2026-W09-proposal-engineering:propose",
+        "from": "running",
+        "to": "succeeded",
+        "attempt": 0
+      }
+    },
+    {
+      "id": "sig-1772372794573-zusmah",
+      "ts": "2026-03-01T13:46:34.573Z",
+      "by": "kernel",
+      "type": "route_decision",
+      "content": "MTG-cycle-2026-W09-proposal-engineering MTG-cycle-2026-W09-proposal-engineering:propose → done (pipeline_complete)",
+      "refs": [
+        "MTG-cycle-2026-W09-proposal-engineering"
+      ],
+      "data": {
+        "taskId": "MTG-cycle-2026-W09-proposal-engineering",
+        "stepId": "MTG-cycle-2026-W09-proposal-engineering:propose",
+        "decision": {
+          "from_step_id": "MTG-cycle-2026-W09-proposal-engineering:propose",
+          "from_status": "succeeded",
+          "action": "done",
+          "rule": "pipeline_complete",
+          "confidence": 1,
+          "next_step": null,
+          "retry": null,
+          "human_review": null
+        }
+      }
+    },
+    {
+      "id": "sig-1772372794577-xh1b5u",
+      "ts": "2026-03-01T13:46:34.577Z",
+      "by": "auto-dispatch",
+      "type": "steps_created",
+      "content": "MTG-cycle-2026-W09-synthesis steps created (1)",
+      "refs": [
+        "MTG-cycle-2026-W09-synthesis"
+      ],
+      "data": {
+        "taskId": "MTG-cycle-2026-W09-synthesis",
+        "runId": "run-1772372794577-p4csy2",
+        "count": 1
+      }
+    },
+    {
+      "id": "sig-1772372837387-cvcbr3",
+      "ts": "2026-03-01T13:47:17.387Z",
+      "by": "step-worker",
+      "type": "step_completed",
+      "content": "MTG-cycle-2026-W09-synthesis step MTG-cycle-2026-W09-synthesis:synthesize running → succeeded",
+      "refs": [
+        "MTG-cycle-2026-W09-synthesis"
+      ],
+      "data": {
+        "taskId": "MTG-cycle-2026-W09-synthesis",
+        "stepId": "MTG-cycle-2026-W09-synthesis:synthesize",
+        "from": "running",
+        "to": "succeeded",
+        "attempt": 0
+      }
+    },
+    {
+      "id": "sig-1772372837391-ba5gnv",
+      "ts": "2026-03-01T13:47:17.391Z",
+      "by": "kernel",
+      "type": "route_decision",
+      "content": "MTG-cycle-2026-W09-synthesis MTG-cycle-2026-W09-synthesis:synthesize → done (pipeline_complete)",
+      "refs": [
+        "MTG-cycle-2026-W09-synthesis"
+      ],
+      "data": {
+        "taskId": "MTG-cycle-2026-W09-synthesis",
+        "stepId": "MTG-cycle-2026-W09-synthesis:synthesize",
+        "decision": {
+          "from_step_id": "MTG-cycle-2026-W09-synthesis:synthesize",
+          "from_status": "succeeded",
+          "action": "done",
+          "rule": "pipeline_complete",
+          "confidence": 1,
+          "next_step": null,
+          "retry": null,
+          "human_review": null
+        }
+      }
+    },
+    {
+      "id": "sig-1772372837393-krxugu",
+      "ts": "2026-03-01T13:47:17.392Z",
+      "by": "plan-dispatcher",
+      "type": "village_plan_dispatched",
+      "content": "Plan dispatched: 7 tasks from cycle-1772372837392",
+      "refs": [
+        "VT-1772372837392-gbcn1p",
+        "VT-1772372837392-vj3cr1",
+        "VT-1772372837392-xtomsv",
+        "VT-1772372837392-h6p6gc",
+        "VT-1772372837392-3rn6l5",
+        "VT-1772372837393-fg7rna",
+        "VT-1772372837393-3b77pp"
+      ],
+      "data": {
+        "cycleId": "cycle-1772372837392",
+        "taskCount": 7,
+        "taskIds": [
+          "VT-1772372837392-gbcn1p",
+          "VT-1772372837392-vj3cr1",
+          "VT-1772372837392-xtomsv",
+          "VT-1772372837392-h6p6gc",
+          "VT-1772372837392-3rn6l5",
+          "VT-1772372837393-fg7rna",
+          "VT-1772372837393-3b77pp"
+        ],
+        "conflictsResolved": [
+          {
+            "description": "Engineering requested merge freeze until P0 items land to prevent further CI regression",
+            "resolution": "Accepted — P0 STEP_RESULT fix and CI stabilization are sequenced first. P1/P2 items depend on CI green baseline. No other departments submitted proposals this cycle so no cross-department scheduling conflict."
+          }
+        ],
+        "deferred": []
+      }
+    },
+    {
+      "id": "sig-1772372837399-45lzio",
+      "ts": "2026-03-01T13:47:17.399Z",
+      "by": "auto-dispatch",
+      "type": "steps_created",
+      "content": "VT-1772372837392-gbcn1p steps created (1)",
+      "refs": [
+        "VT-1772372837392-gbcn1p"
+      ],
+      "data": {
+        "taskId": "VT-1772372837392-gbcn1p",
+        "runId": "run-1772372837399-nyi46j",
+        "count": 1
+      }
+    },
+    {
+      "id": "sig-1772372884499-hkcd63",
+      "ts": "2026-03-01T13:48:04.499Z",
+      "by": "step-worker",
+      "type": "step_completed",
+      "content": "VT-1772372837392-gbcn1p step VT-1772372837392-gbcn1p:implement running → succeeded",
+      "refs": [
+        "VT-1772372837392-gbcn1p"
+      ],
+      "data": {
+        "taskId": "VT-1772372837392-gbcn1p",
+        "stepId": "VT-1772372837392-gbcn1p:implement",
+        "from": "running",
+        "to": "succeeded",
+        "attempt": 0
+      }
+    },
+    {
+      "id": "sig-1772372884503-1py9mi",
+      "ts": "2026-03-01T13:48:04.503Z",
+      "by": "kernel",
+      "type": "route_decision",
+      "content": "VT-1772372837392-gbcn1p VT-1772372837392-gbcn1p:implement → done (pipeline_complete)",
+      "refs": [
+        "VT-1772372837392-gbcn1p"
+      ],
+      "data": {
+        "taskId": "VT-1772372837392-gbcn1p",
+        "stepId": "VT-1772372837392-gbcn1p:implement",
+        "decision": {
+          "from_step_id": "VT-1772372837392-gbcn1p:implement",
+          "from_status": "succeeded",
+          "action": "done",
+          "rule": "pipeline_complete",
+          "confidence": 1,
+          "next_step": null,
+          "retry": null,
+          "human_review": null
+        }
+      }
+    },
+    {
+      "id": "sig-1772372884506-098z6q",
+      "ts": "2026-03-01T13:48:04.506Z",
+      "by": "auto-dispatch",
+      "type": "steps_created",
+      "content": "VT-1772372837392-vj3cr1 steps created (1)",
+      "refs": [
+        "VT-1772372837392-vj3cr1"
+      ],
+      "data": {
+        "taskId": "VT-1772372837392-vj3cr1",
+        "runId": "run-1772372884506-cdw37c",
+        "count": 1
+      }
+    },
+    {
+      "id": "sig-1772372965109-yaswlv",
+      "ts": "2026-03-01T13:49:25.109Z",
+      "by": "step-worker",
+      "type": "step_completed",
+      "content": "VT-1772372837392-vj3cr1 step VT-1772372837392-vj3cr1:implement running → succeeded",
+      "refs": [
+        "VT-1772372837392-vj3cr1"
+      ],
+      "data": {
+        "taskId": "VT-1772372837392-vj3cr1",
+        "stepId": "VT-1772372837392-vj3cr1:implement",
+        "from": "running",
+        "to": "succeeded",
+        "attempt": 0
+      }
+    },
+    {
+      "id": "sig-1772372965113-ljzdue",
+      "ts": "2026-03-01T13:49:25.113Z",
+      "by": "kernel",
+      "type": "route_decision",
+      "content": "VT-1772372837392-vj3cr1 VT-1772372837392-vj3cr1:implement → done (pipeline_complete)",
+      "refs": [
+        "VT-1772372837392-vj3cr1"
+      ],
+      "data": {
+        "taskId": "VT-1772372837392-vj3cr1",
+        "stepId": "VT-1772372837392-vj3cr1:implement",
+        "decision": {
+          "from_step_id": "VT-1772372837392-vj3cr1:implement",
+          "from_status": "succeeded",
+          "action": "done",
+          "rule": "pipeline_complete",
+          "confidence": 1,
+          "next_step": null,
+          "retry": null,
+          "human_review": null
+        }
+      }
+    },
+    {
+      "id": "sig-1772372965117-8nh99l",
+      "ts": "2026-03-01T13:49:25.117Z",
+      "by": "auto-dispatch",
+      "type": "steps_created",
+      "content": "VT-1772372837392-xtomsv steps created (1)",
+      "refs": [
+        "VT-1772372837392-xtomsv"
+      ],
+      "data": {
+        "taskId": "VT-1772372837392-xtomsv",
+        "runId": "run-1772372965116-g70znb",
+        "count": 1
+      }
+    },
+    {
+      "id": "sig-1772372965136-bhj8kt",
+      "ts": "2026-03-01T13:49:25.136Z",
+      "by": "auto-dispatch",
+      "type": "steps_created",
+      "content": "VT-1772372837392-h6p6gc steps created (1)",
+      "refs": [
+        "VT-1772372837392-h6p6gc"
+      ],
+      "data": {
+        "taskId": "VT-1772372837392-h6p6gc",
+        "runId": "run-1772372965136-a82bsi",
+        "count": 1
+      }
+    },
+    {
+      "id": "sig-1772372965153-1wii8l",
+      "ts": "2026-03-01T13:49:25.153Z",
+      "by": "auto-dispatch",
+      "type": "steps_created",
+      "content": "VT-1772372837393-fg7rna steps created (1)",
+      "refs": [
+        "VT-1772372837393-fg7rna"
+      ],
+      "data": {
+        "taskId": "VT-1772372837393-fg7rna",
+        "runId": "run-1772372965153-eqt9qo",
+        "count": 1
+      }
+    },
+    {
+      "id": "sig-1772372965173-rno748",
+      "ts": "2026-03-01T13:49:25.173Z",
+      "by": "auto-dispatch",
+      "type": "steps_created",
+      "content": "VT-1772372837393-3b77pp steps created (1)",
+      "refs": [
+        "VT-1772372837393-3b77pp"
+      ],
+      "data": {
+        "taskId": "VT-1772372837393-3b77pp",
+        "runId": "run-1772372965173-48pkw4",
+        "count": 1
+      }
+    },
+    {
+      "id": "sig-1772372986824-cmyott",
+      "ts": "2026-03-01T13:49:46.824Z",
+      "by": "step-worker",
+      "type": "step_completed",
+      "content": "VT-1772372837392-xtomsv step VT-1772372837392-xtomsv:implement running → succeeded",
+      "refs": [
+        "VT-1772372837392-xtomsv"
+      ],
+      "data": {
+        "taskId": "VT-1772372837392-xtomsv",
+        "stepId": "VT-1772372837392-xtomsv:implement",
+        "from": "running",
+        "to": "succeeded",
+        "attempt": 0
+      }
+    },
+    {
+      "id": "sig-1772372986829-jqpbzs",
+      "ts": "2026-03-01T13:49:46.829Z",
+      "by": "kernel",
+      "type": "route_decision",
+      "content": "VT-1772372837392-xtomsv VT-1772372837392-xtomsv:implement → done (pipeline_complete)",
+      "refs": [
+        "VT-1772372837392-xtomsv"
+      ],
+      "data": {
+        "taskId": "VT-1772372837392-xtomsv",
+        "stepId": "VT-1772372837392-xtomsv:implement",
+        "decision": {
+          "from_step_id": "VT-1772372837392-xtomsv:implement",
+          "from_status": "succeeded",
+          "action": "done",
+          "rule": "pipeline_complete",
+          "confidence": 1,
+          "next_step": null,
+          "retry": null,
+          "human_review": null
+        }
+      }
+    },
+    {
+      "id": "sig-1772373006460-quf64n",
+      "ts": "2026-03-01T13:50:06.460Z",
+      "by": "step-worker",
+      "type": "step_completed",
+      "content": "VT-1772372837392-h6p6gc step VT-1772372837392-h6p6gc:implement running → succeeded",
+      "refs": [
+        "VT-1772372837392-h6p6gc"
+      ],
+      "data": {
+        "taskId": "VT-1772372837392-h6p6gc",
+        "stepId": "VT-1772372837392-h6p6gc:implement",
+        "from": "running",
+        "to": "succeeded",
+        "attempt": 0
+      }
+    },
+    {
+      "id": "sig-1772373006464-umuf1k",
+      "ts": "2026-03-01T13:50:06.464Z",
+      "by": "kernel",
+      "type": "route_decision",
+      "content": "VT-1772372837392-h6p6gc VT-1772372837392-h6p6gc:implement → done (pipeline_complete)",
+      "refs": [
+        "VT-1772372837392-h6p6gc"
+      ],
+      "data": {
+        "taskId": "VT-1772372837392-h6p6gc",
+        "stepId": "VT-1772372837392-h6p6gc:implement",
+        "decision": {
+          "from_step_id": "VT-1772372837392-h6p6gc:implement",
+          "from_status": "succeeded",
+          "action": "done",
+          "rule": "pipeline_complete",
+          "confidence": 1,
+          "next_step": null,
+          "retry": null,
+          "human_review": null
+        }
+      }
+    },
+    {
+      "id": "sig-1772373006468-pfwzvg",
+      "ts": "2026-03-01T13:50:06.468Z",
+      "by": "auto-dispatch",
+      "type": "steps_created",
+      "content": "VT-1772372837392-3rn6l5 steps created (1)",
+      "refs": [
+        "VT-1772372837392-3rn6l5"
+      ],
+      "data": {
+        "taskId": "VT-1772372837392-3rn6l5",
+        "runId": "run-1772373006468-6jdfb3",
+        "count": 1
+      }
+    },
+    {
+      "id": "sig-1772373015835-0oy9c3",
+      "ts": "2026-03-01T13:50:15.835Z",
+      "by": "step-worker",
+      "type": "step_completed",
+      "content": "VT-1772372837393-3b77pp step VT-1772372837393-3b77pp:implement running → succeeded",
+      "refs": [
+        "VT-1772372837393-3b77pp"
+      ],
+      "data": {
+        "taskId": "VT-1772372837393-3b77pp",
+        "stepId": "VT-1772372837393-3b77pp:implement",
+        "from": "running",
+        "to": "succeeded",
+        "attempt": 0
+      }
+    },
+    {
+      "id": "sig-1772373015840-du5cgo",
+      "ts": "2026-03-01T13:50:15.840Z",
+      "by": "kernel",
+      "type": "route_decision",
+      "content": "VT-1772372837393-3b77pp VT-1772372837393-3b77pp:implement → done (pipeline_complete)",
+      "refs": [
+        "VT-1772372837393-3b77pp"
+      ],
+      "data": {
+        "taskId": "VT-1772372837393-3b77pp",
+        "stepId": "VT-1772372837393-3b77pp:implement",
+        "decision": {
+          "from_step_id": "VT-1772372837393-3b77pp:implement",
+          "from_status": "succeeded",
+          "action": "done",
+          "rule": "pipeline_complete",
+          "confidence": 1,
+          "next_step": null,
+          "retry": null,
+          "human_review": null
+        }
+      }
+    },
+    {
+      "id": "sig-1772373025588-zm6hbj",
+      "ts": "2026-03-01T13:50:25.588Z",
+      "by": "step-worker",
+      "type": "step_completed",
+      "content": "VT-1772372837393-fg7rna step VT-1772372837393-fg7rna:implement running → succeeded",
+      "refs": [
+        "VT-1772372837393-fg7rna"
+      ],
+      "data": {
+        "taskId": "VT-1772372837393-fg7rna",
+        "stepId": "VT-1772372837393-fg7rna:implement",
+        "from": "running",
+        "to": "succeeded",
+        "attempt": 0
+      }
+    },
+    {
+      "id": "sig-1772373025594-ure5k8",
+      "ts": "2026-03-01T13:50:25.594Z",
+      "by": "kernel",
+      "type": "route_decision",
+      "content": "VT-1772372837393-fg7rna VT-1772372837393-fg7rna:implement → done (pipeline_complete)",
+      "refs": [
+        "VT-1772372837393-fg7rna"
+      ],
+      "data": {
+        "taskId": "VT-1772372837393-fg7rna",
+        "stepId": "VT-1772372837393-fg7rna:implement",
+        "decision": {
+          "from_step_id": "VT-1772372837393-fg7rna:implement",
+          "from_status": "succeeded",
+          "action": "done",
+          "rule": "pipeline_complete",
+          "confidence": 1,
+          "next_step": null,
+          "retry": null,
+          "human_review": null
+        }
+      }
+    },
+    {
+      "id": "sig-1772373048737-9jxstn",
+      "ts": "2026-03-01T13:50:48.737Z",
+      "by": "step-worker",
+      "type": "step_completed",
+      "content": "VT-1772372837392-3rn6l5 step VT-1772372837392-3rn6l5:implement running → succeeded",
+      "refs": [
+        "VT-1772372837392-3rn6l5"
+      ],
+      "data": {
+        "taskId": "VT-1772372837392-3rn6l5",
+        "stepId": "VT-1772372837392-3rn6l5:implement",
+        "from": "running",
+        "to": "succeeded",
+        "attempt": 0
+      }
+    },
+    {
+      "id": "sig-1772373048743-x7qrcd",
+      "ts": "2026-03-01T13:50:48.743Z",
+      "by": "kernel",
+      "type": "route_decision",
+      "content": "VT-1772372837392-3rn6l5 VT-1772372837392-3rn6l5:implement → done (pipeline_complete)",
+      "refs": [
+        "VT-1772372837392-3rn6l5"
+      ],
+      "data": {
+        "taskId": "VT-1772372837392-3rn6l5",
+        "stepId": "VT-1772372837392-3rn6l5:implement",
+        "decision": {
+          "from_step_id": "VT-1772372837392-3rn6l5:implement",
+          "from_status": "succeeded",
+          "action": "done",
+          "rule": "pipeline_complete",
+          "confidence": 1,
+          "next_step": null,
+          "retry": null,
+          "human_review": null
+        }
+      }
+    },
+    {
+      "id": "sig-1772378568861-8cck3u",
+      "ts": "2026-03-01T15:22:48.861Z",
+      "by": "auto-dispatch",
+      "type": "steps_created",
+      "content": "GH-159 steps created (3)",
+      "refs": [
+        "GH-159"
+      ],
+      "data": {
+        "taskId": "GH-159",
+        "runId": "run-1772378568861-p6r9nl",
+        "count": 3
+      }
+    },
+    {
+      "id": "sig-1772379459228-2268sf",
+      "ts": "2026-03-01T15:37:39.228Z",
+      "by": "step-worker",
+      "type": "step_completed",
+      "content": "GH-159 step GH-159:plan running → succeeded",
+      "refs": [
+        "GH-159"
+      ],
+      "data": {
+        "taskId": "GH-159",
+        "stepId": "GH-159:plan",
+        "from": "running",
+        "to": "succeeded",
+        "attempt": 2
+      }
+    },
+    {
+      "id": "sig-1772379459231-rtlxir",
+      "ts": "2026-03-01T15:37:39.231Z",
+      "by": "kernel",
+      "type": "route_decision",
+      "content": "GH-159 GH-159:plan → next_step (pipeline_advance)",
+      "refs": [
+        "GH-159"
+      ],
+      "data": {
+        "taskId": "GH-159",
+        "stepId": "GH-159:plan",
+        "decision": {
+          "from_step_id": "GH-159:plan",
+          "from_status": "succeeded",
+          "action": "next_step",
+          "rule": "pipeline_advance",
+          "confidence": 1,
+          "retry": null,
+          "human_review": null,
+          "next_step": {
+            "step_id": "GH-159:implement",
+            "step_type": "implement",
+            "priority": 0
+          }
+        }
+      }
+    },
+    {
+      "id": "sig-1772379598384-qd531n",
+      "ts": "2026-03-01T15:39:58.384Z",
+      "by": "step-worker",
+      "type": "step_completed",
+      "content": "GH-159 step GH-159:implement running → succeeded",
+      "refs": [
+        "GH-159"
+      ],
+      "data": {
+        "taskId": "GH-159",
+        "stepId": "GH-159:implement",
+        "from": "running",
+        "to": "succeeded",
+        "attempt": 0
+      }
+    },
+    {
+      "id": "sig-1772379598387-lye95s",
+      "ts": "2026-03-01T15:39:58.387Z",
+      "by": "kernel",
+      "type": "route_decision",
+      "content": "GH-159 GH-159:implement → next_step (pipeline_advance)",
+      "refs": [
+        "GH-159"
+      ],
+      "data": {
+        "taskId": "GH-159",
+        "stepId": "GH-159:implement",
+        "decision": {
+          "from_step_id": "GH-159:implement",
+          "from_status": "succeeded",
+          "action": "next_step",
+          "rule": "pipeline_advance",
+          "confidence": 1,
+          "retry": null,
+          "human_review": null,
+          "next_step": {
+            "step_id": "GH-159:review",
+            "step_type": "review",
+            "priority": 0
+          }
+        }
+      }
+    },
+    {
+      "id": "sig-1772379657906-tb5xnm",
+      "ts": "2026-03-01T15:40:57.906Z",
+      "by": "step-worker",
+      "type": "step_completed",
+      "content": "GH-159 step GH-159:review running → succeeded",
+      "refs": [
+        "GH-159"
+      ],
+      "data": {
+        "taskId": "GH-159",
+        "stepId": "GH-159:review",
+        "from": "running",
+        "to": "succeeded",
+        "attempt": 0
+      }
+    },
+    {
+      "id": "sig-1772379657909-i5xils",
+      "ts": "2026-03-01T15:40:57.909Z",
+      "by": "kernel",
+      "type": "route_decision",
+      "content": "GH-159 GH-159:review → done (pipeline_complete)",
+      "refs": [
+        "GH-159"
+      ],
+      "data": {
+        "taskId": "GH-159",
+        "stepId": "GH-159:review",
+        "decision": {
+          "from_step_id": "GH-159:review",
+          "from_status": "succeeded",
+          "action": "done",
+          "rule": "pipeline_complete",
+          "confidence": 1,
+          "next_step": null,
+          "retry": null,
+          "human_review": null
+        }
+      }
+    },
+    {
+      "id": "sig-1772382088786-i38kw0",
+      "ts": "2026-03-01T16:21:28.786Z",
+      "by": "server.js",
+      "type": "error",
+      "content": "GH-155 dispatch failed: There's an issue with the selected model (custom-ai-t8star-cn/gpt-5.3-codex-high). It may not exist or you may not have access to it. Run --model to pick a different model.",
+      "refs": [
+        "GH-155"
+      ],
+      "data": {
+        "taskId": "GH-155",
+        "error": "There's an issue with the selected model (custom-ai-t8star-cn/gpt-5.3-codex-high). It may not exist or you may not have access to it. Run --model to pick a different model."
+      }
+    },
+    {
+      "id": "sig-1772382089237-dn2zlv",
+      "ts": "2026-03-01T16:21:29.237Z",
+      "by": "server.js",
+      "type": "error",
+      "content": "GH-158 dispatch failed: There's an issue with the selected model (custom-ai-t8star-cn/gpt-5.3-codex-high). It may not exist or you may not have access to it. Run --model to pick a different model.",
+      "refs": [
+        "GH-158"
+      ],
+      "data": {
+        "taskId": "GH-158",
+        "error": "There's an issue with the selected model (custom-ai-t8star-cn/gpt-5.3-codex-high). It may not exist or you may not have access to it. Run --model to pick a different model."
+      }
+    },
+    {
+      "id": "sig-1772382089662-bykipt",
+      "ts": "2026-03-01T16:21:29.662Z",
+      "by": "server.js",
+      "type": "error",
+      "content": "GH-157 dispatch failed: There's an issue with the selected model (custom-ai-t8star-cn/gpt-5.3-codex-high). It may not exist or you may not have access to it. Run --model to pick a different model.",
+      "refs": [
+        "GH-157"
+      ],
+      "data": {
+        "taskId": "GH-157",
+        "error": "There's an issue with the selected model (custom-ai-t8star-cn/gpt-5.3-codex-high). It may not exist or you may not have access to it. Run --model to pick a different model."
+      }
+    },
+    {
+      "id": "sig-1772382090137-5o9t0g",
+      "ts": "2026-03-01T16:21:30.137Z",
+      "by": "server.js",
+      "type": "error",
+      "content": "GH-156 dispatch failed: There's an issue with the selected model (custom-ai-t8star-cn/gpt-5.3-codex-high). It may not exist or you may not have access to it. Run --model to pick a different model.",
+      "refs": [
+        "GH-156"
+      ],
+      "data": {
+        "taskId": "GH-156",
+        "error": "There's an issue with the selected model (custom-ai-t8star-cn/gpt-5.3-codex-high). It may not exist or you may not have access to it. Run --model to pick a different model."
+      }
+    }
+  ],
+  "insights": [],
+  "lessons": [],
+  "controls": {
+    "auto_review": true,
+    "auto_redispatch": false,
+    "max_review_attempts": 3,
+    "quality_threshold": 70,
+    "review_timeout_sec": 180,
+    "review_agent": "engineer_lite",
+    "auto_apply_insights": true,
+    "auto_dispatch": true,
+    "use_step_pipeline": true,
+    "preferred_runtime": "claude",
+    "use_worktrees": true,
+    "max_concurrent_tasks": 2
+  },
+  "meta": {
+    "updatedAt": "2026-03-01T16:37:37.448Z",
+    "boardType": "task-engine",
+    "version": 1
+  },
+  "village": {
+    "goals": [
+      {
+        "id": "G-001",
+        "text": "Improve village pipeline reliability",
+        "domain": "engineering",
+        "cadence": "weekly",
+        "metrics": [
+          "pipeline success rate"
+        ],
+        "active": true,
+        "createdAt": "2026-03-01T13:42:27.143Z",
+        "updatedAt": "2026-03-01T13:42:27.143Z"
+      }
+    ],
+    "departments": [
+      {
+        "id": "engineering",
+        "name": "Engineering",
+        "assignee": "engineer_lite",
+        "skills": [],
+        "promptFile": "village/roles/engineering.md",
+        "goalIds": [
+          "G-001"
+        ]
+      }
+    ],
+    "currentCycle": {
+      "cycleId": "cycle-2026-W09",
+      "phase": "done",
+      "meetingType": "weekly_planning",
+      "startedAt": "2026-03-01T13:42:27.280Z",
+      "taskIds": [
+        "MTG-cycle-2026-W09-proposal-engineering",
+        "MTG-cycle-2026-W09-synthesis"
+      ],
+      "executionStartedAt": "2026-03-01T13:47:17.392Z",
+      "executionTaskIds": [
+        "VT-1772372837392-gbcn1p",
+        "VT-1772372837392-vj3cr1",
+        "VT-1772372837392-xtomsv",
+        "VT-1772372837392-h6p6gc",
+        "VT-1772372837392-3rn6l5",
+        "VT-1772372837393-fg7rna",
+        "VT-1772372837393-3b77pp"
+      ],
+      "completedAt": "2026-03-01T13:50:48.744Z"
+    }
+  }
+}

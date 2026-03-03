@@ -1,0 +1,16 @@
+test(server): add unit tests for storage-json and storage-sqlite
+
+Add 20 test cases covering all three storage modules:
+- storage-json.js (15 tests): boardExists, readBoard/writeBoard roundtrip,
+  appendLog, ensureLogFile, overwrite, multi-write integrity, large board,
+  special characters, corrupted JSON handling
+- storage-sqlite.js (3 tests): module loading, NOT_IMPLEMENTED throws,
+  interface shape parity with JSON backend
+- storage.js factory (2 tests): API shape validation, default backend
+
+All tests use isolated temp directories and follow the project test harness
+pattern (passed/failed counters, cleanup in finally block).
+
+Closes #101
+
+Co-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>
