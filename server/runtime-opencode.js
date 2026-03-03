@@ -126,10 +126,15 @@ function dispatch(plan) {
     child.stdout.setEncoding('utf8');
     child.stderr.setEncoding('utf8');
 
+    // Periodic heartbeat: refresh step lock even during silent tool execution
+    // (tools like git push, gh pr create produce no stdout/stderr for minutes)
+    const heartbeatInterval = setInterval(() => heartbeat(), HEARTBEAT_INTERVAL_MS);
+
     function settle(err, result) {
       if (settled) return;
       settled = true;
       clearTimeout(inactivityTimer);
+      clearInterval(heartbeatInterval);
       try { fs.unlinkSync(msgFile); } catch {}
       if (err) reject(err); else resolve(result);
     }
@@ -212,6 +217,7 @@ function dispatch(plan) {
     child.stderr.on('data', chunk => {
       stderr += chunk;
       resetInactivityTimer();
+      heartbeat();
       if (stderr.length <= 1000) {
         console.log('[opencode-rt] stderr:', chunk.slice(0, 200));
       }
