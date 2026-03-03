@@ -20,7 +20,14 @@ function dispatch(plan) {
 
     if (plan.modelHint) args.push('-m', plan.modelHint);
 
-    const workDir = plan.workingDir || path.resolve(DIR, '..', '..', '..');
+    if (!plan.workingDir) {
+      return reject(new Error(
+        `[codex-rt] CRITICAL: workingDir is null for task ${plan.taskId}. ` +
+        `Cannot dispatch agent without target directory. ` +
+        `This indicates a bug in the dispatch chain.`
+      ));
+    }
+    const workDir = plan.workingDir;
     args.push('-C', workDir);
 
     if (plan.codexRole) {
