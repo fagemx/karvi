@@ -20,7 +20,7 @@ const path = require('path');
 
 // Matches: // @protected decision:<key> — <reason>
 // Also:    # @protected ...   or   /* @protected ... */
-const PROTECTED_RE = /(?:\/\/|#|\/\*)\s*@protected\s+decision:(\S+)\s*(?:\u2014|-)\s*(.+?)(?:\s*\*\/)?$/;
+const PROTECTED_RE = /(?:\/\/|#|\/\*)\s*@protected\s+decision:(\S+)\s*(?:\u2014|-)\s*(.+?)(?:\s*\*\/)?\r?$/;
 const END_RE = /(?:\/\/|#|\/\*)\s*@end-protected/;
 
 /**
