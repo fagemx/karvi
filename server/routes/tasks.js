@@ -290,6 +290,11 @@ function tryAutoDispatch(taskId, deps, helpers) {
     const validation = validateRepoRoot(repoRoot, task.source?.repo);
     if (!validation.valid) {
       console.error(`[auto-dispatch:${taskId}] repo validation failed: ${validation.error}`);
+      task.status = 'blocked';
+      task.blocker = { reason: `Repo validation failed: ${validation.error}`, askedAt: helpers.nowIso() };
+      helpers.writeBoard(board);
+      helpers.appendLog({ ts: helpers.nowIso(), event: 'auto_dispatch_blocked', taskId, error: validation.error });
+      helpers.broadcastSSE('board', board);
       return;
     }
 
@@ -300,6 +305,11 @@ function tryAutoDispatch(taskId, deps, helpers) {
       console.log(`[auto-dispatch:${taskId}] worktree created: ${wt.worktreePath} (repo: ${repoRoot})`);
     } catch (err) {
       console.error(`[auto-dispatch:${taskId}] worktree creation failed:`, err.message);
+      task.status = 'blocked';
+      task.blocker = { reason: `Worktree creation failed: ${err.message}`, askedAt: helpers.nowIso() };
+      helpers.writeBoard(board);
+      helpers.appendLog({ ts: helpers.nowIso(), event: 'auto_dispatch_blocked', taskId, error: err.message });
+      helpers.broadcastSSE('board', board);
       return;
     }
   }
