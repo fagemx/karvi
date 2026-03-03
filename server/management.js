@@ -1,5 +1,6 @@
 const fs = require('fs');
 const path = require('path');
+const { execSync } = require('child_process');
 const bb = require('./blackboard-server');
 const { nowIso, uid } = bb;
 const stepSchema = require('./step-schema');
@@ -550,6 +551,97 @@ function buildPreflightSection(board, task, options = {}) {
   return { lines, lessonResult };
 }
 
+// --- Edda Decision Injection (Layer 1 of Agent Protection) ---
+
+let _eddaDecisionCache = { ts: 0, decisions: [] };
+const EDDA_DECISION_CACHE_TTL_MS = 60_000;
+
+/**
+ * Load architectural decisions from edda ledger.
+ * Cached for 60s. Graceful degradation if edda not installed.
+ * @returns {Array<{ key: string, value: string, reason: string, ts: string }>}
+ */
+function loadEddaDecisions() {
+  const now = Date.now();
+  if (now - _eddaDecisionCache.ts < EDDA_DECISION_CACHE_TTL_MS && _eddaDecisionCache.decisions.length > 0) {
+    return _eddaDecisionCache.decisions;
+  }
+
+  const eddaCmd = process.env.EDDA_CMD;
+  if (!eddaCmd) return _eddaDecisionCache.decisions;
+
+  try {
+    const cmd = process.platform === 'win32'
+      ? `cmd.exe /d /s /c ${eddaCmd} log --tag decision --json --limit 50`
+      : `${eddaCmd} log --tag decision --json --limit 50`;
+
+    const raw = execSync(cmd, {
+      encoding: 'utf8',
+      timeout: 5000,
+      cwd: path.resolve(DIR, '..'),
+    }).trim();
+
+    if (!raw) { _eddaDecisionCache = { ts: now, decisions: [] }; return []; }
+
+    const decisions = raw.split('\n')
+      .filter(Boolean)
+      .map(line => {
+        try {
+          const evt = JSON.parse(line);
+          const d = evt.payload?.decision;
+          if (!d?.key) return null;
+          return { key: d.key, value: d.value, reason: d.reason, ts: evt.ts };
+        } catch { return null; }
+      })
+      .filter(Boolean);
+
+    _eddaDecisionCache = { ts: now, decisions };
+    return decisions;
+  } catch {
+    return _eddaDecisionCache.decisions;
+  }
+}
+
+/**
+ * Build a "PROTECTED DECISIONS" prompt section from edda decisions.
+ * Tells agents which architectural choices must not be reverted.
+ * @returns {string[]} lines to inject into dispatch prompt
+ */
+function buildProtectedDecisionsSection() {
+  const decisions = loadEddaDecisions();
+  if (decisions.length === 0) return [];
+
+  // Filter to infrastructure/architecture decisions (broadly relevant)
+  const relevant = decisions.filter(d =>
+    /^(dispatch|runtime|step-worker|kernel|route-engine|management|server)\./.test(d.key)
+  );
+  if (relevant.length === 0) return [];
+
+  const lines = [];
+  lines.push('');
+  lines.push('## PROTECTED DECISIONS \u2014 do NOT revert these');
+  lines.push('The following architectural decisions were made deliberately. Do not change code that implements them:');
+  lines.push('');
+
+  let charCount = 0;
+  const MAX_CHARS = 2000;
+
+  for (const d of relevant) {
+    const line = `- **${d.key}** = ${d.value} \u2014 ${d.reason}`;
+    if (charCount + line.length > MAX_CHARS) {
+      lines.push('  ... (more decisions omitted)');
+      break;
+    }
+    lines.push(line);
+    charCount += line.length;
+  }
+
+  lines.push('');
+  lines.push('If you encounter code that seems wrong but implements one of these decisions, LEAVE IT ALONE.');
+
+  return lines;
+}
+
 function buildTaskDispatchMessage(board, task, options = {}) {
   const lines = [];
 
@@ -642,6 +734,12 @@ function buildTaskDispatchMessage(board, task, options = {}) {
     lines.push(...preflight.lines);
   }
 
+  // --- Protected Decisions (edda) ---
+  const protectedDecisions = buildProtectedDecisionsSection();
+  if (protectedDecisions.length > 0) {
+    lines.push(...protectedDecisions);
+  }
+
   return lines.join('\n');
 }
 
@@ -692,6 +790,12 @@ function buildRedispatchMessage(board, task, options = {}) {
     lines.push(...preflight.lines);
   }
 
+  // --- Protected Decisions (edda) ---
+  const protectedDecisions = buildProtectedDecisionsSection();
+  if (protectedDecisions.length > 0) {
+    lines.push(...protectedDecisions);
+  }
+
   return lines.join('\n');
 }
 
@@ -734,6 +838,12 @@ function buildGenericDispatchMessage(board, task, options = {}) {
   if (preflight.lines.length > 0) {
     lines.push('');
     lines.push(...preflight.lines);
+  }
+
+  // --- Protected Decisions (edda) ---
+  const protectedDecisions = buildProtectedDecisionsSection();
+  if (protectedDecisions.length > 0) {
+    lines.push(...protectedDecisions);
   }
 
   return lines.join('\n');
@@ -797,8 +907,7 @@ function buildDispatchPlan(board, task, options = {}) {
     runtimeHint,
     userId,
     agentId: task.assignee,
-    // AGENT_MODEL_MAP contains OpenClaw/API model IDs — skip for CLI-based runtimes
-    // (claude, opencode) which use their own model selection.
+    // @protected decision:dispatch.modelHint — AGENT_MODEL_MAP has OpenClaw IDs that CLI runtimes don't recognize; passing them causes silent failure
     modelHint: (runtimeHint === 'claude' || runtimeHint === 'opencode') ? null : preferredModelFor(task.assignee),
     timeoutSec: options.timeoutSec || 300,
     sessionId: task.childSessionKey || null,
@@ -965,6 +1074,8 @@ module.exports = {
   gatherUpstreamArtifacts,
   matchLessonsForTask,
   buildPreflightSection,
+  loadEddaDecisions,
+  buildProtectedDecisionsSection,
   buildTaskDispatchMessage,
   buildRedispatchMessage,
   buildDispatchPlan,

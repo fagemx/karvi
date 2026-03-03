@@ -17,6 +17,7 @@ const FAILURE_MODES = {
   STRATEGY_MISMATCH:    'STRATEGY_MISMATCH',
   FINALIZE_ERROR:       'FINALIZE_ERROR',
   CONTRACT_VIOLATION:   'CONTRACT_VIOLATION',
+  PROTECTED_CODE_VIOLATION: 'PROTECTED_CODE_VIOLATION',
 };
 
 const BUDGET_DEFAULTS = {
@@ -35,6 +36,7 @@ const REMEDIATION_LIMITS = {
   STRATEGY_MISMATCH:   2,
   FINALIZE_ERROR:      1,
   CONTRACT_VIOLATION:  2,
+  PROTECTED_CODE_VIOLATION: 2,
 };
 
 // --- Failure classification ---
@@ -49,6 +51,7 @@ const FAILURE_PATTERNS = [
   { mode: FAILURE_MODES.TOOL_ERROR,       pattern: /timeout|ETIMEDOUT|rate.limit|ECONNREFUSED|socket.hang/i },
   { mode: FAILURE_MODES.FINALIZE_ERROR,     pattern: /uncommitted.changes|auto.finalize|finalize.error/i },
   { mode: FAILURE_MODES.CONTRACT_VIOLATION, pattern: /contract.violation|deliverable.*missing|deliverable.*not.found/i },
+  { mode: FAILURE_MODES.PROTECTED_CODE_VIOLATION, pattern: /protected.code.violation|@protected.*modified|protected.decision.*reverted/i },
 ];
 
 function classifyFailure(agentOutput) {

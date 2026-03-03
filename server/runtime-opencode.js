@@ -74,13 +74,11 @@ function dispatch(plan) {
     const workDir = plan.workingDir || path.resolve(DIR, '..');
     args.push('--dir', workDir);
 
-    // Write message to temp file and attach via --file.
-    // cmd.exe truncates multi-line positional args at the first newline,
-    // so the full task prompt goes into the file attachment.
+    // @protected decision:runtime.opencode.msgFile — cmd.exe truncates multi-line positional args at first newline; --file must precede -- to avoid yargs misparse
     const msgFile = path.join(os.tmpdir(), `karvi-dispatch-${Date.now()}.md`);
     fs.writeFileSync(msgFile, plan.message, 'utf8');
-    // --file must come before positional message to avoid yargs misparse
     args.push('--file', msgFile, '--', 'Read the attached file for your task. Implement everything it describes.');
+    // @end-protected
 
     const timeoutMs = (plan.timeoutSec || 300) * 1000;
     console.log('[opencode-rt] spawn:', OPENCODE_EXE);
@@ -192,7 +190,7 @@ function dispatch(plan) {
           }
         }
 
-        // step_finish — only settle on terminal reasons (not tool-calls which means more steps coming)
+        // @protected decision:runtime.opencode.settle — only settle on terminal step_finish reasons; tool-calls means more steps coming
         if (obj.type === 'step_finish') {
           lastFinish = obj.part || {};
           if (obj.sessionID) sessionId = obj.sessionID;
