@@ -85,7 +85,7 @@ function tryEddaSync(plan) {
 
 // --- Auto Re-dispatch: send fix instructions back to engineer ---
 function redispatchTask(board, task, deps, helpers) {
-  const { mgmt, push, usage, PUSH_TOKENS_PATH } = deps;
+  const { mgmt } = deps;
   const assignee = participantById(board, task.assignee);
   if (!assignee || assignee.type !== 'agent') {
     console.log(`[redispatch:${task.id}] skip: assignee ${task.assignee} is not an agent`);
@@ -95,159 +95,273 @@ function redispatchTask(board, task, deps, helpers) {
   try { mgmt.ensureTaskTransition(task.status, 'in_progress'); }
   catch { console.log(`[redispatch:${task.id}] skip: cannot transition ${task.status} → in_progress`); return; }
 
-  // S5: Build dispatch plan via management layer
+  // Pre-dispatch notification (before dispatchTask builds the plan)
+  const conv = board.conversations?.[0];
+  if (conv) {
+    pushMessage(conv, {
+      id: helpers.uid('msg'), ts: helpers.nowIso(), type: 'system', from: 'system', to: task.assignee,
+      text: `[Auto Re-dispatch ${task.id}] 第 ${task.reviewAttempts} 次修正指令已發送 → ${assignee.displayName}`,
+    });
+  }
+  helpers.appendLog({ ts: helpers.nowIso(), event: 'auto_redispatch', taskId: task.id, assignee: task.assignee, attempt: task.reviewAttempts });
+
+  dispatchTask(task, board, deps, helpers, { source: 'auto-redispatch', mode: 'redispatch' });
+}
+
+// ---------------------------------------------------------------------------
+// dispatchTask() — unified dispatch entry point
+//
+// Every dispatch path (autoStart, per-task, dispatch-next, auto-dispatch,
+// auto-redispatch) calls this. Handles worktree + step pipeline + legacy
+// single-shot dispatch so callers never bypass the full pipeline.
+//
+// opts.source  — label: 'auto-dispatch'|'dispatch'|'dispatch-next'|'project-autostart'|'auto-redispatch'
+// opts.mode    — 'dispatch' (default) or 'redispatch'
+// opts.runtimeOverride — force specific runtime
+// opts.onActivity — heartbeat callback (lock renewal)
+// ---------------------------------------------------------------------------
+function dispatchTask(task, board, deps, helpers, opts = {}) {
+  const { mgmt, usage, push, PUSH_TOKENS_PATH } = deps;
+  const ctrl = mgmt.getControls(board);
+  const taskId = task.id;
+  const source = opts.source || 'dispatch';
+  const mode = opts.mode || 'dispatch';
+
+  const assignee = participantById(board, task.assignee);
+  if (!assignee || assignee.type !== 'agent') {
+    console.log(`[dispatchTask:${taskId}] skip: assignee ${task.assignee} is not an agent`);
+    return { dispatched: false, reason: 'assignee not agent' };
+  }
+
+  // --- Phase 1: Worktree (if enabled and not yet created) ---
+  if (ctrl.use_worktrees && !task.worktreeDir) {
+    const worktree = require('../worktree');
+    const { resolveRepoRoot, validateRepoRoot } = require('../repo-resolver');
+    const repoRoot = resolveRepoRoot(task, board) || path.resolve(__dirname, '..', '..');
+
+    const validation = validateRepoRoot(repoRoot, task.source?.repo);
+    if (!validation.valid) {
+      console.error(`[dispatchTask:${taskId}] repo validation failed: ${validation.error}`);
+      task.status = 'blocked';
+      task.blocker = { reason: `Repo validation failed: ${validation.error}`, askedAt: helpers.nowIso() };
+      helpers.writeBoard(board);
+      helpers.appendLog({ ts: helpers.nowIso(), event: 'dispatch_blocked', taskId, source, error: validation.error });
+      helpers.broadcastSSE('board', board);
+      return { dispatched: false, reason: validation.error };
+    }
+
+    try {
+      const wt = worktree.createWorktree(repoRoot, taskId);
+      task.worktreeDir = wt.worktreePath;
+      task.worktreeBranch = wt.branch;
+      console.log(`[dispatchTask:${taskId}] worktree: ${wt.worktreePath}`);
+    } catch (err) {
+      console.error(`[dispatchTask:${taskId}] worktree failed: ${err.message}`);
+      task.status = 'blocked';
+      task.blocker = { reason: `Worktree creation failed: ${err.message}`, askedAt: helpers.nowIso() };
+      helpers.writeBoard(board);
+      helpers.appendLog({ ts: helpers.nowIso(), event: 'dispatch_blocked', taskId, source, error: err.message });
+      helpers.broadcastSSE('board', board);
+      return { dispatched: false, reason: err.message };
+    }
+  }
+
+  // --- Phase 2: Step pipeline (if enabled) ---
+  if (ctrl.use_step_pipeline && deps.stepWorker) {
+    console.log(`[dispatchTask:${taskId}] step-pipeline via ${source}`);
+    const runId = helpers.uid('run');
+    task.steps = mgmt.generateStepsForTask(task, runId, task.pipeline || null, board);
+    task.status = 'in_progress';
+    task.startedAt = task.startedAt || helpers.nowIso();
+    task.history = task.history || [];
+    task.history.push({ ts: helpers.nowIso(), status: 'in_progress', by: source, runtime: 'step-pipeline' });
+    if (board.taskPlan) board.taskPlan.phase = 'executing';
+
+    task.budget = { limits: { ...routeEngine.BUDGET_DEFAULTS }, used: { llm_calls: 0, tokens: 0, wall_clock_ms: 0, steps: 0 } };
+
+    mgmt.ensureEvolutionFields(board);
+    board.signals.push({
+      id: helpers.uid('sig'), ts: helpers.nowIso(), by: source,
+      type: 'steps_created', content: `${taskId} steps created (${task.steps.length})`,
+      refs: [taskId], data: { taskId, runId, count: task.steps.length },
+    });
+    if (board.signals.length > 500) board.signals = board.signals.slice(-500);
+
+    const firstStep = task.steps[0];
+    const runState = { task, steps: task.steps, run_id: runId, budget: task.budget };
+    const decision = { action: 'next_step', next_step: { step_id: firstStep.step_id, step_type: firstStep.type } };
+    const envelope = deps.contextCompiler.buildEnvelope(decision, runState, deps);
+
+    if (envelope) {
+      deps.artifactStore.writeArtifact(envelope.run_id, envelope.step_id, 'input', envelope);
+      deps.stepSchema.transitionStep(firstStep, 'running', {
+        locked_by: source,
+        input_ref: deps.artifactStore.artifactPath(envelope.run_id, envelope.step_id, 'input'),
+      });
+      helpers.writeBoard(board);
+      helpers.appendLog({ ts: helpers.nowIso(), event: 'step_pipeline_started', taskId, runId, firstStep: firstStep.step_id, source });
+      deps.stepWorker.executeStep(envelope, helpers.readBoard(), helpers).catch(err =>
+        console.error(`[dispatchTask:${taskId}] step execution error:`, err.message));
+    } else {
+      helpers.writeBoard(board);
+      console.error(`[dispatchTask:${taskId}] failed to build envelope for first step`);
+    }
+    return { dispatched: true, mode: 'step-pipeline', runId };
+  }
+
+  // --- Phase 3: Legacy single-shot dispatch ---
+  console.log(`[dispatchTask:${taskId}] legacy dispatch via ${source}`);
+
   const sessionId = task.childSessionKey || board.conversations?.[0]?.sessionIds?.[task.assignee] || null;
-  const plan = mgmt.buildDispatchPlan(board, task, { mode: 'redispatch', workingDir: task.worktreeDir || null });
+  const dispatchOpts = { mode, workingDir: task.worktreeDir || null };
+  if (opts.runtimeOverride) dispatchOpts.runtimeHint = opts.runtimeOverride;
+  const plan = mgmt.buildDispatchPlan(board, task, dispatchOpts);
   plan.sessionId = plan.sessionId || sessionId;
+  if (opts.onActivity) plan.onActivity = opts.onActivity;
   logDispatchPreflight(plan, task, deps, helpers);
 
-  const preferredModel = plan.modelHint;
-
+  // Update status
   task.status = 'in_progress';
+  task.startedAt = task.startedAt || helpers.nowIso();
   task.history = task.history || [];
-  task.history.push({ ts: helpers.nowIso(), status: 'in_progress', by: 'auto-redispatch', attempt: task.reviewAttempts, model: preferredModel || undefined, runtime: plan.runtimeHint, runtimeRationale: plan.runtimeSelection?.rationale, injectedLessons: plan.injectedLessonCount || 0 });
-  task.lastDispatchModel = preferredModel || null;
+  task.history.push({
+    ts: helpers.nowIso(), status: 'in_progress', by: source,
+    model: plan.modelHint || undefined,
+    runtime: plan.runtimeHint,
+    runtimeRationale: plan.runtimeSelection?.rationale,
+    injectedLessons: plan.injectedLessonCount || 0,
+    ...(task.reviewAttempts ? { attempt: task.reviewAttempts } : {}),
+  });
+  task.lastDispatchModel = plan.modelHint || null;
+  if (board.taskPlan) board.taskPlan.phase = 'executing';
 
-  // S5: Write dispatch state — prepared
+  // Write dispatch state
   task.dispatch = {
     version: mgmt.DISPATCH_PLAN_VERSION,
-    state: 'prepared',
+    state: 'dispatching',
     planId: plan.planId,
     runtime: plan.runtimeHint,
     agentId: plan.agentId,
     model: plan.modelHint || null,
     timeoutSec: plan.timeoutSec || 300,
     preparedAt: plan.createdAt,
-    startedAt: null,
+    startedAt: helpers.nowIso(),
     finishedAt: null,
     sessionId: plan.sessionId || null,
     lastError: null,
   };
 
-  const conv = board.conversations?.[0];
-  if (conv) {
-    pushMessage(conv, {
-      id: helpers.uid('msg'), ts: helpers.nowIso(), type: 'system', from: 'system', to: task.assignee,
-      text: `[Auto Re-dispatch ${task.id}] 第 ${task.reviewAttempts} 次修正指令已發送 → ${assignee.displayName}${preferredModel ? `\nmodel: ${preferredModel}` : ''}`,
-    });
-  }
   helpers.writeBoard(board);
+  helpers.appendLog({
+    ts: helpers.nowIso(), event: 'task_dispatched', taskId,
+    assignee: task.assignee, source, planId: plan.planId,
+  });
 
-  helpers.appendLog({ ts: helpers.nowIso(), event: 'auto_redispatch', taskId: task.id, assignee: task.assignee, attempt: task.reviewAttempts, model: preferredModel || null });
-
-  // S5: Mark dispatching
-  task.dispatch.state = 'dispatching';
-  task.dispatch.startedAt = helpers.nowIso();
-  helpers.writeBoard(board);
-
-  // Dispatch via plan (runtime-neutral)
+  // Async runtime execution
   const rt = deps.getRuntime(plan.runtimeHint);
   rt.dispatch(plan).then(result => {
     const replyText = rt.extractReplyText(result.parsed, result.stdout);
     const newSessionId = rt.extractSessionId(result.parsed);
     const latestBoard = helpers.readBoard();
-    const latestTask = (latestBoard.taskPlan?.tasks || []).find(t => t.id === task.id);
+    const latestTask = (latestBoard.taskPlan?.tasks || []).find(t => t.id === taskId);
     const latestConv = latestBoard.conversations?.[0];
 
-    if (latestConv) {
-      if (newSessionId) latestConv.sessionIds[task.assignee] = newSessionId;
-      pushMessage(latestConv, {
-        id: helpers.uid('msg'), ts: helpers.nowIso(), type: 'message', from: task.assignee, to: 'human',
-        text: `[${task.id} Fix Reply]\n${replyText}`,
-        sessionId: newSessionId || sessionId,
-      });
-    }
-
-    if (latestTask && latestTask.status === 'in_progress') {
-      latestTask.lastReply = replyText;
-      latestTask.lastReplyAt = helpers.nowIso();
-    }
-
-    // S5: Mark dispatch completed
     if (latestTask) {
       latestTask.dispatch = latestTask.dispatch || {};
       latestTask.dispatch.state = 'completed';
       latestTask.dispatch.finishedAt = helpers.nowIso();
       latestTask.dispatch.sessionId = newSessionId || latestTask.dispatch.sessionId || null;
       latestTask.dispatch.lastError = null;
+      latestTask.lastReply = replyText;
+      latestTask.lastReplyAt = helpers.nowIso();
       if (result.usage) latestTask.dispatch.usage = result.usage;
     }
 
-    helpers.writeBoard(latestBoard);
-    helpers.appendLog({ ts: helpers.nowIso(), event: 'auto_redispatch_reply', taskId: task.id, reply: replyText.slice(0, 500) });
-    if (result.usage) helpers.appendLog({ ts: helpers.nowIso(), event: 'token_usage', taskId: task.id, usage: result.usage });
+    if (latestConv && newSessionId) {
+      latestConv.sessionIds = latestConv.sessionIds || {};
+      latestConv.sessionIds[task.assignee] = newSessionId;
+    }
+    if (latestConv) {
+      const prefix = mode === 'redispatch' ? `${taskId} Fix Reply` : `${taskId} Reply`;
+      pushMessage(latestConv, {
+        id: helpers.uid('msg'), ts: helpers.nowIso(), type: 'message',
+        from: task.assignee, to: 'human',
+        text: `[${prefix}]\n${replyText}`,
+        sessionId: newSessionId || sessionId,
+      });
+    }
 
-    // --- Usage tracking: auto re-dispatch (Path C) ---
-    const redispatchUserId = getUserIdForTask();
-    const redispatchDuration = latestTask?.dispatch?.startedAt
+    helpers.writeBoard(latestBoard);
+    helpers.broadcastSSE('board', latestBoard);
+    helpers.appendLog({ ts: helpers.nowIso(), event: 'dispatch_reply', taskId, source, agent: task.assignee, reply: replyText.slice(0, 500) });
+    if (result.usage) helpers.appendLog({ ts: helpers.nowIso(), event: 'token_usage', taskId, usage: result.usage });
+
+    // Usage tracking
+    const userId = getUserIdForTask();
+    const duration = latestTask?.dispatch?.startedAt
       ? Math.round((Date.now() - new Date(latestTask.dispatch.startedAt).getTime()) / 1000)
       : 0;
-    usage.record(redispatchUserId, 'dispatch', {
-      taskId: task.id,
-      runtime: plan.runtimeHint,
-      assignee: task.assignee,
-    });
-    usage.record(redispatchUserId, 'agent.runtime', {
-      taskId: task.id,
-      durationSec: redispatchDuration,
-      runtime: plan.runtimeHint,
-    });
-    const redispatchTokenUsage = rt.extractUsage?.(result.parsed, result.stdout);
-    if (redispatchTokenUsage) {
-      usage.record(redispatchUserId, 'api.tokens', {
-        taskId: task.id,
-        input: redispatchTokenUsage.inputTokens,
-        output: redispatchTokenUsage.outputTokens,
-        cost: redispatchTokenUsage.totalCost,
+    usage.record(userId, 'dispatch', { taskId, runtime: plan.runtimeHint, assignee: task.assignee });
+    usage.record(userId, 'agent.runtime', { taskId, durationSec: duration, runtime: plan.runtimeHint });
+    const tokenUsage = rt.extractUsage?.(result.parsed, result.stdout);
+    if (tokenUsage) {
+      usage.record(userId, 'api.tokens', {
+        taskId, input: tokenUsage.inputTokens, output: tokenUsage.outputTokens, cost: tokenUsage.totalCost,
       });
     }
   }).catch(err => {
+    console.error(`[dispatchTask:${taskId}:${source}] error:`, err.message);
     const latestBoard = helpers.readBoard();
-    const latestTask = (latestBoard.taskPlan?.tasks || []).find(t => t.id === task.id);
+    const latestTask = (latestBoard.taskPlan?.tasks || []).find(t => t.id === taskId);
     const latestConv = latestBoard.conversations?.[0];
-    if (latestTask) {
-      latestTask.status = 'blocked';
-      latestTask.blocker = { reason: `Re-dispatch failed: ${err.message}`, askedAt: helpers.nowIso() };
-      latestTask.history = latestTask.history || [];
-      latestTask.history.push({ ts: helpers.nowIso(), status: 'blocked', reason: err.message, by: 'auto-redispatch-error' });
 
-      // S5: Mark dispatch failed
+    if (latestTask) {
       latestTask.dispatch = latestTask.dispatch || {};
       latestTask.dispatch.state = 'failed';
       latestTask.dispatch.finishedAt = helpers.nowIso();
       latestTask.dispatch.lastError = err.message || String(err);
+
+      if (source === 'dispatch' || source === 'auto-redispatch') {
+        latestTask.status = 'blocked';
+        latestTask.blocker = { reason: `Dispatch failed: ${err.message}`, askedAt: helpers.nowIso() };
+        latestTask.history = latestTask.history || [];
+        latestTask.history.push({ ts: helpers.nowIso(), status: 'blocked', reason: err.message, by: `${source}-error` });
+      }
     }
+
     if (latestConv) {
       pushMessage(latestConv, {
-        id: helpers.uid('msg'), ts: helpers.nowIso(), type: 'error', from: 'system', to: 'human',
-        text: `[${task.id}] Auto re-dispatch failed: ${err.message}`,
+        id: helpers.uid('msg'), ts: helpers.nowIso(), type: 'error',
+        from: 'system', to: 'human',
+        text: `[${taskId}] Dispatch failed: ${err.message}`,
       });
     }
-    // Evolution Layer: emit error signal for redispatch failure
-    mgmt.ensureEvolutionFields(latestBoard);
-    latestBoard.signals.push({
-      id: helpers.uid('sig'),
-      ts: helpers.nowIso(),
-      by: 'server.js',
-      type: 'error',
-      content: `${task.id} redispatch failed: ${err.message}`,
-      refs: [task.id],
-      data: { taskId: task.id, error: err.message },
-    });
-    if (latestBoard.signals.length > 500) latestBoard.signals = latestBoard.signals.slice(-500);
-    helpers.writeBoard(latestBoard);
-    // Push notification: redispatch failed (fire-and-forget)
-    if (latestTask) {
-      push.notifyTaskEvent(PUSH_TOKENS_PATH, latestTask, 'dispatch.failed')
-        .catch(err2 => console.error('[push] redispatch-failed notify failed:', err2.message));
+
+    if (source === 'dispatch' || source === 'auto-redispatch') {
+      mgmt.ensureEvolutionFields(latestBoard);
+      latestBoard.signals.push({
+        id: helpers.uid('sig'), ts: helpers.nowIso(), by: 'dispatchTask',
+        type: 'error', content: `${taskId} dispatch failed: ${err.message}`,
+        refs: [taskId], data: { taskId, error: err.message, source },
+      });
+      if (latestBoard.signals.length > 500) latestBoard.signals = latestBoard.signals.slice(-500);
     }
-    console.error(`[redispatch:${task.id}] error: ${err.message}`);
+
+    helpers.writeBoard(latestBoard);
+    helpers.broadcastSSE('board', latestBoard);
+
+    if (latestTask && (source === 'dispatch' || source === 'auto-redispatch')) {
+      push.notifyTaskEvent(PUSH_TOKENS_PATH, latestTask, 'dispatch.failed')
+        .catch(err2 => console.error('[push] dispatch-failed notify:', err2.message));
+    }
   });
+
+  return { dispatched: true, planId: plan.planId, mode: 'legacy' };
 }
 
 // --- Auto-dispatch: automatically dispatch tasks when auto_dispatch control is enabled ---
 function tryAutoDispatch(taskId, deps, helpers) {
-  const { mgmt, usage } = deps;
+  const { mgmt } = deps;
   const board = helpers.readBoard();
   const ctrl = mgmt.getControls(board);
   if (!ctrl.auto_dispatch) return;
@@ -298,193 +412,8 @@ function tryAutoDispatch(taskId, deps, helpers) {
     }
   }
 
-  // Worktree creation: isolate each task in its own git worktree
-  if (ctrl.use_worktrees) {
-    const worktree = require('../worktree');
-    const { resolveRepoRoot, validateRepoRoot } = require('../repo-resolver');
-    const repoRoot = resolveRepoRoot(task, board) || path.resolve(__dirname, '..', '..');
-
-    const validation = validateRepoRoot(repoRoot, task.source?.repo);
-    if (!validation.valid) {
-      console.error(`[auto-dispatch:${taskId}] repo validation failed: ${validation.error}`);
-      task.status = 'blocked';
-      task.blocker = { reason: `Repo validation failed: ${validation.error}`, askedAt: helpers.nowIso() };
-      helpers.writeBoard(board);
-      helpers.appendLog({ ts: helpers.nowIso(), event: 'auto_dispatch_blocked', taskId, error: validation.error });
-      helpers.broadcastSSE('board', board);
-      return;
-    }
-
-    try {
-      const wt = worktree.createWorktree(repoRoot, taskId);
-      task.worktreeDir = wt.worktreePath;
-      task.worktreeBranch = wt.branch;
-      console.log(`[auto-dispatch:${taskId}] worktree created: ${wt.worktreePath} (repo: ${repoRoot})`);
-    } catch (err) {
-      console.error(`[auto-dispatch:${taskId}] worktree creation failed:`, err.message);
-      task.status = 'blocked';
-      task.blocker = { reason: `Worktree creation failed: ${err.message}`, askedAt: helpers.nowIso() };
-      helpers.writeBoard(board);
-      helpers.appendLog({ ts: helpers.nowIso(), event: 'auto_dispatch_blocked', taskId, error: err.message });
-      helpers.broadcastSSE('board', board);
-      return;
-    }
-  }
-
-  // --- Step-level dispatch (opt-in via controls.use_step_pipeline) ---
-  if (ctrl.use_step_pipeline && deps.stepWorker) {
-    console.log(`[auto-dispatch] step-pipeline for ${taskId}`);
-    const runId = helpers.uid('run');
-    task.steps = mgmt.generateStepsForTask(task, runId, task.pipeline || null, board);
-    task.status = 'in_progress';
-    task.startedAt = task.startedAt || helpers.nowIso();
-    task.history = task.history || [];
-    task.history.push({ ts: helpers.nowIso(), status: 'in_progress', by: 'auto-dispatch-steps', runtime: 'step-pipeline' });
-    if (board.taskPlan) board.taskPlan.phase = 'executing';
-
-    // Initialize budget
-    task.budget = { limits: { ...routeEngine.BUDGET_DEFAULTS }, used: { llm_calls: 0, tokens: 0, wall_clock_ms: 0, steps: 0 } };
-
-    // Emit steps_created signal
-    mgmt.ensureEvolutionFields(board);
-    board.signals.push({
-      id: helpers.uid('sig'), ts: helpers.nowIso(), by: 'auto-dispatch',
-      type: 'steps_created', content: `${taskId} steps created (${task.steps.length})`,
-      refs: [taskId], data: { taskId, runId, count: task.steps.length },
-    });
-    if (board.signals.length > 500) board.signals = board.signals.slice(-500);
-
-    // Build envelope for step[0] and dispatch
-    const firstStep = task.steps[0];
-    const runState = { task, steps: task.steps, run_id: runId, budget: task.budget };
-    const decision = { action: 'next_step', next_step: { step_id: firstStep.step_id, step_type: firstStep.type } };
-    const envelope = deps.contextCompiler.buildEnvelope(decision, runState, deps);
-
-    if (envelope) {
-      deps.artifactStore.writeArtifact(envelope.run_id, envelope.step_id, 'input', envelope);
-      deps.stepSchema.transitionStep(firstStep, 'running', {
-        locked_by: 'auto-dispatch',
-        input_ref: deps.artifactStore.artifactPath(envelope.run_id, envelope.step_id, 'input'),
-      });
-      helpers.writeBoard(board);
-      helpers.appendLog({ ts: helpers.nowIso(), event: 'step_pipeline_started', taskId, runId, firstStep: firstStep.step_id });
-      deps.stepWorker.executeStep(envelope, helpers.readBoard(), helpers).catch(err =>
-        console.error(`[auto-dispatch:${taskId}] step execution error:`, err.message));
-    } else {
-      helpers.writeBoard(board);
-      console.error(`[auto-dispatch:${taskId}] failed to build envelope for first step`);
-    }
-    return;  // skip legacy dispatch
-  }
-
-  // --- Legacy single-shot dispatch ---
-  console.log(`[auto-dispatch] dispatching ${taskId} to ${task.assignee}`);
-
-  const sessionId = board.conversations?.[0]?.sessionIds?.[task.assignee] || null;
-  const plan = mgmt.buildDispatchPlan(board, task, { mode: 'dispatch', workingDir: task.worktreeDir || null });
-  plan.sessionId = plan.sessionId || sessionId;
-  logDispatchPreflight(plan, task, deps, helpers);
-
-  // Transition dispatched -> in_progress
-  task.status = 'in_progress';
-  task.startedAt = task.startedAt || helpers.nowIso();
-  task.history = task.history || [];
-  task.history.push({
-    ts: helpers.nowIso(),
-    status: 'in_progress',
-    by: 'auto-dispatch',
-    model: plan.modelHint || undefined,
-    runtime: plan.runtimeHint,
-    runtimeRationale: plan.runtimeSelection?.rationale,
-    injectedLessons: plan.injectedLessonCount || 0,
-  });
-  task.lastDispatchModel = plan.modelHint || null;
-  if (board.taskPlan) board.taskPlan.phase = 'executing';
-
-  // Write dispatch state
-  task.dispatch = {
-    version: mgmt.DISPATCH_PLAN_VERSION,
-    state: 'dispatching',
-    planId: plan.planId,
-    runtime: plan.runtimeHint,
-    agentId: plan.agentId,
-    model: plan.modelHint || null,
-    timeoutSec: plan.timeoutSec,
-    preparedAt: plan.createdAt,
-    startedAt: helpers.nowIso(),
-    finishedAt: null,
-    sessionId: plan.sessionId || null,
-    lastError: null,
-  };
-
-  helpers.writeBoard(board);
-  helpers.appendLog({
-    ts: helpers.nowIso(),
-    event: 'task_auto_dispatched',
-    taskId,
-    assignee: task.assignee,
-    source: 'auto',
-    planId: plan.planId,
-  });
-
-  // Async runtime execution
-  const rt = deps.getRuntime(plan.runtimeHint);
-  rt.dispatch(plan).then(result => {
-    const replyText = rt.extractReplyText(result.parsed, result.stdout);
-    const newSessionId = rt.extractSessionId(result.parsed);
-    const latestBoard = helpers.readBoard();
-    const latestTask = (latestBoard.taskPlan?.tasks || []).find(t => t.id === taskId);
-
-    if (latestTask) {
-      latestTask.dispatch = latestTask.dispatch || {};
-      latestTask.dispatch.state = 'completed';
-      latestTask.dispatch.finishedAt = helpers.nowIso();
-      latestTask.dispatch.sessionId = newSessionId || latestTask.dispatch.sessionId || null;
-      latestTask.dispatch.lastError = null;
-      latestTask.lastReply = replyText;
-      latestTask.lastReplyAt = helpers.nowIso();
-      if (result.usage) latestTask.dispatch.usage = result.usage;
-    }
-
-    const latestConv = latestBoard.conversations?.[0];
-    if (latestConv) {
-      if (newSessionId) {
-        latestConv.sessionIds = latestConv.sessionIds || {};
-        latestConv.sessionIds[task.assignee] = newSessionId;
-      }
-      pushMessage(latestConv, {
-        id: helpers.uid('msg'), ts: helpers.nowIso(), type: 'message',
-        from: task.assignee, to: 'human',
-        text: `[Auto-dispatch ${taskId} Reply]\n${replyText}`,
-        sessionId: newSessionId || sessionId,
-      });
-    }
-
-    helpers.writeBoard(latestBoard);
-    helpers.broadcastSSE('board', latestBoard);
-    helpers.appendLog({
-      ts: helpers.nowIso(),
-      event: 'auto_dispatch_reply',
-      taskId,
-      agent: task.assignee,
-      source: 'auto',
-      reply: replyText.slice(0, 500),
-    });
-    if (result.usage) helpers.appendLog({ ts: helpers.nowIso(), event: 'token_usage', taskId, usage: result.usage });
-  }).catch(err => {
-    console.error(`[auto-dispatch:${taskId}] error: ${err.message}`);
-    const latestBoard = helpers.readBoard();
-    const latestTask = (latestBoard.taskPlan?.tasks || []).find(t => t.id === taskId);
-    if (latestTask) {
-      latestTask.dispatch = latestTask.dispatch || {};
-      latestTask.dispatch.state = 'failed';
-      latestTask.dispatch.finishedAt = helpers.nowIso();
-      latestTask.dispatch.lastError = err.message;
-      // Don't block -- keep as in_progress so human can retry
-    }
-    helpers.writeBoard(latestBoard);
-    helpers.broadcastSSE('board', latestBoard);
-  });
+  // Delegate to unified dispatchTask (handles worktree + step pipeline + legacy)
+  dispatchTask(task, board, deps, helpers, { source: 'auto-dispatch' });
 }
 
 // Brief helper functions (used by project creation)
@@ -1213,7 +1142,6 @@ module.exports = function tasksRoutes(req, res, helpers, deps) {
   const taskDispatchMatch = req.url.match(/^\/api\/tasks\/([^/]+)\/dispatch(\?|$)/);
   if (req.method === 'POST' && taskDispatchMatch) {
     const taskId = decodeURIComponent(taskDispatchMatch[1]);
-    // Parse ?runtime= query param for per-dispatch runtime override
     const dispatchUrl = new URL(req.url, 'http://localhost');
     const runtimeOverride = dispatchUrl.searchParams.get('runtime') || null;
     try {
@@ -1226,7 +1154,6 @@ module.exports = function tasksRoutes(req, res, helpers, deps) {
         return json(res, 400, { error: `Assignee ${task.assignee} is not an agent` });
       }
 
-      // Check dependencies
       const unmetDeps = (task.depends || []).filter(depId => {
         const dep = (board.taskPlan?.tasks || []).find(t => t.id === depId);
         return !dep || dep.status !== 'approved';
@@ -1235,173 +1162,18 @@ module.exports = function tasksRoutes(req, res, helpers, deps) {
         return json(res, 400, { error: `Unmet dependencies: ${unmetDeps.join(', ')}` });
       }
 
-      const sessionId = board.conversations?.[0]?.sessionIds?.[task.assignee] || null;
-
-      // S5: Build dispatch plan via management layer
-      const dispatchOpts = { mode: 'dispatch', requireTaskResult: false, workingDir: task.worktreeDir || null };
-      if (runtimeOverride) dispatchOpts.runtimeHint = runtimeOverride;
-      const plan = mgmt.buildDispatchPlan(board, task, dispatchOpts);
-      plan.sessionId = plan.sessionId || sessionId;
-      logDispatchPreflight(plan, task, deps, helpers);
-
-      const preferredModel = plan.modelHint;
-
-      // Update status
-      task.status = 'in_progress';
-      task.startedAt = task.startedAt || helpers.nowIso();
-      task.history = task.history || [];
-      task.history.push({ ts: helpers.nowIso(), status: 'in_progress', by: 'dispatch', model: preferredModel || undefined, runtime: plan.runtimeHint, runtimeRationale: plan.runtimeSelection?.rationale, injectedLessons: plan.injectedLessonCount || 0 });
-      task.lastDispatchModel = preferredModel || null;
-      board.taskPlan.phase = 'executing';
-
-      // S5: Write dispatch state — prepared
-      task.dispatch = {
-        version: mgmt.DISPATCH_PLAN_VERSION,
-        state: 'prepared',
-        planId: plan.planId,
-        runtime: plan.runtimeHint,
-        agentId: plan.agentId,
-        model: plan.modelHint || null,
-        timeoutSec: plan.timeoutSec || 300,
-        preparedAt: plan.createdAt,
-        startedAt: null,
-        finishedAt: null,
-        sessionId: plan.sessionId || null,
-        lastError: null,
-      };
-
+      // Pre-dispatch notification
       const conv = board.conversations?.[0];
       if (conv) {
         pushMessage(conv, {
-          id: helpers.uid('msg'),
-          ts: helpers.nowIso(),
-          type: 'system',
-          from: 'human',
-          to: task.assignee,
-          text: `[Dispatch ${task.id}] ${task.title} → ${assignee.displayName}${preferredModel ? `\nmodel: ${preferredModel}` : ''}`,
+          id: helpers.uid('msg'), ts: helpers.nowIso(), type: 'system',
+          from: 'human', to: task.assignee,
+          text: `[Dispatch ${task.id}] ${task.title} → ${assignee.displayName}`,
         });
       }
-      helpers.writeBoard(board);
 
-      // S5: Mark dispatching
-      task.dispatch.state = 'dispatching';
-      task.dispatch.startedAt = helpers.nowIso();
-      helpers.writeBoard(board);
-
-      // Fire and forget — agent runs async via dispatch plan (runtime-neutral)
-      const rt2 = deps.getRuntime(plan.runtimeHint);
-      rt2.dispatch(plan).then(result => {
-        const replyText = rt2.extractReplyText(result.parsed, result.stdout);
-        const newSessionId = rt2.extractSessionId(result.parsed);
-        const latestBoard = helpers.readBoard();
-        const latestTask = (latestBoard.taskPlan?.tasks || []).find(t => t.id === taskId);
-        const latestConv = latestBoard.conversations?.[0];
-
-        if (latestConv) {
-          if (newSessionId) latestConv.sessionIds[task.assignee] = newSessionId;
-          pushMessage(latestConv, {
-            id: helpers.uid('msg'),
-            ts: helpers.nowIso(),
-            type: 'message',
-            from: task.assignee,
-            to: 'human',
-            text: `[${task.id} Reply]\n${replyText}`,
-            sessionId: newSessionId || sessionId,
-          });
-        }
-
-        // Don't auto-parse BLOCKED/COMPLETED from text — let Human decide via UI buttons
-        if (latestTask && latestTask.status === 'in_progress') {
-          latestTask.lastReply = replyText;
-          latestTask.lastReplyAt = helpers.nowIso();
-        }
-
-        // S5: Mark dispatch completed
-        if (latestTask) {
-          latestTask.dispatch = latestTask.dispatch || {};
-          latestTask.dispatch.state = 'completed';
-          latestTask.dispatch.finishedAt = helpers.nowIso();
-          latestTask.dispatch.sessionId = newSessionId || latestTask.dispatch.sessionId || null;
-          latestTask.dispatch.lastError = null;
-          if (result.usage) latestTask.dispatch.usage = result.usage;
-        }
-
-        helpers.writeBoard(latestBoard);
-        helpers.appendLog({ ts: helpers.nowIso(), event: 'task_dispatch_reply', taskId, agent: task.assignee, model: preferredModel || null, reply: replyText.slice(0, 500) });
-        if (result.usage) helpers.appendLog({ ts: helpers.nowIso(), event: 'token_usage', taskId, usage: result.usage });
-
-        // --- Usage tracking: per-task dispatch (Path A) ---
-        const dispatchUserId = getUserIdForTask();
-        const dispatchDuration = latestTask?.dispatch?.startedAt
-          ? Math.round((Date.now() - new Date(latestTask.dispatch.startedAt).getTime()) / 1000)
-          : 0;
-        usage.record(dispatchUserId, 'dispatch', {
-          taskId,
-          runtime: plan.runtimeHint,
-          assignee: task.assignee,
-        });
-        usage.record(dispatchUserId, 'agent.runtime', {
-          taskId,
-          durationSec: dispatchDuration,
-          runtime: plan.runtimeHint,
-        });
-        const tokenUsage = rt2.extractUsage?.(result.parsed, result.stdout);
-        if (tokenUsage) {
-          usage.record(dispatchUserId, 'api.tokens', {
-            taskId,
-            input: tokenUsage.inputTokens,
-            output: tokenUsage.outputTokens,
-            cost: tokenUsage.totalCost,
-          });
-        }
-      }).catch(err => {
-        const latestBoard = helpers.readBoard();
-        const latestTask = (latestBoard.taskPlan?.tasks || []).find(t => t.id === taskId);
-        const latestConv = latestBoard.conversations?.[0];
-        if (latestTask) {
-          latestTask.status = 'blocked';
-          latestTask.blocker = { reason: `Dispatch failed: ${err.message}`, askedAt: helpers.nowIso() };
-          latestTask.history = latestTask.history || [];
-          latestTask.history.push({ ts: helpers.nowIso(), status: 'blocked', reason: err.message });
-
-          // S5: Mark dispatch failed
-          latestTask.dispatch = latestTask.dispatch || {};
-          latestTask.dispatch.state = 'failed';
-          latestTask.dispatch.finishedAt = helpers.nowIso();
-          latestTask.dispatch.lastError = err.message || String(err);
-        }
-        if (latestConv) {
-          pushMessage(latestConv, {
-            id: helpers.uid('msg'),
-            ts: helpers.nowIso(),
-            type: 'error',
-            from: 'system',
-            to: 'human',
-            text: `[${taskId}] Dispatch failed: ${err.message}`,
-          });
-        }
-        // Evolution Layer: emit error signal for dispatch failure
-        mgmt.ensureEvolutionFields(latestBoard);
-        latestBoard.signals.push({
-          id: helpers.uid('sig'),
-          ts: helpers.nowIso(),
-          by: 'server.js',
-          type: 'error',
-          content: `${taskId} dispatch failed: ${err.message}`,
-          refs: [taskId],
-          data: { taskId, error: err.message },
-        });
-        if (latestBoard.signals.length > 500) latestBoard.signals = latestBoard.signals.slice(-500);
-        helpers.writeBoard(latestBoard);
-        // Push notification: dispatch failed (fire-and-forget)
-        if (latestTask) {
-          push.notifyTaskEvent(PUSH_TOKENS_PATH, latestTask, 'dispatch.failed')
-            .catch(err2 => console.error('[push] dispatch-failed notify failed:', err2.message));
-        }
-        console.error(`[task dispatch error] ${taskId}: ${err.message}`);
-      });
-
-      json(res, 200, { ok: true, taskId, dispatched: true });
+      const result = dispatchTask(task, board, deps, helpers, { source: 'dispatch', runtimeOverride });
+      json(res, 200, { ok: true, taskId, dispatched: result.dispatched, planId: result.planId });
     } catch (error) {
       json(res, 500, { error: error.message });
     }
@@ -1625,106 +1397,8 @@ module.exports = function tasksRoutes(req, res, helpers, deps) {
         return json(res, 200, { ok: true, dispatched: false, reason: 'no ready tasks' });
       }
 
-      const assignee = participantById(board, task.assignee);
-      const sessionId = board.conversations?.[0]?.sessionIds?.[task.assignee] || null;
-      const plan = mgmt.buildDispatchPlan(board, task, { mode: 'dispatch', workingDir: task.worktreeDir || null });
-      plan.sessionId = plan.sessionId || sessionId;
-      logDispatchPreflight(plan, task, deps, helpers);
-
-      // Update task status
-      task.status = 'in_progress';
-      task.startedAt = task.startedAt || helpers.nowIso();
-      task.history = task.history || [];
-      task.history.push({ ts: helpers.nowIso(), status: 'in_progress', by: 'dispatch-next', model: plan.modelHint || undefined, runtime: plan.runtimeHint, runtimeRationale: plan.runtimeSelection?.rationale, injectedLessons: plan.injectedLessonCount || 0 });
-      task.lastDispatchModel = plan.modelHint || null;
-      if (board.taskPlan) board.taskPlan.phase = 'executing';
-
-      // Write dispatch state
-      task.dispatch = {
-        version: mgmt.DISPATCH_PLAN_VERSION,
-        state: 'dispatching',
-        planId: plan.planId,
-        runtime: plan.runtimeHint,
-        agentId: plan.agentId,
-        model: plan.modelHint || null,
-        timeoutSec: plan.timeoutSec,
-        preparedAt: plan.createdAt,
-        startedAt: helpers.nowIso(),
-        finishedAt: null,
-        sessionId: plan.sessionId || null,
-        lastError: null,
-      };
-
-      helpers.writeBoard(board);
-      helpers.broadcastSSE('board', board);
-
-      // Async execution (runtime-neutral)
-      const rt3 = deps.getRuntime(plan.runtimeHint);
-      rt3.dispatch(plan).then(result => {
-        const replyText = rt3.extractReplyText(result.parsed, result.stdout);
-        const newSessionId = rt3.extractSessionId(result.parsed);
-        const latestBoard = helpers.readBoard();
-        const latestTask = (latestBoard.taskPlan?.tasks || []).find(t => t.id === task.id);
-        const latestConv = latestBoard.conversations?.[0];
-
-        if (latestTask) {
-          latestTask.dispatch = latestTask.dispatch || {};
-          latestTask.dispatch.state = 'completed';
-          latestTask.dispatch.finishedAt = helpers.nowIso();
-          latestTask.dispatch.sessionId = newSessionId || latestTask.dispatch.sessionId || null;
-          latestTask.dispatch.lastError = null;
-          latestTask.lastReply = replyText;
-          latestTask.lastReplyAt = helpers.nowIso();
-          if (result.usage) latestTask.dispatch.usage = result.usage;
-        }
-        if (latestConv && newSessionId) {
-          latestConv.sessionIds = latestConv.sessionIds || {};
-          latestConv.sessionIds[task.assignee] = newSessionId;
-        }
-        helpers.writeBoard(latestBoard);
-        helpers.broadcastSSE('board', latestBoard);
-        helpers.appendLog({ ts: helpers.nowIso(), event: 'dispatch_next_reply', taskId: task.id, agent: task.assignee, reply: replyText.slice(0, 500) });
-        if (result.usage) helpers.appendLog({ ts: helpers.nowIso(), event: 'token_usage', taskId: task.id, usage: result.usage });
-
-        // --- Usage tracking: dispatch-next ---
-        const dnUserId = getUserIdForTask();
-        const dnDuration = latestTask?.dispatch?.startedAt
-          ? Math.round((Date.now() - new Date(latestTask.dispatch.startedAt).getTime()) / 1000)
-          : 0;
-        usage.record(dnUserId, 'dispatch', {
-          taskId: task.id,
-          runtime: plan.runtimeHint,
-          assignee: task.assignee,
-        });
-        usage.record(dnUserId, 'agent.runtime', {
-          taskId: task.id,
-          durationSec: dnDuration,
-          runtime: plan.runtimeHint,
-        });
-        const dnTokenUsage = rt3.extractUsage?.(result.parsed, result.stdout);
-        if (dnTokenUsage) {
-          usage.record(dnUserId, 'api.tokens', {
-            taskId: task.id,
-            input: dnTokenUsage.inputTokens,
-            output: dnTokenUsage.outputTokens,
-            cost: dnTokenUsage.totalCost,
-          });
-        }
-      }).catch(err => {
-        const latestBoard = helpers.readBoard();
-        const latestTask = (latestBoard.taskPlan?.tasks || []).find(t => t.id === task.id);
-        if (latestTask) {
-          latestTask.dispatch = latestTask.dispatch || {};
-          latestTask.dispatch.state = 'failed';
-          latestTask.dispatch.finishedAt = helpers.nowIso();
-          latestTask.dispatch.lastError = err.message;
-        }
-        helpers.writeBoard(latestBoard);
-        helpers.broadcastSSE('board', latestBoard);
-        console.error(`[dispatch-next error] ${task.id}: ${err.message}`);
-      });
-
-      return json(res, 202, { ok: true, dispatched: true, taskId: task.id, planId: plan.planId });
+      const result = dispatchTask(task, board, deps, helpers, { source: 'dispatch-next' });
+      return json(res, 202, { ok: true, dispatched: result.dispatched, taskId: task.id, planId: result.planId });
     } catch (error) {
       return json(res, 500, { error: error.message });
     }
@@ -1843,85 +1517,9 @@ module.exports = function tasksRoutes(req, res, helpers, deps) {
         if (payload.autoStart) {
           const nextTask = mgmt.pickNextTask(board);
           if (nextTask) {
-            const plan = mgmt.buildDispatchPlan(board, nextTask, { mode: 'dispatch', workingDir: nextTask.worktreeDir || null });
-            const sid = board.conversations?.[0]?.sessionIds?.[nextTask.assignee] || null;
-            plan.sessionId = plan.sessionId || sid;
-            logDispatchPreflight(plan, nextTask, deps, helpers);
-
-            nextTask.status = 'in_progress';
-            nextTask.startedAt = helpers.nowIso();
-            nextTask.history = nextTask.history || [];
-            nextTask.history.push({ ts: helpers.nowIso(), status: 'in_progress', by: 'project-autostart', runtime: plan.runtimeHint, runtimeRationale: plan.runtimeSelection?.rationale, injectedLessons: plan.injectedLessonCount || 0 });
-
-            nextTask.dispatch = {
-              version: mgmt.DISPATCH_PLAN_VERSION,
-              state: 'dispatching',
-              planId: plan.planId,
-              runtime: plan.runtimeHint,
-              agentId: plan.agentId,
-              model: plan.modelHint || null,
-              timeoutSec: plan.timeoutSec,
-              preparedAt: plan.createdAt,
-              startedAt: helpers.nowIso(),
-              finishedAt: null, sessionId: null, lastError: null,
-            };
-            helpers.writeBoard(board);
-
-            const rt4 = deps.getRuntime(plan.runtimeHint);
-            rt4.dispatch(plan).then(r => {
-              const lb = helpers.readBoard();
-              const lt = (lb.taskPlan?.tasks || []).find(t => t.id === nextTask.id);
-              if (lt) {
-                lt.dispatch = lt.dispatch || {};
-                lt.dispatch.state = 'completed';
-                lt.dispatch.finishedAt = helpers.nowIso();
-                lt.dispatch.sessionId = rt4.extractSessionId(r.parsed) || null;
-                lt.lastReply = rt4.extractReplyText(r.parsed, r.stdout);
-                lt.lastReplyAt = helpers.nowIso();
-                if (r.usage) lt.dispatch.usage = r.usage;
-              }
-              helpers.writeBoard(lb);
-              if (r.usage) helpers.appendLog({ ts: helpers.nowIso(), event: 'token_usage', taskId: nextTask.id, usage: r.usage });
-              helpers.broadcastSSE('board', lb);
-
-              // --- Usage tracking: project autoStart ---
-              const asUserId = getUserIdForTask();
-              const asDuration = lt?.dispatch?.startedAt
-                ? Math.round((Date.now() - new Date(lt.dispatch.startedAt).getTime()) / 1000)
-                : 0;
-              usage.record(asUserId, 'dispatch', {
-                taskId: nextTask.id,
-                runtime: plan.runtimeHint,
-                assignee: nextTask.assignee,
-              });
-              usage.record(asUserId, 'agent.runtime', {
-                taskId: nextTask.id,
-                durationSec: asDuration,
-                runtime: plan.runtimeHint,
-              });
-              const asTokenUsage = rt4.extractUsage?.(r.parsed, r.stdout);
-              if (asTokenUsage) {
-                usage.record(asUserId, 'api.tokens', {
-                  taskId: nextTask.id,
-                  input: asTokenUsage.inputTokens,
-                  output: asTokenUsage.outputTokens,
-                  cost: asTokenUsage.totalCost,
-                });
-              }
-            }).catch(err => {
-              const lb = helpers.readBoard();
-              const lt = (lb.taskPlan?.tasks || []).find(t => t.id === nextTask.id);
-              if (lt) {
-                lt.dispatch = lt.dispatch || {};
-                lt.dispatch.state = 'failed';
-                lt.dispatch.finishedAt = helpers.nowIso();
-                lt.dispatch.lastError = err.message;
-              }
-              helpers.writeBoard(lb);
-            });
-
+            const dr = dispatchTask(nextTask, board, deps, helpers, { source: 'project-autostart' });
             result.autoStarted = nextTask.id;
-            result.planId = plan.planId;
+            result.planId = dr.planId;
           }
         }
 
@@ -2006,4 +1604,5 @@ module.exports = function tasksRoutes(req, res, helpers, deps) {
 module.exports.init = function(deps, helpers) {
   deps.tryAutoDispatch = (taskId) => tryAutoDispatch(taskId, deps, helpers);
   deps.redispatchTask = (board, task) => redispatchTask(board, task, deps, helpers);
+  deps.dispatchTask = (task, board2, opts) => dispatchTask(task, board2, deps, helpers, opts);
 };
