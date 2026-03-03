@@ -69,11 +69,14 @@ const ROOT = path.resolve(DIR, '..');
 const DATA_DIR = process.env.DATA_DIR || DIR;
 const PUSH_TOKENS_PATH = path.join(DATA_DIR, 'push-tokens.json');
 
+const HOST = process.env.HOST || process.env.BIND_ADDRESS || undefined;
+
 const ctx = bb.createContext({
   dir: ROOT,
   boardPath: path.join(DATA_DIR, 'board.json'),
   logPath: path.join(DATA_DIR, 'task-log.jsonl'),
   port: Number(process.env.PORT || 3461),
+  host: HOST,
   boardType: 'task-engine',
 });
 
@@ -345,6 +348,21 @@ process.on('SIGINT', gracefulShutdown);
   const ctrl = mgmt.getControls(board);
   if (ctrl.auto_dispatch && !ctrl.target_repo) {
     console.warn('[WARN] auto_dispatch is ON but target_repo is not set. Tasks will dispatch against karvi codebase (dogfood mode).');
+  }
+}
+
+// Security guard: block startup on non-localhost bind without API token
+// Only fires when HOST is explicitly set — default (undefined) is safe for local dev
+{
+  const isLocal = !HOST || ['127.0.0.1', 'localhost', '::1'].includes(HOST);
+  if (!isLocal && !ctx.apiToken) {
+    if (process.argv.includes('--force')) {
+      console.warn('[SECURITY] API token not set but --force used. Proceeding without auth on %s:%d', HOST, ctx.port);
+    } else {
+      console.error('[SECURITY] API token not set but server is binding to %s:%d', HOST, ctx.port);
+      console.error('           Set KARVI_API_TOKEN or use --force to bypass this check');
+      process.exit(1);
+    }
   }
 }
 
