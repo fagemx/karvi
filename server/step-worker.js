@@ -35,24 +35,28 @@ function createStepWorker(deps) {
     const task = (board.taskPlan?.tasks || []).find(t => t.id === envelope.task_id);
     if (!task) throw new Error(`Task ${envelope.task_id} not found`);
 
-    // 1. Build dispatch plan
+    // 1. Build dispatch plan — compute timeout once, share between lock and runtime
+    const timeoutMs = envelope.timeout_ms || 300_000;
+    const timeoutSec = Math.ceil(timeoutMs / 1000);
     const plan = mgmt.buildDispatchPlan(board, task, {
       mode: 'dispatch',
-      timeoutSec: Math.ceil(envelope.timeout_ms / 1000),
+      timeoutSec,
       steps: task.steps,
       workingDir: task.worktreeDir || null,
     });
+    // Enforce: runtime timeout must match lock timeout (prevent misalignment)
+    plan.timeoutSec = timeoutSec;
     const stepMessage = buildStepMessage(envelope, plan.artifacts);
     plan.message = stepMessage;
     plan.stepId = envelope.step_id;
     plan.stepType = envelope.step_type;
 
-    // 2. Set lock with expiry before dispatch
+    // 2. Set lock with expiry before dispatch (uses same timeoutMs as runtime)
     const lockBoard = helpers.readBoard();
     const lockTask = (lockBoard.taskPlan?.tasks || []).find(t => t.id === envelope.task_id);
     const lockStep = lockTask?.steps?.find(s => s.step_id === envelope.step_id);
     if (lockStep && lockStep.state === 'running') {
-      lockStep.lock_expires_at = new Date(Date.now() + envelope.timeout_ms + LOCK_GRACE_MS).toISOString();
+      lockStep.lock_expires_at = new Date(Date.now() + timeoutMs + LOCK_GRACE_MS).toISOString();
       lockStep.locked_by = 'step-worker';
       helpers.writeBoard(lockBoard);
     }
@@ -101,7 +105,7 @@ function createStepWorker(deps) {
           const hbTask = (hbBoard.taskPlan?.tasks || []).find(t => t.id === envelope.task_id);
           const hbStep = hbTask?.steps?.find(s => s.step_id === envelope.step_id);
           if (hbStep && hbStep.state === 'running' && hbStep.locked_by === 'step-worker') {
-            hbStep.lock_expires_at = new Date(Date.now() + envelope.timeout_ms + LOCK_GRACE_MS).toISOString();
+            hbStep.lock_expires_at = new Date(Date.now() + timeoutMs + LOCK_GRACE_MS).toISOString();
             helpers.writeBoard(hbBoard);
           }
         } catch {}
