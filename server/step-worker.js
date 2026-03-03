@@ -199,6 +199,34 @@ function createStepWorker(deps) {
         }
       }
 
+      // 5b2. Protected code guard — verify no @protected annotations were violated
+      if (status === 'succeeded') {
+        const { validateProtectedDiff } = require('./protected-diff-guard');
+        const guardResult = validateProtectedDiff(plan.workingDir || plan.cwd);
+        if (!guardResult.ok) {
+          const violationSummary = guardResult.violations
+            .map(v => `${v.file}:${v.line} — decision:${v.key} (${v.reason})`)
+            .join('; ');
+          status = 'failed';
+          failure = {
+            failure_signature: `Protected code violation: ${violationSummary}`.slice(0, 500),
+            failure_mode: 'PROTECTED_CODE_VIOLATION',
+            retryable: true,
+          };
+          summary = `Agent modified protected code. Violations: ${violationSummary}`.slice(0, 500);
+          // Attempt revert if auto-finalize already committed
+          try {
+            if (!postCheckResult?.hasUncommittedChanges) {
+              execSync('git revert --no-edit HEAD', {
+                cwd: plan.workingDir || plan.cwd,
+                encoding: 'utf8',
+                timeout: 10000,
+              });
+            }
+          } catch { /* revert failed — violation report triggers retry anyway */ }
+        }
+      }
+
       // 5c. Contract validation — verify declared deliverables exist
       if (status === 'succeeded' && envelope.contract?.deliverable) {
         const contractResult = validateContract(
@@ -635,6 +663,13 @@ function buildStepMessage(envelope, upstreamArtifacts) {
     lines.push('', '🔄 REVISION — the review found issues to fix:');
     lines.push(envelope.review_feedback);
     lines.push('', 'Fix the issues listed above. Do NOT re-implement from scratch — only address the review findings.');
+  }
+
+  // Protected edda decisions — prevent agents from reverting critical fixes
+  const mgmt = require('./management');
+  const protectedLines = mgmt.buildProtectedDecisionsSection();
+  if (protectedLines.length > 0) {
+    lines.push(...protectedLines);
   }
 
   // Instruct agent to output structured result when done
