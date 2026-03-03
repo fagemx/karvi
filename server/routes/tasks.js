@@ -1210,9 +1210,12 @@ module.exports = function tasksRoutes(req, res, helpers, deps) {
   }
 
   // --- Per-task dispatch: send task directly to assigned agent ---
-  const taskDispatchMatch = req.url.match(/^\/api\/tasks\/([^/]+)\/dispatch$/);
+  const taskDispatchMatch = req.url.match(/^\/api\/tasks\/([^/]+)\/dispatch/);
   if (req.method === 'POST' && taskDispatchMatch) {
     const taskId = decodeURIComponent(taskDispatchMatch[1]);
+    // Parse ?runtime=opencode query param for per-dispatch runtime override
+    const dispatchUrl = new URL(req.url, 'http://localhost');
+    const runtimeOverride = dispatchUrl.searchParams.get('runtime') || null;
     try {
       const board = helpers.readBoard();
       const task = (board.taskPlan?.tasks || []).find(t => t.id === taskId);
@@ -1235,7 +1238,9 @@ module.exports = function tasksRoutes(req, res, helpers, deps) {
       const sessionId = board.conversations?.[0]?.sessionIds?.[task.assignee] || null;
 
       // S5: Build dispatch plan via management layer
-      const plan = mgmt.buildDispatchPlan(board, task, { mode: 'dispatch', requireTaskResult: false });
+      const dispatchOpts = { mode: 'dispatch', requireTaskResult: false };
+      if (runtimeOverride) dispatchOpts.runtimeHint = runtimeOverride;
+      const plan = mgmt.buildDispatchPlan(board, task, dispatchOpts);
       plan.sessionId = plan.sessionId || sessionId;
       logDispatchPreflight(plan, task, deps, helpers);
 
