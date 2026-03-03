@@ -66,7 +66,9 @@ function dispatch(plan) {
     const args = ['run', '--format', 'json'];
 
     if (plan.sessionId) args.push('--session', plan.sessionId);
-    if (plan.modelHint) args.push('--model', plan.modelHint);
+    // Model priority: plan.modelHint > OPENCODE_MODEL env > opencode default config
+    const model = plan.modelHint || process.env.OPENCODE_MODEL || null;
+    if (model) args.push('--model', model);
 
     const workDir = plan.workingDir || path.resolve(DIR, '..');
     args.push('--dir', workDir);
@@ -75,7 +77,7 @@ function dispatch(plan) {
 
     const timeoutMs = (plan.timeoutSec || 300) * 1000;
     console.log('[opencode-rt] spawn:', OPENCODE_EXE);
-    console.log('[opencode-rt] model:', plan.modelHint || '(default)');
+    console.log('[opencode-rt] model:', model || '(default)');
     console.log('[opencode-rt] message length:', plan.message?.length || 0);
     console.log('[opencode-rt] cwd:', workDir, 'timeout:', timeoutMs);
 
