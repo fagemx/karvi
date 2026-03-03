@@ -642,6 +642,69 @@ function buildProtectedDecisionsSection() {
   return lines;
 }
 
+/**
+ * Build a "Coding Standards" section by extracting key rules from skill files.
+ * Cached per-process so skill files are read only once.
+ * @returns {string[]} lines to inject into dispatch prompt
+ */
+function buildSkillContextSection() {
+  if (!buildSkillContextSection._cache) {
+    const excerpts = [];
+    const skillDir = path.join(__dirname, 'skills');
+
+    // Extract coding rules from engineer-playbook
+    try {
+      const ep = fs.readFileSync(path.join(skillDir, 'engineer-playbook', 'SKILL.md'), 'utf8');
+      // Look for code style / coding rules section
+      const match = ep.match(/## (?:Step 4|Code Style|代碼規範|coding|執行任務)[\s\S]*?(?=\n## |\n---)/i);
+      if (match) excerpts.push(match[0].trim().slice(0, 600));
+    } catch {}
+
+    // Extract constraints from blackboard-basics
+    try {
+      const bb = fs.readFileSync(path.join(skillDir, 'blackboard-basics', 'SKILL.md'), 'utf8');
+      const match = bb.match(/## (?:設計約束|Design Constraints|6 大約束)[\s\S]*?(?=\n## |\n---)/i);
+      if (match) excerpts.push(match[0].trim().slice(0, 400));
+    } catch {}
+
+    if (excerpts.length === 0) {
+      // Hardcoded fallback — always provide minimum context
+      excerpts.push(
+        '- Zero external dependencies (Node.js built-in modules only)\n' +
+        '- Atomic file writes (write to .tmp then rename)\n' +
+        '- Windows-compatible: spawn via cmd.exe /d /s /c\n' +
+        '- board.json is single source of truth — agents do NOT write board directly\n' +
+        '- Follow existing code patterns — do NOT invent new ones\n' +
+        '- Run node -c <file> on every modified JavaScript file'
+      );
+    }
+    buildSkillContextSection._cache = excerpts;
+  }
+
+  const lines = ['', '## Coding Standards (from project skills)'];
+  for (const excerpt of buildSkillContextSection._cache) {
+    lines.push(excerpt);
+  }
+  return lines;
+}
+
+/**
+ * Build a "Completion Criteria" section to prevent agents from declaring done prematurely.
+ * @returns {string[]} lines to inject into dispatch prompt
+ */
+function buildCompletionCriteriaSection() {
+  return [
+    '',
+    '## Completion Criteria',
+    'Before declaring done, you MUST verify ALL of the following:',
+    '1. Re-read the task description — confirm every bullet/numbered item is addressed',
+    '2. List each requirement and its implementation status',
+    '3. Run `node -c <file>` on every modified JavaScript file to verify syntax',
+    '4. If any requirement was skipped, state why explicitly',
+    '5. Commit your changes with a descriptive message before finishing',
+  ];
+}
+
 function buildTaskDispatchMessage(board, task, options = {}) {
   const lines = [];
 
@@ -832,6 +895,12 @@ function buildGenericDispatchMessage(board, task, options = {}) {
   lines.push('2. Implement the changes described above');
   lines.push('3. Run "node -c <file>" on every modified file to verify syntax');
   lines.push('4. Summarize what you changed and any verification results');
+
+  // Coding standards from skill files
+  lines.push(...buildSkillContextSection());
+
+  // Completion criteria — prevent premature "done"
+  lines.push(...buildCompletionCriteriaSection());
 
   // Preflight lessons
   const preflight = buildPreflightSection(board, task, options);
@@ -1076,6 +1145,8 @@ module.exports = {
   buildPreflightSection,
   loadEddaDecisions,
   buildProtectedDecisionsSection,
+  buildSkillContextSection,
+  buildCompletionCriteriaSection,
   buildTaskDispatchMessage,
   buildRedispatchMessage,
   buildDispatchPlan,

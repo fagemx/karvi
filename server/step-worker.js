@@ -46,7 +46,7 @@ function createStepWorker(deps) {
     });
     // Enforce: runtime timeout must match lock timeout (prevent misalignment)
     plan.timeoutSec = timeoutSec;
-    const stepMessage = buildStepMessage(envelope, plan.artifacts);
+    const stepMessage = buildStepMessage(envelope, plan.artifacts, board, task);
     plan.message = stepMessage;
     plan.stepId = envelope.step_id;
     plan.stepType = envelope.step_type;
@@ -624,19 +624,21 @@ function parseStepResult(stdout) {
  * skill directly. The headless agent (`claude -p`) runs in the repo directory
  * and has access to `.claude/skills/`.
  */
-function buildStepMessage(envelope, upstreamArtifacts) {
+function buildStepMessage(envelope, upstreamArtifacts, board, task) {
   // Extract issue number from task source or task ID (GH-123 → 123)
   const source = envelope.input_refs?.task_source;
   const issueNumber = source?.number
     || (envelope.task_id.match(/^GH-(\d+)$/) || [])[1]
     || envelope.task_id;
 
-  // Map built-in engineering steps to skill invocations (legacy fallback).
+  // Map built-in engineering steps to skill invocations.
+  // IMPORTANT: Use explicit Skill tool guidance so agents know HOW to load skills.
+  const SKILL_TOOL_HINT = 'You have a "skill" tool available. Use it to load the skill by name, then follow its instructions.';
   const STEP_SKILL_MAP = {
-    plan:      `Execute /issue-plan ${issueNumber}`,
-    implement: `Execute /issue-action for issue #${issueNumber}. The plan has already been posted as a comment on the issue — read it from there.`,
+    plan:      `Use the skill tool to load the "issue-plan" skill, then follow its workflow for issue #${issueNumber}.\n${SKILL_TOOL_HINT}`,
+    implement: `Use the skill tool to load the "issue-action" skill for issue #${issueNumber}. The plan has already been posted as a comment on the issue — read it from there.\n${SKILL_TOOL_HINT}`,
     test:      `Check CI status for the PR. Run: gh pr checks. If lint/format failures, auto-fix and push. Report test results.`,
-    review:    `Execute /pr-review`,
+    review:    `Use the skill tool to load the "pr-review" skill, then follow its workflow.\n${SKILL_TOOL_HINT}`,
   };
 
   // Prefer task-defined semantic instructions over hard-coded step map.
@@ -678,6 +680,24 @@ function buildStepMessage(envelope, upstreamArtifacts) {
     lines.push('');
   }
 
+  // Coding standards from skill files
+  const mgmt = require('./management');
+  const skillLines = mgmt.buildSkillContextSection();
+  if (skillLines.length > 0) lines.push(...skillLines);
+
+  // Completion criteria — prevent premature "done"
+  const completionLines = mgmt.buildCompletionCriteriaSection();
+  if (completionLines.length > 0) lines.push(...completionLines);
+
+  // Preflight lessons (previously missing from step pipeline)
+  if (board && task) {
+    const preflight = mgmt.buildPreflightSection(board, task);
+    if (preflight.lines.length > 0) {
+      lines.push('');
+      lines.push(...preflight.lines);
+    }
+  }
+
   if (envelope.retry_context) {
     lines.push('', '\u26a0 RETRY — this step previously failed:');
     lines.push(`  Attempt: ${envelope.retry_context.attempt}`);
@@ -693,7 +713,6 @@ function buildStepMessage(envelope, upstreamArtifacts) {
   }
 
   // Protected edda decisions — prevent agents from reverting critical fixes
-  const mgmt = require('./management');
   const protectedLines = mgmt.buildProtectedDecisionsSection();
   if (protectedLines.length > 0) {
     lines.push(...protectedLines);
