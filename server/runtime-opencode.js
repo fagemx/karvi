@@ -169,12 +169,17 @@ function dispatch(plan) {
           }
         }
 
-        // step_finish — definitive completion
+        // step_finish — only settle on terminal reasons (not tool-calls which means more steps coming)
         if (obj.type === 'step_finish') {
           lastFinish = obj.part || {};
           if (obj.sessionID) sessionId = obj.sessionID;
           console.log('[opencode-rt] step_finish: reason=%s cost=%s tokens=%j',
             lastFinish.reason, lastFinish.cost, lastFinish.tokens);
+          // reason=tool-calls means opencode is about to execute tools and continue
+          if (lastFinish.reason === 'tool-calls') {
+            console.log('[opencode-rt] tool-calls step — waiting for next step');
+            continue;
+          }
           settle(null, buildResult(lastText));
           killTree(child.pid);
           return;
