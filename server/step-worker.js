@@ -111,7 +111,30 @@ function createStepWorker(deps) {
         } catch {}
       };
 
+      // Progress callback: write granular progress to step metadata (throttled)
+      const PROGRESS_THROTTLE_MS = 10_000;
+      let lastProgressWrite = 0;
       const startMs = Date.now();
+
+      plan.onProgress = (event) => {
+        const now = Date.now();
+        if (now - lastProgressWrite < PROGRESS_THROTTLE_MS) return;
+        lastProgressWrite = now;
+        try {
+          const pgBoard = helpers.readBoard();
+          const pgTask = (pgBoard.taskPlan?.tasks || []).find(t => t.id === envelope.task_id);
+          const pgStep = pgTask?.steps?.find(s => s.step_id === envelope.step_id);
+          if (!pgStep || pgStep.state !== 'running') return;
+          pgStep.progress = {
+            tool_calls: event.tool_calls || 0,
+            tokens: event.tokens || null,
+            last_tool: event.tool_name || null,
+            last_activity: new Date(now).toISOString(),
+            elapsed_ms: now - startMs,
+          };
+          helpers.writeBoard(pgBoard);
+        } catch {}
+      };
       let result;
       try {
         result = await rt.dispatch(plan);
