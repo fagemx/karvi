@@ -44,6 +44,9 @@ const vault = require('./vault').createVault({ vaultDir: path.join(__dirname, 'v
 let runtimeClaudeApi = null;
 try { runtimeClaudeApi = require('./runtime-claude-api').create({ vault }); } catch { /* claude-api not configured, skip */ }
 
+let runtimeOpencode = null;
+try { runtimeOpencode = require('./runtime-opencode'); } catch { /* opencode not installed, skip */ }
+
 const { validateAllRuntimes } = require('./runtime-contract');
 
 const RUNTIMES = {
@@ -51,6 +54,7 @@ const RUNTIMES = {
   ...(runtimeCodex ? { codex: runtimeCodex } : {}),
   ...(runtimeClaude ? { claude: runtimeClaude } : {}),
   ...(runtimeClaudeApi ? { 'claude-api': runtimeClaudeApi } : {}),
+  ...(runtimeOpencode ? { opencode: runtimeOpencode } : {}),
 };
 
 // Validate all registered runtimes at startup
