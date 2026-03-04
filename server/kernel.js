@@ -102,7 +102,7 @@ function createKernel(deps) {
     }
 
     // Route
-    const runState = { task, steps: task.steps, run_id: step.run_id, budget: task.budget };
+    const runState = { task, steps: task.steps, run_id: step.run_id, budget: task.budget, controls: mgmt.getControls(board) };
     const decision = routeEngine.decideNext(agentOutput, runState);
 
     // Log decision
@@ -176,8 +176,8 @@ function createKernel(deps) {
           latestTask.reviewFeedback = decision.review_feedback || null;
           console.log(`[kernel] revision: ${sourceStep.step_id} → ${targetStep.step_id} (cycle ${latestTask._revisionCounts[targetStepId]})`);
         }
-
-        const freshRunState = { task: latestTask, steps: latestTask.steps, run_id: runState.run_id, budget: latestTask.budget };
+        
+        const freshRunState = { task: latestTask, steps: latestTask.steps, run_id: runState.run_id, budget: latestTask.budget, controls: mgmt.getControls(latestBoard) };
         const revEnvelope = contextCompiler.buildEnvelope(decision, freshRunState, deps);
         if (revEnvelope && targetStep) {
           artifactStore.writeArtifact(revEnvelope.run_id, revEnvelope.step_id, 'input', revEnvelope);

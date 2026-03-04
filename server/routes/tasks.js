@@ -212,7 +212,7 @@ function dispatchTask(task, board, deps, helpers, opts = {}) {
     if (board.signals.length > 500) board.signals = board.signals.slice(-500);
 
     const firstStep = task.steps[0];
-    const runState = { task, steps: task.steps, run_id: runId, budget: task.budget };
+    const runState = { task, steps: task.steps, run_id: runId, budget: task.budget, controls: ctrl };
     const decision = { action: 'next_step', next_step: { step_id: firstStep.step_id, step_type: firstStep.type } };
     const envelope = deps.contextCompiler.buildEnvelope(decision, runState, deps);
 
@@ -1168,7 +1168,7 @@ module.exports = function tasksRoutes(req, res, helpers, deps) {
           try {
             const currentBoard = helpers.readBoard();
             const currentTask = (currentBoard.taskPlan?.tasks || []).find(t => t.id === taskId);
-            const runState = { task: currentTask, steps: currentTask.steps, run_id: step.run_id, budget: currentTask.budget };
+            const runState = { task: currentTask, steps: currentTask.steps, run_id: step.run_id, budget: currentTask.budget, controls: mgmt.getControls(currentBoard) };
             const decision = { action: 'next_step', next_step: { step_id: step.step_id, step_type: step.type } };
             const envelope = deps.contextCompiler.buildEnvelope(decision, runState, deps);
             if (!envelope) throw new Error(`Cannot build envelope for ${step.step_id}`);
