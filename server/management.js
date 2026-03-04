@@ -26,6 +26,7 @@ const DEFAULT_CONTROLS = {
   max_concurrent_tasks: 2,       // max in-progress tasks at once (worktree or not)
   use_worktrees: true,           // create git worktree per task for parallel execution
   target_repo: null,             // absolute path to target repo (null = karvi itself / dogfood mode)
+  auto_merge_on_approve: false,  // when true, auto squash-merge PR after review LGTM
   step_timeout_sec: {
     plan: 300,
     implement: 600,

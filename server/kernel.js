@@ -24,7 +24,7 @@ const path = require('path');
  * @param {object} deps - Shared dependency injection object (mutated after creation)
  */
 function createKernel(deps) {
-  const { artifactStore, stepSchema, mgmt, push, PUSH_TOKENS_PATH } = deps;
+  const { artifactStore, stepSchema, mgmt, push, PUSH_TOKENS_PATH, vault, githubApi } = deps;
   const defaultRepoRoot = path.resolve(__dirname, '..');
 
   function cleanupWorktree(task, taskId, board) {
@@ -358,6 +358,44 @@ function createKernel(deps) {
                 url: prUrl,
                 outcome: null,
               };
+            }
+          }
+
+          // Auto-merge: if enabled and PR metadata is available, squash-merge the PR
+          const controls = mgmt.getControls(latestBoard);
+          if (controls.auto_merge_on_approve && latestTask.pr && vault?.isEnabled()) {
+            const tokenBuf = vault.retrieve('default', 'github_pat');
+            if (tokenBuf) {
+              const pat = tokenBuf.toString('utf8');
+              tokenBuf.fill(0);
+              const { owner, number } = latestTask.pr;
+              const repoName = latestTask.pr.repo.split('/')[1];
+              const commitTitle = `${latestTask.title || taskId} (#${number})`;
+              githubApi.mergePR(pat, owner, repoName, number, commitTitle, 'squash')
+                .then(() => {
+                  console.log(`[kernel] auto-merged PR #${number} for ${taskId}`);
+                  const freshBoard = helpers.readBoard();
+                  const freshTask = (freshBoard.taskPlan?.tasks || []).find(t => t.id === taskId);
+                  if (freshTask?.pr) {
+                    freshTask.pr.outcome = 'merged';
+                    freshTask.pr.mergedAt = helpers.nowIso();
+                    freshTask.pr.mergedBy = 'karvi-auto-merge';
+                    helpers.writeBoard(freshBoard);
+                  }
+                })
+                .catch(err => {
+                  console.error(`[kernel] auto-merge failed for PR #${number}:`, err.message);
+                  const freshBoard = helpers.readBoard();
+                  freshBoard.signals.push({
+                    id: helpers.uid('sig'), ts: helpers.nowIso(), by: 'kernel',
+                    type: 'auto_merge_failed',
+                    content: `Auto-merge failed for ${taskId} PR #${number}: ${err.message}`,
+                    refs: [taskId],
+                    data: { taskId, prNumber: number, error: err.message },
+                  });
+                  if (freshBoard.signals.length > 500) freshBoard.signals = freshBoard.signals.slice(-500);
+                  helpers.writeBoard(freshBoard);
+                });
             }
           }
         }
