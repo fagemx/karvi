@@ -215,6 +215,13 @@ bb.ensureBoardExists(ctx, {
     review_agent: 'engineer_lite',
     auto_apply_insights: true,
     cycle_stall_timeout_hours: 4,
+    step_timeout_sec: {
+      plan: 300,
+      implement: 600,
+      review: 300,
+      test: 300,
+      default: 300
+    },
   },
 });
 
@@ -269,7 +276,7 @@ const retryPoller = setInterval(() => {
         }
         if (step.state === 'queued' && step.attempt > 0 && step.scheduled_at && step.scheduled_at <= now) {
           console.log(`[retry-poller] re-dispatching ${step.step_id} (attempt ${step.attempt})`);
-          const runState = { task, steps: task.steps, run_id: step.run_id, budget: task.budget };
+          const runState = { task, steps: task.steps, run_id: step.run_id, budget: task.budget, controls: mgmt.getControls(board) };
           const decision = { action: 'next_step', next_step: { step_id: step.step_id, step_type: step.type } };
           const envelope = deps.contextCompiler.buildEnvelope(decision, runState, deps);
           if (!envelope) continue;

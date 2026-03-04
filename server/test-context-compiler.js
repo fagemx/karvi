@@ -139,6 +139,55 @@ test('buildEnvelope returns null for null steps', () => {
   assert.strictEqual(contextCompiler.buildEnvelope(decision, runState, { artifactStore, stepSchema }), null);
 });
 
+test('buildEnvelope respects custom step timeouts from controls', () => {
+  const decision = {
+    action: 'next_step',
+    next_step: { step_id: 'T-1:implement', step_type: 'implement' },
+  };
+  const steps = [
+    { step_id: 'T-1:implement', type: 'implement', state: 'queued', run_id: testRunId, attempt: 0 },
+  ];
+  const controls = {
+    step_timeout_sec: { implement: 456, default: 123 }
+  };
+  const runState = { task: { id: 'T-1' }, steps, run_id: testRunId, controls };
+  const deps = { artifactStore, stepSchema };
+
+  const env = contextCompiler.buildEnvelope(decision, runState, deps);
+  assert.strictEqual(env.timeout_ms, 456000);
+
+  // Fallback to default
+  decision.next_step.step_type = 'plan';
+  steps[0].type = 'plan';
+  const env2 = contextCompiler.buildEnvelope(decision, runState, deps);
+  assert.strictEqual(env2.timeout_ms, 123000);
+});
+
+test('buildEnvelope respects retry_policy timeout over controls', () => {
+  const decision = {
+    action: 'next_step',
+    next_step: { step_id: 'T-1:implement', step_type: 'implement' },
+  };
+  const steps = [
+    {
+      step_id: 'T-1:implement',
+      type: 'implement',
+      state: 'queued',
+      run_id: testRunId,
+      attempt: 0,
+      retry_policy: { timeout_ms: 999000 }
+    },
+  ];
+  const controls = {
+    step_timeout_sec: { implement: 456 }
+  };
+  const runState = { task: { id: 'T-1' }, steps, run_id: testRunId, controls };
+  const deps = { artifactStore, stepSchema };
+
+  const env = contextCompiler.buildEnvelope(decision, runState, deps);
+  assert.strictEqual(env.timeout_ms, 999000);
+});
+
 // Cleanup
 try {
   fs.rmSync(path.join(artifactStore.ARTIFACT_DIR, testRunId), { recursive: true, force: true });
