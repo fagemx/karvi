@@ -1,4 +1,5 @@
 node_modules/
+.tmp/
 
 # Runtime data (per-instance)
 server/board.json

@@ -9,6 +9,7 @@
  * Kernel = routing decisions, StepWorker = execution.
  */
 const { execSync } = require('child_process');
+const mgmt = require('./management');
 const LOCK_GRACE_MS = 30_000; // 30s grace on top of step timeout
 
 const ERROR_PATTERNS = [
@@ -18,13 +19,20 @@ const ERROR_PATTERNS = [
   { pattern: /ECONNREFUSED/i, kind: 'PROVIDER' },
   { pattern: /ETIMEDOUT/i, kind: 'PROVIDER' },
   { pattern: /ENOTFOUND/i, kind: 'PROVIDER' },
-  
+
   // Agent failure_mode patterns (from agentOutput.failure.failure_mode)
   { failure_mode: 'TEST_FAILURE', kind: 'AGENT_ERROR' },
   { failure_mode: 'FINALIZE_ERROR', kind: 'FINALIZE' },
   { failure_mode: 'PROTECTED_CODE_VIOLATION', kind: 'PROTECTED' },
   { failure_mode: 'CONTRACT_VIOLATION', kind: 'CONTRACT' },
 ];
+
+const UPSTREAM_RELEVANCE = {
+  plan: null,
+  implement: { include: ['summary', 'payload'] },
+  test: { include: ['summary'] },
+  review: { include: ['summary'] },
+};
 
 /**
  * Create the step execution worker.
@@ -684,6 +692,19 @@ function buildStepMessage(envelope, upstreamArtifacts, board, task) {
   // Step instructions: explicit role, scope constraints, and deliverable checklist.
   // Pattern from Claude Code: READ-ONLY constraints + "Your role is EXCLUSIVELY to..." framing.
   const SKILL_TOOL_HINT = 'You have a "Skill" tool available. Use it to load the skill by name (e.g., Skill("issue-plan")), then follow its instructions.';
+
+  const STEP_CONTEXT_SECTIONS = {
+    plan:      ['requirements', 'upstream_artifacts', 'preflight_lessons'],
+    implement: ['requirements', 'upstream_artifacts', 'coding_standards', 'completion_criteria', 'protected_decisions', 'preflight_lessons'],
+    test:      ['coding_standards'],
+    review:    ['requirements'],
+  };
+
+  function shouldInjectSection(stepType, sectionName) {
+    const allowed = STEP_CONTEXT_SECTIONS[stepType] || [];
+    return allowed.includes(sectionName);
+  }
+
   const STEP_SKILL_MAP = {
     plan: [
       `## Role`,
@@ -726,6 +747,10 @@ function buildStepMessage(envelope, upstreamArtifacts, board, task) {
       ``,
       `## Deliverable`,
       `A merged-ready pull request on GitHub. The pipeline verifies the PR exists — if you skip step 6 or 7, the step WILL fail and retry.`,
+      ``,
+      `## STEP_RESULT Output`,
+      `Your final STEP_RESULT MUST include a "prUrl" field with the full PR URL:`,
+      `STEP_RESULT:{"status":"succeeded","summary":"...","prUrl":"https://github.com/owner/repo/pull/123"}`,
       ``,
       `## STRICTLY PROHIBITED`,
       `- Skipping any requirement from the plan`,
@@ -790,32 +815,47 @@ function buildStepMessage(envelope, upstreamArtifacts, board, task) {
   }
 
   // Inject upstream artifacts (from completed dependency tasks)
-  if (Array.isArray(upstreamArtifacts) && upstreamArtifacts.length > 0) {
+  // Use UPSTREAM_RELEVANCE to filter what each step type needs
+  const relevance = UPSTREAM_RELEVANCE[envelope.step_type];
+  if (relevance && Array.isArray(upstreamArtifacts) && upstreamArtifacts.length > 0) {
     lines.push('', '## Upstream Task Outputs');
     for (const u of upstreamArtifacts) {
       lines.push(`### ${u.id} — ${u.title || '(untitled)'} [${u.status}]`);
-      if (u.payload) {
+      
+      // Include summary if relevant
+      if (relevance.include.includes('summary') && u.summary) {
+        lines.push(u.summary);
+      }
+      
+      // Include payload if relevant
+      if (relevance.include.includes('payload') && u.payload) {
         lines.push('```json');
         lines.push(JSON.stringify(u.payload, null, 2));
         lines.push('```');
-      } else if (u.summary) {
-        lines.push(u.summary);
+      }
+      
+      // Always add reference to full output file
+      if (u.output_ref) {
+        lines.push(`(Full output: ${u.output_ref})`);
       }
     }
     lines.push('');
   }
 
   // Coding standards from skill files
-  const mgmt = require('./management');
-  const skillLines = mgmt.buildSkillContextSection();
-  if (skillLines.length > 0) lines.push(...skillLines);
+  if (shouldInjectSection(envelope.step_type, 'coding_standards')) {
+    const skillLines = mgmt.buildSkillContextSection();
+    if (skillLines.length > 0) lines.push(...skillLines);
+  }
 
   // Completion criteria — prevent premature "done"
-  const completionLines = mgmt.buildCompletionCriteriaSection();
-  if (completionLines.length > 0) lines.push(...completionLines);
+  if (shouldInjectSection(envelope.step_type, 'completion_criteria')) {
+    const completionLines = mgmt.buildCompletionCriteriaSection();
+    if (completionLines.length > 0) lines.push(...completionLines);
+  }
 
   // Preflight lessons (previously missing from step pipeline)
-  if (board && task) {
+  if (shouldInjectSection(envelope.step_type, 'preflight_lessons') && board && task) {
     const preflight = mgmt.buildPreflightSection(board, task);
     if (preflight.lines.length > 0) {
       lines.push('');
@@ -838,9 +878,11 @@ function buildStepMessage(envelope, upstreamArtifacts, board, task) {
   }
 
   // Protected edda decisions — prevent agents from reverting critical fixes
-  const protectedLines = mgmt.buildProtectedDecisionsSection();
-  if (protectedLines.length > 0) {
-    lines.push(...protectedLines);
+  if (shouldInjectSection(envelope.step_type, 'protected_decisions')) {
+    const protectedLines = mgmt.buildProtectedDecisionsSection();
+    if (protectedLines.length > 0) {
+      lines.push(...protectedLines);
+    }
   }
 
   // Instruct agent to output structured result when done
