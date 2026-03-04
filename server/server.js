@@ -383,7 +383,7 @@ process.on('SIGINT', gracefulShutdown);
 // --- Boot banner ---
 {
   const runtimeNames = Object.keys(RUNTIMES);
-  const allRt = ['openclaw', 'claude', 'codex', 'opencode'];
+  const allRt = ['openclaw', 'claude', 'claude-api', 'codex', 'opencode'];
   const rtLine = allRt.map(r => runtimeNames.includes(r) ? `${r} ✅` : `${r} ❌`).join('  ');
   const tokenStatus = process.env.KARVI_API_TOKEN ? 'token set ✅' : 'no token (local only)';
   const addr = HOST || 'localhost';
