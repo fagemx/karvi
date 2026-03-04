@@ -62,15 +62,19 @@ test('createStep accepts custom retry_policy', () => {
 test('canTransitionStep validates all transitions', () => {
   // Valid
   assert.strictEqual(stepSchema.canTransitionStep('queued', 'running'), true);
+  assert.strictEqual(stepSchema.canTransitionStep('queued', 'cancelled'), true);  // can cancel before start
   assert.strictEqual(stepSchema.canTransitionStep('running', 'succeeded'), true);
   assert.strictEqual(stepSchema.canTransitionStep('running', 'failed'), true);
+  assert.strictEqual(stepSchema.canTransitionStep('running', 'cancelled'), true);    // can kill during execution
   assert.strictEqual(stepSchema.canTransitionStep('failed', 'queued'), true);
   assert.strictEqual(stepSchema.canTransitionStep('failed', 'dead'), true);
-  // Invalid
+  assert.strictEqual(stepSchema.canTransitionStep('failed', 'cancelled'), true);     // can kill failed step
+  // Invalid (terminal states and wrong sequencing)
   assert.strictEqual(stepSchema.canTransitionStep('queued', 'succeeded'), false);
   assert.strictEqual(stepSchema.canTransitionStep('running', 'queued'), false);
-  assert.strictEqual(stepSchema.canTransitionStep('succeeded', 'running'), false);
-  assert.strictEqual(stepSchema.canTransitionStep('dead', 'queued'), false);
+  assert.strictEqual(stepSchema.canTransitionStep('succeeded', 'running'), false);   // can't un-succeed
+  assert.strictEqual(stepSchema.canTransitionStep('dead', 'queued'), false);         // can't un-dead
+  assert.strictEqual(stepSchema.canTransitionStep('cancelled', 'queued'), false);    // terminal — no retry possible
   assert.strictEqual(stepSchema.canTransitionStep('queued', 'queued'), false);
 });
 
