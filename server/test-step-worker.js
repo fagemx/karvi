@@ -317,6 +317,52 @@ function createMockEnvelope(overrides = {}) {
     assert.strictEqual(targets[0].step_id, 'T-B1:impl');
   });
 
+  // Test 12: UPSTREAM_RELEVANCE filters correctly for plan step
+  await test('buildStepMessage excludes upstream for plan step', () => {
+    const envelope = createMockEnvelope({ step_type: 'plan' });
+    const upstream = [{ id: 'T-UP1', title: 'Upstream', status: 'completed', summary: 'test' }];
+    const message = buildStepMessage(envelope, upstream, null, null);
+    assert.ok(!message.includes('Upstream Task Outputs'), 'plan should have no upstream section');
+  });
+
+  // Test 13: UPSTREAM_RELEVANCE includes summary for review step
+  await test('buildStepMessage includes only summary for review step', () => {
+    const envelope = createMockEnvelope({ step_type: 'review' });
+    const upstream = [
+      { 
+        id: 'T-UP1', 
+        title: 'Implement', 
+        status: 'completed', 
+        summary: 'Implemented feature X',
+        payload: { files: ['test.js'], details: 'long payload...' },
+        output_ref: 'artifacts/run1/T-UP1_implement.output.json'
+      }
+    ];
+    const message = buildStepMessage(envelope, upstream, null, null);
+    assert.ok(message.includes('Implemented feature X'), 'should include summary');
+    assert.ok(!message.includes('long payload'), 'should NOT include payload for review');
+    assert.ok(message.includes('Full output: artifacts/run1/T-UP1_implement.output.json'), 'should include output_ref');
+  });
+
+  // Test 14: UPSTREAM_RELEVANCE includes summary + payload for implement step
+  await test('buildStepMessage includes summary and payload for implement step', () => {
+    const envelope = createMockEnvelope({ step_type: 'implement' });
+    const upstream = [
+      { 
+        id: 'T-UP1', 
+        title: 'Plan', 
+        status: 'completed', 
+        summary: 'Plan summary',
+        payload: { conclusions: ['change X', 'change Y'] },
+        output_ref: 'artifacts/run1/T-UP1_plan.output.json'
+      }
+    ];
+    const message = buildStepMessage(envelope, upstream, null, null);
+    assert.ok(message.includes('Plan summary'), 'should include summary');
+    assert.ok(message.includes('"conclusions"'), 'should include payload for implement');
+    assert.ok(message.includes('Full output: artifacts/run1/T-UP1_plan.output.json'), 'should include output_ref');
+  });
+
   // Cleanup
   try {
     fs.rmSync(path.join(artifactStore.ARTIFACT_DIR, testRunId), { recursive: true, force: true });
