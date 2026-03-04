@@ -661,7 +661,8 @@ function buildStepMessage(envelope, upstreamArtifacts, board, task) {
   ];
 
   if (envelope.input_refs.task_description) {
-    lines.push('', `Task description: ${envelope.input_refs.task_description}`);
+    lines.push('', '## Requirements (from task description — implement ALL of these)');
+    lines.push('', envelope.input_refs.task_description);
   }
 
   // Inject upstream artifacts (from completed dependency tasks)

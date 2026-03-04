@@ -126,3 +126,33 @@ STEP_RESULT:{"status":"failed","error":"what went wrong","failure_mode":"TEST_FA
 ```
 
 **不要在中途輸出 STEP_RESULT** — 只在最後一行輸出。
+
+## 任務執行方法論
+
+### Plan Step
+
+1. 用 `gh issue view <number>` 讀取完整 issue 內容
+2. 從 issue + task description 提取**所有具體需求**，列成清單
+3. 研究相關 codebase（讀檔、grep），理解現有模式
+4. 輸出具體的實作計畫，每一項需求對應一個步驟
+5. **不要省略** issue 中提到的任何需求 — 即使你認為不重要
+
+### Implement Step
+
+1. 讀取 plan step 的產出（issue comments 或 artifact）
+2. **逐項實作** plan 中的每個步驟，不要跳過
+3. 每改完一個檔案，跑 `node -c <file>` 確認語法
+4. 改完所有檔案後，跑相關測試確認不破壞既有功能
+5. commit 並 push：`git push -u origin <branch>`
+6. 建 PR：`gh pr create --title "..." --body "..."`
+
+### Review Step
+
+1. 讀取 PR diff，用四點檢查法：Scope / Reality / Testing / YAGNI
+2. 特別注意：是否所有 issue 需求都被實作了？
+
+### 通用規則
+
+- **Task description 是你的需求規格** — 裡面列的每一項都必須做到
+- 如果 issue 和 task description 有矛盾，以 task description 為準
+- 不確定的需求不要猜，做保守的實作然後在 PR 說明
