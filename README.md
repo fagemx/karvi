@@ -48,6 +48,23 @@ Director (Human)                   board.json
 | **Agents** | Receive tasks, execute, report back via REST API |
 | **Web UI** | Real-time task board with SSE — cards, actions, timeline |
 
+## Prerequisites
+
+| Tool | Version | Why |
+|------|---------|-----|
+| **Node.js** | v22+ | Runs the server |
+| **git** | 2.x | Worktree creation, agent commits |
+| **gh** (GitHub CLI) | 2.x | Issue fetch, PR create/merge — required by step pipeline |
+| **Agent CLI** (at least one) | — | Executes tasks. Supported: [Claude Code](https://docs.anthropic.com/en/docs/claude-code), [OpenCode](https://github.com/opencode-ai/opencode), [Codex](https://github.com/openai/codex), OpenClaw |
+
+Verify:
+
+```bash
+node -v    # v22.x.x
+git --version   # git version 2.x
+gh --version && gh auth status   # logged in
+```
+
 ## Quick Start
 
 ```bash
@@ -58,6 +75,14 @@ npm start
 ```
 
 No `npm install` needed — zero dependencies.
+
+Dispatch your first task:
+
+```bash
+npm run go -- <issue-number>
+```
+
+See the [Getting Started Guide](docs/getting-started.md) for a complete walkthrough.
 
 ## Configuration
 
