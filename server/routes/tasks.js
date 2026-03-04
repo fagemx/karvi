@@ -597,17 +597,35 @@ module.exports = function tasksRoutes(req, res, helpers, deps) {
         const payload = JSON.parse(body || '{}');
         const board = helpers.readBoard();
 
-        board.taskPlan = {
-          goal: String(payload.goal || ''),
-          phase: String(payload.phase || 'idle'),
-          createdAt: payload.createdAt || helpers.nowIso(),
-          tasks: Array.isArray(payload.tasks) ? payload.tasks : []
-        };
+        // Merge into existing taskPlan (never overwrite running tasks)
+        board.taskPlan = board.taskPlan || { tasks: [] };
+        board.taskPlan.tasks = board.taskPlan.tasks || [];
+
+        if (payload.goal) board.taskPlan.goal = String(payload.goal);
+        if (payload.phase) board.taskPlan.phase = String(payload.phase);
+        if (!board.taskPlan.createdAt) board.taskPlan.createdAt = payload.createdAt || helpers.nowIso();
+
+        const ACTIVE_STATUSES = ['in_progress', 'dispatched'];
+        const SAFE_FIELDS = ['title', 'description', 'assignee', 'depends', 'spec', 'skill', 'estimate', 'target_repo'];
+        const incomingTasks = Array.isArray(payload.tasks) ? payload.tasks : [];
+        const existingIds = new Set(board.taskPlan.tasks.map(t => t.id));
+        for (const t of incomingTasks) {
+          if (existingIds.has(t.id)) {
+            const existing = board.taskPlan.tasks.find(e => e.id === t.id);
+            if (existing && !ACTIVE_STATUSES.includes(existing.status)) {
+              for (const k of SAFE_FIELDS) { if (t[k] !== undefined) existing[k] = t[k]; }
+              existing.history = existing.history || [];
+              existing.history.push({ ts: helpers.nowIso(), status: 'updated', by: 'api' });
+            }
+            continue;
+          }
+          board.taskPlan.tasks.push(t);
+        }
 
         helpers.writeBoard(board);
         helpers.appendLog({ ts: helpers.nowIso(), event: 'taskPlan_updated', goal: board.taskPlan.goal });
 
-        // Auto-dispatch any dispatched tasks in the new plan
+        // Auto-dispatch any dispatched tasks in the updated plan
         const ctrl = mgmt.getControls(board);
         if (ctrl.auto_dispatch) {
           for (const t of (board.taskPlan?.tasks || [])) {
@@ -1516,15 +1534,32 @@ module.exports = function tasksRoutes(req, res, helpers, deps) {
           }
         }
 
-        // Write to board
+        // Write to board — merge into existing taskPlan (never overwrite running tasks)
         const board = helpers.readBoard();
-        board.taskPlan = {
-          title,
-          createdAt: helpers.nowIso(),
-          phase: 'planning',
-          spec: payload.spec || null,
-          goal: payload.goal || title,
-          tasks: tasks.map(t => ({
+        board.taskPlan = board.taskPlan || { tasks: [] };
+        board.taskPlan.tasks = board.taskPlan.tasks || [];
+
+        if (payload.goal || title) board.taskPlan.goal = payload.goal || title;
+        if (title) board.taskPlan.title = title;
+        if (!board.taskPlan.phase) board.taskPlan.phase = 'planning';
+        if (!board.taskPlan.createdAt) board.taskPlan.createdAt = helpers.nowIso();
+        if (payload.spec) board.taskPlan.spec = payload.spec;
+
+        const PROJ_ACTIVE = ['in_progress', 'dispatched'];
+        const PROJ_SAFE = ['title', 'description', 'assignee', 'depends', 'spec', 'skill', 'estimate', 'target_repo'];
+        const existingIds = new Set(board.taskPlan.tasks.map(t => t.id));
+        const newTasks = [];
+        for (const t of tasks) {
+          if (existingIds.has(t.id)) {
+            const existing = board.taskPlan.tasks.find(e => e.id === t.id);
+            if (existing && !PROJ_ACTIVE.includes(existing.status)) {
+              for (const k of PROJ_SAFE) { if (t[k] !== undefined) existing[k] = t[k]; }
+              existing.history = existing.history || [];
+              existing.history.push({ ts: helpers.nowIso(), status: 'updated', by: 'api' });
+            }
+            continue;
+          }
+          const newTask = {
             id: t.id,
             title: t.title,
             assignee: t.assignee || null,
@@ -1534,12 +1569,15 @@ module.exports = function tasksRoutes(req, res, helpers, deps) {
             spec: t.spec || null,
             skill: t.skill || null,
             estimate: t.estimate || null,
+            target_repo: t.target_repo || null,
             history: [{ ts: helpers.nowIso(), status: 'created', by: 'api' }],
-          })),
-        };
+          };
+          newTasks.push(newTask);
+          board.taskPlan.tasks.push(newTask);
+        }
 
-        // S8: Auto-create scoped boards (briefs) for tasks with matching skills
-        for (const t of board.taskPlan.tasks) {
+        // S8: Auto-create scoped boards (briefs) for NEW tasks with matching skills
+        for (const t of newTasks) {
           if (t.skill && SKILLS_NEEDING_BRIEF.has(t.skill)) {
             ensureBriefsDir(DATA_DIR);
             const briefPath = `briefs/${t.id}.json`;
@@ -1555,11 +1593,6 @@ module.exports = function tasksRoutes(req, res, helpers, deps) {
             fs.writeFileSync(path.resolve(DIR, briefPath), JSON.stringify(emptyBrief, null, 2));
           }
         }
-
-        // Clear old evolution data (new project)
-        board.signals = [];
-        board.insights = [];
-        board.lessons = [];
 
         helpers.writeBoard(board);
         helpers.appendLog({ ts: helpers.nowIso(), event: 'project_created', title, taskCount: tasks.length });
