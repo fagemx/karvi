@@ -4,6 +4,7 @@ const { execSync } = require('child_process');
 const bb = require('./blackboard-server');
 const { nowIso, uid } = bb;
 const stepSchema = require('./step-schema');
+const { resolveRepoRoot } = require('./repo-resolver');
 
 const DIR = __dirname;
 const SKILLS_DIR = path.join(DIR, 'skills');
@@ -26,6 +27,7 @@ const DEFAULT_CONTROLS = {
   max_concurrent_tasks: 2,       // max in-progress tasks at once (worktree or not)
   use_worktrees: true,           // create git worktree per task for parallel execution
   target_repo: null,             // absolute path to target repo (null = karvi itself / dogfood mode)
+  repo_map: {},                  // GitHub slug → local absolute path, e.g. { "owner/repo": "C:/path/to/repo" }
   auto_merge_on_approve: false,  // when true, auto squash-merge PR after review LGTM
   step_timeout_sec: {
     plan: 300,
@@ -657,18 +659,31 @@ function buildProtectedDecisionsSection() {
 
 /**
  * Build a "Coding Standards" section by extracting key rules from skill files.
- * Cached per-process so skill files are read only once.
+ * Cached per projectRoot so skill files are read only once per target project.
+ * @param {string} [projectRoot] — target project root; null = karvi itself
  * @returns {string[]} lines to inject into dispatch prompt
  */
-function buildSkillContextSection() {
-  if (!buildSkillContextSection._cache) {
+function buildSkillContextSection(projectRoot) {
+  if (!buildSkillContextSection._cacheMap) {
+    buildSkillContextSection._cacheMap = new Map();
+  }
+  const cacheKey = projectRoot || '__default__';
+
+  if (!buildSkillContextSection._cacheMap.has(cacheKey)) {
     const excerpts = [];
-    const skillDir = path.join(__dirname, 'skills');
+
+    // Resolve skill directory: project-specific first, then karvi's server/skills/
+    const candidates = [];
+    if (projectRoot) {
+      candidates.push(path.join(projectRoot, '.claude', 'skills'));
+      candidates.push(path.join(projectRoot, 'server', 'skills'));
+    }
+    candidates.push(path.join(__dirname, 'skills'));
+    const skillDir = candidates.find(d => fs.existsSync(d)) || path.join(__dirname, 'skills');
 
     // Extract coding rules from engineer-playbook
     try {
       const ep = fs.readFileSync(path.join(skillDir, 'engineer-playbook', 'SKILL.md'), 'utf8');
-      // Look for code style / coding rules section
       const match = ep.match(/## (?:Step 4|Code Style|代碼規範|coding|執行任務)[\s\S]*?(?=\n## |\n---)/i);
       if (match) excerpts.push(match[0].trim().slice(0, 600));
     } catch {}
@@ -680,22 +695,25 @@ function buildSkillContextSection() {
       if (match) excerpts.push(match[0].trim().slice(0, 400));
     } catch {}
 
+    // Extract from project-principles skill (common across projects)
+    try {
+      const pp = fs.readFileSync(path.join(skillDir, 'project-principles', 'SKILL.md'), 'utf8');
+      const match = pp.match(/## (?:Core Principles|核心原則|Architecture)[\s\S]*?(?=\n## |\n---)/i);
+      if (match) excerpts.push(match[0].trim().slice(0, 400));
+    } catch {}
+
     if (excerpts.length === 0) {
-      // Hardcoded fallback — always provide minimum context
       excerpts.push(
-        '- Zero external dependencies (Node.js built-in modules only)\n' +
-        '- Atomic file writes (write to .tmp then rename)\n' +
-        '- Windows-compatible: spawn via cmd.exe /d /s /c\n' +
-        '- board.json is single source of truth — agents do NOT write board directly\n' +
         '- Follow existing code patterns — do NOT invent new ones\n' +
-        '- Run node -c <file> on every modified JavaScript file'
+        '- Atomic file writes (write to .tmp then rename)\n' +
+        '- Run syntax checks on every modified file'
       );
     }
-    buildSkillContextSection._cache = excerpts;
+    buildSkillContextSection._cacheMap.set(cacheKey, excerpts);
   }
 
   const lines = ['', '## Coding Standards (from project skills)'];
-  for (const excerpt of buildSkillContextSection._cache) {
+  for (const excerpt of buildSkillContextSection._cacheMap.get(cacheKey)) {
     lines.push(excerpt);
   }
   return lines;
@@ -909,8 +927,8 @@ function buildGenericDispatchMessage(board, task, options = {}) {
   lines.push('3. Run "node -c <file>" on every modified file to verify syntax');
   lines.push('4. Summarize what you changed and any verification results');
 
-  // Coding standards from skill files
-  lines.push(...buildSkillContextSection());
+  // Coding standards from skill files (resolve from target project if set)
+  lines.push(...buildSkillContextSection(resolveRepoRoot(task, board)));
 
   // Completion criteria — prevent premature "done"
   lines.push(...buildCompletionCriteriaSection());

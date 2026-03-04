@@ -60,7 +60,7 @@ function normalizeTask(entry, repo) {
       spec: entry.spec || null,
       skill: entry.skill || null,
       estimate: entry.estimate || null,
-      target_repo: entry.target_repo || null,
+      target_repo: entry.target_repo || repo || null,
     };
   }
   if (entry.id && typeof entry.id === 'string') {
@@ -73,7 +73,7 @@ function normalizeTask(entry, repo) {
       spec: entry.spec || null,
       skill: entry.skill || null,
       estimate: entry.estimate || null,
-      target_repo: entry.target_repo || null,
+      target_repo: entry.target_repo || repo || null,
     };
   }
   throw new Error(`task must have either 'issue' (number) or 'id' (string): ${JSON.stringify(entry)}`);

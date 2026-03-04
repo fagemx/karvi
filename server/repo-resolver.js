@@ -5,6 +5,9 @@
  *   1. task.target_repo (per-task override)
  *   2. board.controls.target_repo (board-level default)
  *   3. null (caller decides fallback — typically karvi root for dogfood mode)
+ *
+ * Values can be absolute paths or GitHub slugs (owner/repo).
+ * Slugs are resolved via board.controls.repo_map.
  */
 
 'use strict';
@@ -13,15 +16,39 @@ const path = require('path');
 const fs = require('fs');
 const { execFileSync } = require('child_process');
 
+const SLUG_RE = /^[a-zA-Z0-9._-]+\/[a-zA-Z0-9._-]+$/;
+
+function looksLikeSlug(str) {
+  return SLUG_RE.test(str) && !path.isAbsolute(str);
+}
+
+/**
+ * Resolve a single target_repo value to an absolute path.
+ * If the value is a GitHub slug, look it up in repo_map.
+ * @returns {string|null} Absolute path, or null if slug not in map
+ */
+function resolveValue(val, repoMap) {
+  if (!val) return null;
+  if (path.isAbsolute(val)) return val;
+  if (looksLikeSlug(val)) {
+    const mapped = repoMap[val];
+    return mapped ? path.resolve(mapped) : null;
+  }
+  return path.resolve(val);
+}
+
 /**
  * Resolve the repo root for a given task + board config.
  * @param {object} task  - Task object (may have .target_repo)
- * @param {object} board - Board object (may have .controls.target_repo)
+ * @param {object} board - Board object (may have .controls.target_repo, .controls.repo_map)
  * @returns {string|null} Absolute path or null
  */
 function resolveRepoRoot(task, board) {
-  if (task?.target_repo) return path.resolve(task.target_repo);
-  if (board?.controls?.target_repo) return path.resolve(board.controls.target_repo);
+  const repoMap = board?.controls?.repo_map || {};
+  const fromTask = resolveValue(task?.target_repo, repoMap);
+  if (fromTask) return fromTask;
+  const fromBoard = resolveValue(board?.controls?.target_repo, repoMap);
+  if (fromBoard) return fromBoard;
   return null;
 }
 
@@ -65,4 +92,4 @@ function validateRepoRoot(resolvedPath, expectedRepo) {
   return { valid: true };
 }
 
-module.exports = { resolveRepoRoot, validateRepoRoot };
+module.exports = { resolveRepoRoot, validateRepoRoot, looksLikeSlug, resolveValue };
