@@ -13,7 +13,6 @@
  * GET/POST /api/tasks/:id/digest — L2 digest
  * POST /api/dispatch-next — S6 atomic dispatch-next
  * POST /api/retro — trigger retro
- * POST /api/project — create project
  *
  * Also contains: redispatchTask, tryAutoDispatch, logDispatchPreflight, tryEddaSync
  */
@@ -449,13 +448,7 @@ function tryAutoDispatch(taskId, deps, helpers) {
   dispatchTask(task, board, deps, helpers, { source: 'auto-dispatch' });
 }
 
-// Brief helper functions (used by project creation)
-const SKILLS_NEEDING_BRIEF = new Set(['conversapix-storyboard']);
-
-function ensureBriefsDir(DATA_DIR) {
-  const BRIEFS_DIR = path.join(DATA_DIR, 'briefs');
-  if (!fs.existsSync(BRIEFS_DIR)) fs.mkdirSync(BRIEFS_DIR, { recursive: true });
-}
+// Brief helpers moved to routes/projects.js (GH-251)
 
 function summarizeBriefAsSignal(taskId, helpers, DIR) {
   const board = helpers.readBoard();
@@ -1507,126 +1500,7 @@ module.exports = function tasksRoutes(req, res, helpers, deps) {
     return;
   }
 
-  if (req.method === 'POST' && req.url === '/api/project') {
-    let body = '';
-    req.on('data', c => (body += c));
-    req.on('end', () => {
-      try {
-        const payload = JSON.parse(body || '{}');
-        const title = String(payload.title || '').trim();
-        if (!title) return json(res, 400, { error: 'title is required' });
-
-        const tasks = Array.isArray(payload.tasks) ? payload.tasks : [];
-        if (tasks.length === 0) return json(res, 400, { error: 'tasks array is required and must not be empty' });
-
-        // Validate task structure
-        const ids = new Set();
-        for (const t of tasks) {
-          if (!t.id || !t.title) return json(res, 400, { error: `task missing id or title: ${JSON.stringify(t)}` });
-          if (ids.has(t.id)) return json(res, 400, { error: `duplicate task id: ${t.id}` });
-          ids.add(t.id);
-        }
-
-        // Validate dependencies
-        for (const t of tasks) {
-          for (const dep of (t.depends || [])) {
-            if (!ids.has(dep)) return json(res, 400, { error: `task ${t.id} depends on unknown task ${dep}` });
-          }
-        }
-
-        // Write to board — merge into existing taskPlan (never overwrite running tasks)
-        const board = helpers.readBoard();
-        board.taskPlan = board.taskPlan || { tasks: [] };
-        board.taskPlan.tasks = board.taskPlan.tasks || [];
-
-        if (payload.goal || title) board.taskPlan.goal = payload.goal || title;
-        if (title) board.taskPlan.title = title;
-        if (!board.taskPlan.phase) board.taskPlan.phase = 'planning';
-        if (!board.taskPlan.createdAt) board.taskPlan.createdAt = helpers.nowIso();
-        if (payload.spec) board.taskPlan.spec = payload.spec;
-
-        const PROJ_ACTIVE = ['in_progress', 'dispatched'];
-        const PROJ_SAFE = ['title', 'description', 'assignee', 'depends', 'spec', 'skill', 'estimate', 'target_repo'];
-        const existingIds = new Set(board.taskPlan.tasks.map(t => t.id));
-        const newTasks = [];
-        for (const t of tasks) {
-          if (existingIds.has(t.id)) {
-            const existing = board.taskPlan.tasks.find(e => e.id === t.id);
-            if (existing && !PROJ_ACTIVE.includes(existing.status)) {
-              for (const k of PROJ_SAFE) { if (t[k] !== undefined) existing[k] = t[k]; }
-              existing.history = existing.history || [];
-              existing.history.push({ ts: helpers.nowIso(), status: 'updated', by: 'api' });
-            }
-            continue;
-          }
-          const newTask = {
-            id: t.id,
-            title: t.title,
-            assignee: t.assignee || null,
-            status: (t.depends?.length > 0) ? 'pending' : 'dispatched',
-            depends: t.depends || [],
-            description: t.description || '',
-            spec: t.spec || null,
-            skill: t.skill || null,
-            estimate: t.estimate || null,
-            target_repo: t.target_repo || null,
-            history: [{ ts: helpers.nowIso(), status: 'created', by: 'api' }],
-          };
-          newTasks.push(newTask);
-          board.taskPlan.tasks.push(newTask);
-        }
-
-        // S8: Auto-create scoped boards (briefs) for NEW tasks with matching skills
-        for (const t of newTasks) {
-          if (t.skill && SKILLS_NEEDING_BRIEF.has(t.skill)) {
-            ensureBriefsDir(DATA_DIR);
-            const briefPath = `briefs/${t.id}.json`;
-            t.briefPath = briefPath;
-            const emptyBrief = {
-              meta: { boardType: 'brief', version: 1, taskId: t.id },
-              project: { name: title },
-              shotspec: { status: 'pending', shots: [] },
-              refpack: { status: 'empty', assets: {} },
-              controls: { auto_retry: true, max_retries: 3, quality_threshold: 85, paused: false },
-              log: [{ time: helpers.nowIso(), agent: 'system', action: 'brief_created', detail: `auto-created for ${t.id}` }],
-            };
-            fs.writeFileSync(path.resolve(DIR, briefPath), JSON.stringify(emptyBrief, null, 2));
-          }
-        }
-
-        helpers.writeBoard(board);
-        helpers.appendLog({ ts: helpers.nowIso(), event: 'project_created', title, taskCount: tasks.length });
-        helpers.broadcastSSE('board', board);
-
-        const result = { ok: true, title, taskCount: tasks.length };
-
-        // Auto-dispatch: check all dispatched tasks when auto_dispatch is enabled
-        const projCtrl = mgmt.getControls(board);
-        if (projCtrl.auto_dispatch) {
-          for (const t of board.taskPlan.tasks) {
-            if (t.status === 'dispatched') {
-              setImmediate(() => tryAutoDispatch(t.id, deps, helpers));
-            }
-          }
-        }
-
-        // autoStart: dispatch first ready task
-        if (payload.autoStart) {
-          const nextTask = mgmt.pickNextTask(board);
-          if (nextTask) {
-            const dr = dispatchTask(nextTask, board, deps, helpers, { source: 'project-autostart' });
-            result.autoStarted = nextTask.id;
-            result.planId = dr.planId;
-          }
-        }
-
-        json(res, 201, result);
-      } catch (error) {
-        json(res, 400, { error: error.message });
-      }
-    });
-    return;
-  }
+  // POST /api/project — DEPRECATED: handled by routes/projects.js
 
   // --- Pipeline Templates ---
 

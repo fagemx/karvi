@@ -703,13 +703,12 @@ async function runSuite(target) {
       ok('POST /api/tasks → 200 + taskPlan created + restored');
     } catch (e) { fail('POST /api/tasks', e.message); }
 
-    // ── Project API ──
-    // POST /api/project (valid project)
+    // ── Project API (unified /api/projects) ──
+    // POST /api/projects (valid — unified format with id-based tasks)
     try {
-      // Save board backup
       const backupR = await get(port, '/api/board');
       const backup = JSON.parse(backupR.body);
-      const r = await post(port, '/api/project', {
+      const r = await post(port, '/api/projects', {
         title: 'Smoke Project 77', goal: 'Test project creation',
         tasks: [
           { id: 'SP77-1', title: 'Task A' },
@@ -721,28 +720,41 @@ async function runSuite(target) {
       if (body.ok !== true) throw new Error('expected ok: true');
       if (body.title !== 'Smoke Project 77') throw new Error(`wrong title: ${body.title}`);
       if (body.taskCount !== 2) throw new Error(`expected taskCount 2, got ${body.taskCount}`);
-      // Restore original board
       await post(port, '/api/board', backup);
-      ok('POST /api/project (valid) → 201 + project created + restored');
-    } catch (e) { fail('POST /api/project (valid)', e.message); }
+      ok('POST /api/projects (valid) → 201 + tasks created + restored');
+    } catch (e) { fail('POST /api/projects (valid)', e.message); }
 
-    // POST /api/project (missing title → 400)
+    // POST /api/projects (missing title → 400)
     try {
-      const r = await post(port, '/api/project', { tasks: [{ id: 'x', title: 'y' }] });
+      const r = await post(port, '/api/projects', { tasks: [{ id: 'x', title: 'y' }] });
       if (r.status !== 400) throw new Error(`expected 400, got ${r.status}`);
       const body = JSON.parse(r.body);
       if (!body.error || !body.error.includes('title')) throw new Error(`wrong error: ${body.error}`);
-      ok('POST /api/project (no title) → 400');
-    } catch (e) { fail('POST /api/project (no title)', e.message); }
+      ok('POST /api/projects (no title) → 400');
+    } catch (e) { fail('POST /api/projects (no title)', e.message); }
 
-    // POST /api/project (empty tasks → 400)
+    // POST /api/projects (empty tasks → 400)
     try {
-      const r = await post(port, '/api/project', { title: 'Bad Project', tasks: [] });
+      const r = await post(port, '/api/projects', { title: 'Bad Project', tasks: [] });
       if (r.status !== 400) throw new Error(`expected 400, got ${r.status}`);
       const body = JSON.parse(r.body);
       if (!body.error || !body.error.includes('tasks')) throw new Error(`wrong error: ${body.error}`);
-      ok('POST /api/project (empty tasks) → 400');
-    } catch (e) { fail('POST /api/project (empty tasks)', e.message); }
+      ok('POST /api/projects (empty tasks) → 400');
+    } catch (e) { fail('POST /api/projects (empty tasks)', e.message); }
+
+    // POST /api/project (deprecated alias still works)
+    try {
+      const backupR = await get(port, '/api/board');
+      const backup = JSON.parse(backupR.body);
+      const r = await post(port, '/api/project', {
+        title: 'Deprecated Test', tasks: [{ id: 'DEP-1', title: 'Task via deprecated' }],
+      });
+      if (r.status !== 201) throw new Error(`expected 201, got ${r.status}: ${r.body}`);
+      const body = JSON.parse(r.body);
+      if (body.ok !== true) throw new Error('expected ok: true');
+      await post(port, '/api/board', backup);
+      ok('POST /api/project (deprecated alias) → 201 still works');
+    } catch (e) { fail('POST /api/project (deprecated alias)', e.message); }
 
     // ── Dispatch Next (safe path) ──
     // POST /api/dispatch-next — no ready tasks in clean state
