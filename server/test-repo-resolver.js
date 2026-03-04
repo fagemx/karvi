@@ -2,6 +2,8 @@
 
 const assert = require('assert');
 const path = require('path');
+const fs = require('fs');
+const os = require('os');
 const { resolveRepoRoot, validateRepoRoot, looksLikeSlug, resolveValue } = require('./repo-resolver');
 
 let passed = 0;
@@ -130,9 +132,33 @@ test('rejects non-existent path', () => {
   assert.ok(r.error.includes('Path not found'));
 });
 
+test('rejects non-git directory', () => {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'repo-resolver-test-'));
+  try {
+    const r = validateRepoRoot(tmpDir);
+    assert.strictEqual(r.valid, false);
+    assert.ok(r.error.includes('Not a git repo'));
+  } finally {
+    fs.rmdirSync(tmpDir);
+  }
+});
+
 test('validates actual git repo (cwd)', () => {
   const r = validateRepoRoot(process.cwd());
   assert.strictEqual(r.valid, true);
+});
+
+test('accepts valid git repo with matching remote', () => {
+  const karviRoot = path.resolve(__dirname, '..');
+  const r = validateRepoRoot(karviRoot, 'fagemx/karvi');
+  assert.strictEqual(r.valid, true);
+});
+
+test('rejects valid git repo with mismatched remote', () => {
+  const karviRoot = path.resolve(__dirname, '..');
+  const r = validateRepoRoot(karviRoot, 'someone/other-repo');
+  assert.strictEqual(r.valid, false);
+  assert.ok(r.error.includes('Remote mismatch'));
 });
 
 // --- Summary ---

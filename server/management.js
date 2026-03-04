@@ -703,11 +703,22 @@ function buildSkillContextSection(projectRoot) {
     } catch {}
 
     if (excerpts.length === 0) {
-      excerpts.push(
-        '- Follow existing code patterns — do NOT invent new ones\n' +
-        '- Atomic file writes (write to .tmp then rename)\n' +
-        '- Run syntax checks on every modified file'
-      );
+      if (!projectRoot) {
+        excerpts.push(
+          '- Zero external dependencies (Node.js built-in modules only)\n' +
+          '- Atomic file writes (write to .tmp then rename)\n' +
+          '- Windows-compatible: spawn via cmd.exe /d /s /c\n' +
+          '- board.json is single source of truth — agents do NOT write board directly\n' +
+          '- Follow existing code patterns — do NOT invent new ones\n' +
+          '- Run node -c <file> on every modified JavaScript file'
+        );
+      } else {
+        excerpts.push(
+          '- Follow existing code patterns — do NOT invent new ones\n' +
+          '- Atomic file writes (write to .tmp then rename)\n' +
+          '- Run syntax checks on every modified file'
+        );
+      }
     }
     buildSkillContextSection._cacheMap.set(cacheKey, excerpts);
   }
