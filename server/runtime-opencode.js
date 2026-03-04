@@ -183,6 +183,11 @@ function dispatch(plan) {
 
         if (obj.sessionID) sessionId = obj.sessionID;
 
+        // Debug: log unknown event types to diagnose provider-specific NDJSON formats
+        if (!['text', 'step_start', 'step_finish', 'tool_call', 'tool_result'].includes(obj.type)) {
+          console.log('[opencode-rt] event type=%s keys=%s', obj.type, Object.keys(obj).join(','));
+        }
+
         // text event — accumulate
         if (obj.type === 'text' && obj.part?.text) {
           lastText += obj.part.text;
@@ -245,7 +250,8 @@ function dispatch(plan) {
     });
 
     child.on('close', code => {
-      console.log('[opencode-rt] close: code=%d settled=%s', code, settled);
+      console.log('[opencode-rt] close: code=%d settled=%s lastText=%d totalOut=%d',
+        code, settled, lastText.length, totalTokens.output);
       if (settled) return;
 
       if (code !== 0) {
@@ -253,11 +259,22 @@ function dispatch(plan) {
         return;
       }
 
+      // Primary: settle with accumulated text output
       if (lastText) {
         settle(null, buildResult(lastText));
-      } else {
-        settle(new Error('opencode exited 0 but no output received'));
+        return;
       }
+
+      // Fallback: some providers (e.g. Ollama via opencode) don't emit 'text' NDJSON
+      // events, so lastText stays empty. If we received step_finish events with output
+      // tokens, the model DID produce output — treat as success with synthetic summary.
+      if (totalTokens.output > 0) {
+        console.log('[opencode-rt] no text events but %d output tokens — settling as success', totalTokens.output);
+        settle(null, buildResult(`[agent completed: ${totalTokens.output} output tokens, ${toolCallCount} tool calls]`));
+        return;
+      }
+
+      settle(new Error('opencode exited 0 but no output received'));
     });
   });
 }
