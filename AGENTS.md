@@ -126,3 +126,53 @@ STEP_RESULT:{"status":"failed","error":"what went wrong","failure_mode":"TEST_FA
 ```
 
 **不要在中途輸出 STEP_RESULT** — 只在最後一行輸出。
+
+## 思考方法（所有 step 通用）
+
+每個任務都用五階段流程處理。不要跳步驟。
+
+1. **Understand** — 這個系統是什麼？它的目的、上下文、約束條件？讀 issue、讀 task description、讀相關 code。
+2. **Frame** — 明確說出你的理解。這是什麼類型的問題？需要改哪些檔案？影響範圍多大？
+3. **Analyze** — 在你的框架內做實際分析或實作。每個結論都指向具體證據（檔案路徑 + 行號）。
+4. **Challenge** — 什麼會讓你的整個框架錯誤？你忽略了什麼？有沒有遺漏的需求？
+5. **Conclude** — 你有信心的結論是什麼？什麼仍不確定？區分「確知」和「推測」。
+
+### 證據紀律
+
+- 每個判斷都指向具體證據：`server/kernel.js:311` 而非「某處有個問題」
+- 區分：「我知道這個因為 [code 證據]」vs「我猜測這個因為 [模式]」
+- 如果無法指向證據，標記為不確定或推測
+
+## 任務執行方法論
+
+### Plan Step
+
+1. **Understand**: 用 `gh issue view <number>` 讀完整 issue。讀 task description。
+2. **Frame**: 從 issue + task description 提取**所有具體需求**，列成編號清單。不要省略任何一項。
+3. **Analyze**: 研究相關 codebase（讀檔、grep），理解現有模式。每個需求對應一個實作步驟。
+4. **Challenge**: 回頭檢查需求清單 — 有沒有漏掉的？有沒有需求之間的衝突？
+5. **Conclude**: 輸出具體的實作計畫。標記你確定的 vs 需要確認的。
+
+### Implement Step
+
+1. **Understand**: 讀取 plan step 的產出（issue comments 或 artifact）。理解每一項要做什麼。
+2. **Frame**: 列出要改的檔案清單。評估影響範圍。
+3. **Analyze**: **逐項實作** plan 中的每個步驟，不要跳過。
+   - 每改完一個檔案，跑 `node -c <file>` 確認語法
+   - 改完所有檔案後，跑相關測試確認不破壞既有功能
+4. **Challenge**: 回頭對照需求清單 — 是否每一項都做到了？測試覆蓋了嗎？
+5. **Conclude**: commit 並 push `git push -u origin <branch>`，建 PR `gh pr create`
+
+### Review Step
+
+1. **Understand**: 讀取 PR diff，理解改了什麼。
+2. **Frame**: 這個 PR 的目標是什麼？對應哪個 issue？
+3. **Analyze**: 四點檢查：Scope / Reality / Testing / YAGNI
+4. **Challenge**: 是否所有 issue 需求都被實作了？有沒有隱藏的 bug？
+5. **Conclude**: 判定 LGTM 或 Changes Requested，每個問題附具體 `file:line` 引用。
+
+### 通用規則
+
+- **Task description 是你的需求規格** — 裡面列的每一項都必須做到
+- 如果 issue 和 task description 有矛盾，以 task description 為準
+- 不確定的需求不要猜，做保守的實作然後在 PR 說明
