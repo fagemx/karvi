@@ -6,7 +6,7 @@
 
 ```
 Karvi Server (port 3461)
-  ├── POST /api/project       ← 建立 task（auto_dispatch 自動接手）
+  ├── POST /api/projects      ← 建立 task（auto_dispatch 自動接手）
   ├── POST /api/tasks/:id/dispatch  ← 手動 dispatch 單一 task
   │
   ├── tryAutoDispatch()        ← 自動流程
@@ -49,7 +49,8 @@ Karvi Server (port 3461)
 curl -s http://localhost:3461/api/controls | node -e "const d=JSON.parse(require('fs').readFileSync(0,'utf8')); console.log('worktrees:', d.use_worktrees, 'auto_dispatch:', d.auto_dispatch, 'step_pipeline:', d.use_step_pipeline, 'auto_merge:', d.auto_merge_on_approve)"
 
 # 建立任務（auto_dispatch 自動接手）
-curl -X POST http://localhost:3461/api/project \
+# 注意：/api/project (singular) 仍可用但已 deprecated
+curl -X POST http://localhost:3461/api/projects \
   -H "Content-Type: application/json" \
   -d '{
     "title":"GH-XXX: 任務標題",

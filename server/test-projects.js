@@ -58,9 +58,9 @@ function createMockHelpers(board) {
 // ---------------------------------------------------------------------------
 test('1. hasCycle — no cycle returns false', async () => {
   const tasks = [
-    { issue: 1, depends: [] },
-    { issue: 2, depends: [1] },
-    { issue: 3, depends: [1, 2] },
+    { id: 'GH-1', depends: [] },
+    { id: 'GH-2', depends: ['GH-1'] },
+    { id: 'GH-3', depends: ['GH-1', 'GH-2'] },
   ];
   assert.strictEqual(hasCycle(tasks), false);
 });
@@ -70,9 +70,9 @@ test('1. hasCycle — no cycle returns false', async () => {
 // ---------------------------------------------------------------------------
 test('2. hasCycle — cycle returns true', async () => {
   const tasks = [
-    { issue: 1, depends: [3] },
-    { issue: 2, depends: [1] },
-    { issue: 3, depends: [2] },
+    { id: 'GH-1', depends: ['GH-3'] },
+    { id: 'GH-2', depends: ['GH-1'] },
+    { id: 'GH-3', depends: ['GH-2'] },
   ];
   assert.strictEqual(hasCycle(tasks), true);
 });
@@ -358,6 +358,168 @@ test('15. POST /api/projects — existing GH task gets updated with deps + proje
   assert.deepStrictEqual(t5.depends, ['GH-6']);
   assert.ok(t5.projectId);
   assert.strictEqual(t5.completionTrigger, 'pr_merged');
+});
+
+// ---------------------------------------------------------------------------
+// Test 16: POST /api/projects — unified format (id-based tasks, no repo)
+// ---------------------------------------------------------------------------
+test('16. POST /api/projects — id-based tasks without repo (no project entity)', async () => {
+  const projectsRoutes = require('./routes/projects');
+  const board = createBoard([]);
+  const helpers = createMockHelpers(board);
+  const deps = { mgmt, tryAutoDispatch: null };
+
+  const input = {
+    title: 'Ad-hoc Tasks',
+    tasks: [
+      { id: 'GH-248', title: 'feat: reopen API' },
+      { id: 'GH-249', title: 'fix: needs_revision mapping' },
+    ],
+  };
+  const req = createMockReq('POST', '/api/projects', JSON.stringify(input));
+  const res = createMockRes();
+
+  projectsRoutes(req, res, helpers, deps);
+  req.emit('data', JSON.stringify(input));
+  req.emit('end');
+
+  await tick();
+  assert.strictEqual(res._statusCode, 201);
+  const body = JSON.parse(res._body);
+  assert.strictEqual(body.ok, true);
+  assert.strictEqual(body.taskCount, 2);
+  assert.strictEqual(body.project, undefined);
+
+  const b = helpers._state.board;
+  assert.strictEqual(b.taskPlan.tasks.length, 2);
+  assert.strictEqual(b.taskPlan.tasks[0].id, 'GH-248');
+  assert.strictEqual(b.taskPlan.tasks[1].id, 'GH-249');
+  assert.strictEqual(b.projects.length, 0);
+});
+
+// ---------------------------------------------------------------------------
+// Test 17: POST /api/projects — merge mode (don't overwrite active tasks)
+// ---------------------------------------------------------------------------
+test('17. POST /api/projects — merges new tasks, preserves active ones', async () => {
+  const projectsRoutes = require('./routes/projects');
+  const existingTask = { id: 'GH-100', title: 'Running', status: 'dispatched', depends: [] };
+  const board = createBoard([existingTask]);
+  const helpers = createMockHelpers(board);
+  const deps = { mgmt, tryAutoDispatch: null };
+
+  const input = {
+    title: 'Wave 2',
+    tasks: [
+      { id: 'GH-100', title: 'Should NOT overwrite' },
+      { id: 'GH-200', title: 'New task' },
+    ],
+  };
+  const req = createMockReq('POST', '/api/projects', JSON.stringify(input));
+  const res = createMockRes();
+
+  projectsRoutes(req, res, helpers, deps);
+  req.emit('data', JSON.stringify(input));
+  req.emit('end');
+
+  await tick();
+  assert.strictEqual(res._statusCode, 201);
+
+  const b = helpers._state.board;
+  assert.strictEqual(b.taskPlan.tasks.length, 2);
+  const t100 = b.taskPlan.tasks.find(t => t.id === 'GH-100');
+  assert.strictEqual(t100.title, 'Running');
+  assert.strictEqual(t100.status, 'dispatched');
+  const t200 = b.taskPlan.tasks.find(t => t.id === 'GH-200');
+  assert.strictEqual(t200.title, 'New task');
+});
+
+// ---------------------------------------------------------------------------
+// Test 18: POST /api/projects — mixed format (issue + id based)
+// ---------------------------------------------------------------------------
+test('18. POST /api/projects — mixed task formats (issue + id)', async () => {
+  const projectsRoutes = require('./routes/projects');
+  const board = createBoard([]);
+  const helpers = createMockHelpers(board);
+  const deps = { mgmt, tryAutoDispatch: null };
+
+  const input = {
+    title: 'Mixed',
+    repo: 'owner/repo',
+    tasks: [
+      { issue: 10, title: 'Issue-based' },
+      { id: 'CUSTOM-1', title: 'Id-based' },
+    ],
+  };
+  const req = createMockReq('POST', '/api/projects', JSON.stringify(input));
+  const res = createMockRes();
+
+  projectsRoutes(req, res, helpers, deps);
+  req.emit('data', JSON.stringify(input));
+  req.emit('end');
+
+  await tick();
+  assert.strictEqual(res._statusCode, 201);
+
+  const b = helpers._state.board;
+  assert.strictEqual(b.taskPlan.tasks.length, 2);
+  assert.strictEqual(b.taskPlan.tasks[0].id, 'GH-10');
+  assert.strictEqual(b.taskPlan.tasks[1].id, 'CUSTOM-1');
+  assert.ok(b.projects.length > 0);
+});
+
+// ---------------------------------------------------------------------------
+// Test 19: POST /api/project (deprecated alias) still works
+// ---------------------------------------------------------------------------
+test('19. POST /api/project (deprecated alias) → 201', async () => {
+  const projectsRoutes = require('./routes/projects');
+  const board = createBoard([]);
+  const helpers = createMockHelpers(board);
+  const deps = { mgmt, tryAutoDispatch: null };
+
+  const input = { title: 'Via Deprecated', tasks: [{ id: 'DEP-1', title: 'Test' }] };
+  const req = createMockReq('POST', '/api/project', JSON.stringify(input));
+  const res = createMockRes();
+
+  projectsRoutes(req, res, helpers, deps);
+  req.emit('data', JSON.stringify(input));
+  req.emit('end');
+
+  await tick();
+  assert.strictEqual(res._statusCode, 201);
+  const body = JSON.parse(res._body);
+  assert.strictEqual(body.ok, true);
+  assert.strictEqual(body.taskCount, 1);
+
+  const logEntry = helpers._state.log.find(e => e.event === 'deprecated_api');
+  assert.ok(logEntry, 'should log deprecation warning');
+});
+
+// ---------------------------------------------------------------------------
+// Test 20: POST /api/projects — target_repo passes through
+// ---------------------------------------------------------------------------
+test('20. POST /api/projects — target_repo is set on task', async () => {
+  const projectsRoutes = require('./routes/projects');
+  const board = createBoard([]);
+  const helpers = createMockHelpers(board);
+  const deps = { mgmt, tryAutoDispatch: null };
+
+  const input = {
+    title: 'Multi-repo',
+    tasks: [{ id: 'EDDA-1', title: 'Edda task', target_repo: 'C:\\ai_agent\\edda' }],
+  };
+  const req = createMockReq('POST', '/api/projects', JSON.stringify(input));
+  const res = createMockRes();
+
+  projectsRoutes(req, res, helpers, deps);
+  req.emit('data', JSON.stringify(input));
+  req.emit('end');
+
+  await tick();
+  assert.strictEqual(res._statusCode, 201);
+
+  const b = helpers._state.board;
+  const task = b.taskPlan.tasks[0];
+  assert.strictEqual(task.target_repo, 'C:\\ai_agent\\edda');
 });
 
 // ---------------------------------------------------------------------------

@@ -1,24 +1,26 @@
 /**
  * routes/projects.js — Project Orchestrator API
  *
- * POST   /api/projects          — create project (batch of GH tasks with deps)
+ * POST   /api/projects          — create/add tasks (unified endpoint)
  * GET    /api/projects          — list all projects with progress
  * GET    /api/projects/:id      — single project with progress
  * POST   /api/projects/:id/pause  — pause project
  * POST   /api/projects/:id/resume — resume project
  */
+const fs = require('fs');
+const path = require('path');
 const bb = require('../blackboard-server');
 const { json } = bb;
 
 /**
- * Detect circular dependencies in a task graph.
- * @param {Array<{issue: number, depends: number[]}>} tasks
- * @returns {boolean} true if a cycle exists
+ * Detect circular dependencies using string task IDs.
+ * @param {Array<{id: string, depends: string[]}>} normalizedTasks
+ * @returns {boolean}
  */
-function hasCycle(tasks) {
+function hasCycle(normalizedTasks) {
   const adj = new Map();
-  for (const t of tasks) {
-    adj.set(t.issue, t.depends || []);
+  for (const t of normalizedTasks) {
+    adj.set(t.id, t.depends || []);
   }
   const visited = new Set();
   const inStack = new Set();
@@ -35,10 +37,53 @@ function hasCycle(tasks) {
     return false;
   }
 
-  for (const t of tasks) {
-    if (dfs(t.issue)) return true;
+  for (const t of normalizedTasks) {
+    if (dfs(t.id)) return true;
   }
   return false;
+}
+
+/**
+ * Normalize task entry — supports both legacy (issue-based) and unified (id-based) formats.
+ */
+function normalizeTask(entry, repo) {
+  if (entry.issue && typeof entry.issue === 'number') {
+    return {
+      id: `GH-${entry.issue}`,
+      title: entry.title || `Issue #${entry.issue}`,
+      assignee: entry.assignee || null,
+      depends: (entry.depends || []).map(d => typeof d === 'number' ? `GH-${d}` : d),
+      type: 'gh',
+      source: repo || null,
+      githubIssue: entry.issue,
+      description: entry.description || '',
+      spec: entry.spec || null,
+      skill: entry.skill || null,
+      estimate: entry.estimate || null,
+      target_repo: entry.target_repo || null,
+    };
+  }
+  if (entry.id && typeof entry.id === 'string') {
+    return {
+      id: entry.id,
+      title: entry.title || entry.id,
+      assignee: entry.assignee || null,
+      depends: entry.depends || [],
+      description: entry.description || '',
+      spec: entry.spec || null,
+      skill: entry.skill || null,
+      estimate: entry.estimate || null,
+      target_repo: entry.target_repo || null,
+    };
+  }
+  throw new Error(`task must have either 'issue' (number) or 'id' (string): ${JSON.stringify(entry)}`);
+}
+
+const SKILLS_NEEDING_BRIEF = new Set(['conversapix-storyboard']);
+
+function ensureBriefsDir(dataDir) {
+  const d = path.join(dataDir, 'briefs');
+  if (!fs.existsSync(d)) fs.mkdirSync(d, { recursive: true });
 }
 
 /**
@@ -66,109 +111,166 @@ function computeProgress(board, project) {
 
 module.exports = function projectsRoutes(req, res, helpers, deps) {
   const { mgmt } = deps;
+  const DATA_DIR = path.resolve(__dirname, '..');
 
-  // POST /api/projects — create project
-  if (req.method === 'POST' && req.url === '/api/projects') {
+  // POST /api/projects (canonical) + POST /api/project (deprecated alias)
+  if (req.method === 'POST' && (req.url === '/api/projects' || req.url === '/api/project')) {
+    if (req.url === '/api/project') {
+      helpers.appendLog({ ts: helpers.nowIso(), event: 'deprecated_api', endpoint: '/api/project', message: 'Use POST /api/projects instead' });
+    }
     let body = '';
     req.on('data', c => (body += c));
     req.on('end', () => {
       try {
         const input = JSON.parse(body || '{}');
-        const { title, repo, concurrency, completionTrigger, tasks } = input;
+        const { title, repo, concurrency, completionTrigger, autoStart } = input;
+        const rawTasks = input.tasks;
 
-        // Validation
         if (!title || typeof title !== 'string') return json(res, 400, { error: 'title is required' });
-        if (!repo || typeof repo !== 'string') return json(res, 400, { error: 'repo is required' });
-        if (!Array.isArray(tasks) || tasks.length === 0) return json(res, 400, { error: 'tasks array is required and must not be empty' });
+        if (!Array.isArray(rawTasks) || rawTasks.length === 0) return json(res, 400, { error: 'tasks array is required and must not be empty' });
 
-        // Validate completion trigger
+        // Normalize tasks — supports both { issue } and { id } formats
+        const normalized = rawTasks.map(t => normalizeTask(t, repo));
+
+        // Validate: no duplicate IDs
+        const ids = new Set();
+        for (const t of normalized) {
+          if (ids.has(t.id)) return json(res, 400, { error: `duplicate task id: ${t.id}` });
+          ids.add(t.id);
+        }
+
+        // Validate completion trigger (only when creating a project entity)
         const trigger = completionTrigger || 'pr_merged';
-        if (trigger !== 'pr_merged' && trigger !== 'approved') {
+        if (repo && trigger !== 'pr_merged' && trigger !== 'approved') {
           return json(res, 400, { error: 'completionTrigger must be pr_merged or approved' });
         }
 
-        // Validate task entries
-        for (const entry of tasks) {
-          if (!entry.issue || typeof entry.issue !== 'number') {
-            return json(res, 400, { error: 'each task must have a numeric issue field' });
-          }
-        }
-
         // Cycle detection
-        if (hasCycle(tasks)) {
+        if (hasCycle(normalized)) {
           return json(res, 400, { error: 'circular dependency detected in tasks' });
         }
 
         const board = helpers.readBoard();
         board.projects = board.projects || [];
         board.taskPlan = board.taskPlan || { tasks: [] };
+        board.taskPlan.tasks = board.taskPlan.tasks || [];
 
-        const projectId = helpers.uid('PROJ');
-        const taskIds = [];
+        if (input.goal || title) board.taskPlan.goal = input.goal || title;
+        if (title) board.taskPlan.title = title;
+        if (!board.taskPlan.phase) board.taskPlan.phase = 'planning';
+        if (!board.taskPlan.createdAt) board.taskPlan.createdAt = helpers.nowIso();
+        if (input.spec) board.taskPlan.spec = input.spec;
 
-        for (const entry of tasks) {
-          const taskId = `GH-${entry.issue}`;
-          const depIds = (entry.depends || []).map(d => `GH-${d}`);
-          const existing = board.taskPlan.tasks.find(t => t.id === taskId);
-
-          if (existing) {
-            // Update existing task
-            existing.depends = depIds;
-            existing.projectId = projectId;
-            existing.completionTrigger = trigger;
-            if (depIds.length === 0 && existing.status === 'pending') {
-              existing.status = 'dispatched';
-              existing.history = existing.history || [];
-              existing.history.push({ ts: helpers.nowIso(), status: 'dispatched', reason: 'project_no_deps' });
-            }
-          } else {
-            // Create new GH task
-            const newTask = {
-              id: taskId,
-              title: entry.title || `Issue #${entry.issue}`,
-              status: depIds.length > 0 ? 'pending' : 'dispatched',
-              assignee: entry.assignee || null,
-              depends: depIds,
-              type: 'gh',
-              source: repo,
-              githubIssue: entry.issue,
-              projectId,
-              completionTrigger: trigger,
-              history: [{ ts: helpers.nowIso(), status: depIds.length > 0 ? 'pending' : 'dispatched', reason: 'project_created' }],
-            };
-            board.taskPlan.tasks.push(newTask);
-          }
-          taskIds.push(taskId);
+        // Create project entity only when repo is provided
+        let projectId = null;
+        if (repo) {
+          projectId = helpers.uid('PROJ');
         }
 
-        const project = {
-          id: projectId,
-          title,
-          repo,
-          status: 'executing',
-          concurrency: concurrency || 3,
-          completionTrigger: trigger,
-          taskIds,
-          createdAt: helpers.nowIso(),
-        };
-        board.projects.push(project);
+        const ACTIVE_STATUSES = ['in_progress', 'dispatched'];
+        const SAFE_FIELDS = ['title', 'description', 'assignee', 'depends', 'spec', 'skill', 'estimate', 'target_repo'];
+        const existingIds = new Set(board.taskPlan.tasks.map(t => t.id));
+        const newTasks = [];
+        const taskIds = [];
 
-        // Signal
-        mgmt.ensureEvolutionFields(board);
-        board.signals.push({
-          id: helpers.uid('sig'), ts: helpers.nowIso(), by: 'project-orchestrator',
-          type: 'project_created',
-          content: `Project "${title}" created with ${taskIds.length} tasks`,
-          refs: taskIds,
-          data: { projectId, taskIds },
-        });
-        if (board.signals.length > 500) board.signals = board.signals.slice(-500);
+        for (const t of normalized) {
+          taskIds.push(t.id);
+          const existing = existingIds.has(t.id) ? board.taskPlan.tasks.find(e => e.id === t.id) : null;
+
+          if (existing) {
+            if (projectId) {
+              existing.projectId = projectId;
+              existing.completionTrigger = trigger;
+            }
+            if (!ACTIVE_STATUSES.includes(existing.status)) {
+              for (const k of SAFE_FIELDS) { if (t[k] !== undefined) existing[k] = t[k]; }
+              if (t.depends?.length === 0 && existing.status === 'pending') {
+                existing.status = 'dispatched';
+              }
+              existing.history = existing.history || [];
+              existing.history.push({ ts: helpers.nowIso(), status: 'updated', by: 'api' });
+            }
+          } else {
+            const newTask = {
+              id: t.id,
+              title: t.title,
+              assignee: t.assignee || null,
+              status: (t.depends?.length > 0) ? 'pending' : 'dispatched',
+              depends: t.depends || [],
+              description: t.description || '',
+              spec: t.spec || null,
+              skill: t.skill || null,
+              estimate: t.estimate || null,
+              target_repo: t.target_repo || null,
+              history: [{ ts: helpers.nowIso(), status: (t.depends?.length > 0) ? 'pending' : 'dispatched', reason: 'project_created' }],
+            };
+            if (t.type) newTask.type = t.type;
+            if (t.source) newTask.source = t.source;
+            if (t.githubIssue) newTask.githubIssue = t.githubIssue;
+            if (projectId) {
+              newTask.projectId = projectId;
+              newTask.completionTrigger = trigger;
+            }
+            newTasks.push(newTask);
+            board.taskPlan.tasks.push(newTask);
+          }
+        }
+
+        // S8: Auto-create scoped boards (briefs) for new tasks with matching skills
+        for (const t of newTasks) {
+          if (t.skill && SKILLS_NEEDING_BRIEF.has(t.skill)) {
+            ensureBriefsDir(DATA_DIR);
+            const briefPath = `briefs/${t.id}.json`;
+            t.briefPath = briefPath;
+            const emptyBrief = {
+              meta: { boardType: 'brief', version: 1, taskId: t.id },
+              project: { name: title },
+              shotspec: { status: 'pending', shots: [] },
+              refpack: { status: 'empty', assets: {} },
+              controls: { auto_retry: true, max_retries: 3, quality_threshold: 85, paused: false },
+              log: [{ time: helpers.nowIso(), agent: 'system', action: 'brief_created', detail: `auto-created for ${t.id}` }],
+            };
+            fs.writeFileSync(path.resolve(DATA_DIR, briefPath), JSON.stringify(emptyBrief, null, 2));
+          }
+        }
+
+        // Create project entity if repo was provided
+        let project = null;
+        if (projectId) {
+          project = {
+            id: projectId,
+            title,
+            repo,
+            status: 'executing',
+            concurrency: concurrency || 3,
+            completionTrigger: trigger,
+            taskIds,
+            createdAt: helpers.nowIso(),
+          };
+          board.projects.push(project);
+
+          mgmt.ensureEvolutionFields(board);
+          board.signals.push({
+            id: helpers.uid('sig'), ts: helpers.nowIso(), by: 'project-orchestrator',
+            type: 'project_created',
+            content: `Project "${title}" created with ${taskIds.length} tasks`,
+            refs: taskIds,
+            data: { projectId, taskIds },
+          });
+          if (board.signals.length > 500) board.signals = board.signals.slice(-500);
+        }
 
         helpers.writeBoard(board);
-        helpers.appendLog({ ts: helpers.nowIso(), event: 'project_created', projectId, taskIds });
+        helpers.appendLog({ ts: helpers.nowIso(), event: 'project_created', title, projectId, taskCount: taskIds.length });
         helpers.broadcastSSE('board', board);
 
-        // Auto-dispatch no-dep tasks
+        const result = { ok: true, title, taskCount: taskIds.length };
+        if (project) {
+          result.project = project;
+          result.progress = computeProgress(board, project);
+        }
+
+        // Auto-dispatch
         if (deps.tryAutoDispatch) {
           const dispatchable = taskIds.filter(tid => {
             const t = board.taskPlan.tasks.find(tt => tt.id === tid);
@@ -179,7 +281,17 @@ module.exports = function projectsRoutes(req, res, helpers, deps) {
           }
         }
 
-        json(res, 201, { ok: true, project, progress: computeProgress(board, project) });
+        // autoStart: dispatch first ready task via dispatchTask
+        if (autoStart && deps.dispatchTask) {
+          const nextTask = mgmt.pickNextTask(board);
+          if (nextTask) {
+            const dr = deps.dispatchTask(nextTask, board, { source: 'project-autostart' });
+            result.autoStarted = nextTask.id;
+            if (dr) result.planId = dr.planId;
+          }
+        }
+
+        json(res, 201, result);
       } catch (error) {
         json(res, 400, { error: error.message });
       }
