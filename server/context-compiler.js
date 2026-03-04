@@ -8,10 +8,15 @@
 const { BUDGET_DEFAULTS } = require('./route-engine');
 
 const STEP_OBJECTIVES = {
-  plan:      'Research codebase and create implementation plan via /issue-plan skill.',
-  implement: 'Implement changes and create PR via /issue-action skill.',
+  plan:      'Research the codebase, understand the issue requirements, and produce a concrete implementation plan. Post the plan as a comment on the GitHub issue.',
+  implement: 'Implement all changes described in the plan. Commit, push the branch, and create a pull request via `gh pr create`. The PR must exist when you are done.',
   test:      'Verify CI passes and auto-fix lint/format failures.',
-  review:    'Review PR via /pr-review skill.',
+  review:    'Review the PR diff for correctness, scope, and test coverage. Post a review comment on the PR.',
+};
+
+// Default contracts per step type — enforce deliverable verification in post-check
+const STEP_DEFAULT_CONTRACTS = {
+  implement: { deliverable: 'pr' },
 };
 
 function buildEnvelope(decision, runState, deps) {
@@ -89,7 +94,7 @@ function buildEnvelope(decision, runState, deps) {
       return timeoutSec * 1000;
     })(),
     model_hint: null,
-    contract: task.contract || null,
+    contract: task.contract || STEP_DEFAULT_CONTRACTS[stepType] || null,
   };
 
   return envelope;
@@ -116,6 +121,7 @@ function computeRemainingBudget(budget) {
 
 module.exports = {
   STEP_OBJECTIVES,
+  STEP_DEFAULT_CONTRACTS,
   buildEnvelope,
   buildConstraints,
   computeRemainingBudget,
