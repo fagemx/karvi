@@ -12,6 +12,13 @@ const { execSync } = require('child_process');
 const mgmt = require('./management');
 const LOCK_GRACE_MS = 30_000; // 30s grace on top of step timeout
 
+const UPSTREAM_RELEVANCE = {
+  plan: null,
+  implement: { include: ['summary', 'payload'] },
+  test: { include: ['summary'] },
+  review: { include: ['summary'] },
+};
+
 /**
  * Create the step execution worker.
  *
@@ -755,16 +762,28 @@ function buildStepMessage(envelope, upstreamArtifacts, board, task) {
   }
 
   // Inject upstream artifacts (from completed dependency tasks)
-  if (Array.isArray(upstreamArtifacts) && upstreamArtifacts.length > 0) {
+  // Use UPSTREAM_RELEVANCE to filter what each step type needs
+  const relevance = UPSTREAM_RELEVANCE[envelope.step_type];
+  if (relevance && Array.isArray(upstreamArtifacts) && upstreamArtifacts.length > 0) {
     lines.push('', '## Upstream Task Outputs');
     for (const u of upstreamArtifacts) {
       lines.push(`### ${u.id} — ${u.title || '(untitled)'} [${u.status}]`);
-      if (u.payload) {
+      
+      // Include summary if relevant
+      if (relevance.include.includes('summary') && u.summary) {
+        lines.push(u.summary);
+      }
+      
+      // Include payload if relevant
+      if (relevance.include.includes('payload') && u.payload) {
         lines.push('```json');
         lines.push(JSON.stringify(u.payload, null, 2));
         lines.push('```');
-      } else if (u.summary) {
-        lines.push(u.summary);
+      }
+      
+      // Always add reference to full output file
+      if (u.output_ref) {
+        lines.push(`(Full output: ${u.output_ref})`);
       }
     }
     lines.push('');

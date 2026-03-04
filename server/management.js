@@ -452,6 +452,11 @@ function gatherUpstreamArtifacts(board, task) {
     if (dep.result?.payload) {
       entry.payload = dep.result.payload;
     }
+    // Include output reference from last succeeded step
+    const lastStep = dep.steps?.filter(s => s.state === 'succeeded').pop();
+    if (lastStep?.output_ref) {
+      entry.output_ref = lastStep.output_ref;
+    }
     results.push(entry);
   }
   return results;
