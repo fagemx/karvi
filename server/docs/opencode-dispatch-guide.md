@@ -66,6 +66,58 @@ curl -X POST http://localhost:3461/api/projects \
 
 **不要用 `autoStart: true`** — 它繞過 worktree 和 step pipeline。
 
+### 1.5 跨專案 Dispatch（對其他 repo 發任務）
+
+Karvi 可以對任何 Git 專案派發任務，只需在 task 裡加 `target_repo` 欄位。
+
+```bash
+curl -X POST http://localhost:3461/api/projects \
+  -H "Content-Type: application/json" \
+  -d '{
+    "title":"EDDA-138: scope derivation",
+    "tasks":[{
+      "id":"EDDA-138",
+      "title":"feat: smarter auto-claim scope derivation",
+      "assignee":"engineer_lite",
+      "target_repo":"C:\\ai_agent\\edda",
+      "description":"Implement GitHub issue fagemx/edda#138. See https://github.com/fagemx/edda/issues/138"
+    }]
+  }'
+```
+
+**運作機制：**
+
+| 項目 | 不帶 `target_repo` | 帶 `target_repo` |
+|------|-------------------|-----------------|
+| Worktree 位置 | `karvi/.claude/worktrees/TASK-ID/` | `{target_repo}/.claude/worktrees/TASK-ID/` |
+| Skills 載入 | 從 karvi 的 `.claude/skills/` | 從 target repo 的 `.claude/skills/` |
+| Agent CWD | karvi worktree | target repo worktree |
+| AGENTS.md | karvi 的 | target repo 的 |
+| 任務追蹤 | karvi board | karvi board（集中管理） |
+
+**前提條件：**
+- Target repo 必須是有效的 Git repo（`repo-resolver.js` 會驗證）
+- Target repo 的 `.claude/CLAUDE.md` 和 `AGENTS.md` 會被自動複製到 worktree
+- 如果 target repo 有 `.claude/skills/`，agent 會看到那些 skills
+
+**payload 格式支援：**
+
+`POST /api/projects` 同時支援兩種 task 格式：
+
+```jsonc
+// 格式 1：id-based（推薦，支援任意 ID）
+{ "id": "EDDA-138", "title": "...", "target_repo": "C:\\ai_agent\\edda" }
+
+// 格式 2：issue-based（legacy，自動加 GH- 前綴）
+{ "issue": 138, "title": "...", "target_repo": "C:\\ai_agent\\edda" }
+```
+
+**`repo` 欄位（可選）：**
+- 帶 `repo`（如 `"repo": "fagemx/edda"`）→ 建立 project entity，支援 pause/resume、concurrency gate、progress tracking
+- 不帶 `repo` → 只追加 tasks 到 board，不建 project
+
+**注意：** `/api/project`（singular）仍可用但已 deprecated，請用 `/api/projects`（plural）。
+
 ### 2. 手動 Dispatch（server 重啟後或 auto_dispatch 沒接手時）
 
 ```bash
@@ -254,3 +306,6 @@ curl -X POST http://localhost:3461/api/controls \
 | `git add .` 加了 `.tmp/` | `.gitignore` 沒有 `.tmp/` | 已加入 `.gitignore` |
 | Agent summary 有 PR URL 但 task.pr 空 | `findPrUrl` 只看 payload | 已加 summary fallback |
 | Ollama 本地模型太慢 | 300s timeout 殺掉 | 用雲端 API（GLM-5）或調 `step_timeout_sec` |
+| 跨專案 worktree 建錯地方 | `target_repo` 沒正確傳遞 | 已修（GH-250），用 `/api/projects` + `target_repo` |
+| 發新 task 覆蓋整個 board | 舊 `/api/project` 用 `=` 覆寫 taskPlan | 已修（GH-250），改為 merge 模式 |
+| `/api/project` vs `/api/projects` | 兩個只差一個 s 的 endpoint | 已合併（GH-251），用 `/api/projects` |
