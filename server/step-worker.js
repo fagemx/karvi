@@ -11,6 +11,21 @@
 const { execSync } = require('child_process');
 const LOCK_GRACE_MS = 30_000; // 30s grace on top of step timeout
 
+const ERROR_PATTERNS = [
+  // Dispatch error patterns (from err.message)
+  { pattern: /idle for \d+s/i, kind: 'TEMPORARY' },
+  { pattern: /exited with code/i, kind: 'PROVIDER' },
+  { pattern: /ECONNREFUSED/i, kind: 'PROVIDER' },
+  { pattern: /ETIMEDOUT/i, kind: 'PROVIDER' },
+  { pattern: /ENOTFOUND/i, kind: 'PROVIDER' },
+  
+  // Agent failure_mode patterns (from agentOutput.failure.failure_mode)
+  { failure_mode: 'TEST_FAILURE', kind: 'AGENT_ERROR' },
+  { failure_mode: 'FINALIZE_ERROR', kind: 'FINALIZE' },
+  { failure_mode: 'PROTECTED_CODE_VIOLATION', kind: 'PROTECTED' },
+  { failure_mode: 'CONTRACT_VIOLATION', kind: 'CONTRACT' },
+];
+
 /**
  * Create the step execution worker.
  *
@@ -145,8 +160,10 @@ function createStepWorker(deps) {
         const failTask = (failBoard.taskPlan?.tasks || []).find(t => t.id === envelope.task_id);
         const failStep = failTask?.steps?.find(s => s.step_id === envelope.step_id);
         if (failStep && failStep.state === 'running') {
+          const errorKind = classifyError(dispatchErr, null);
           stepSchema.transitionStep(failStep, 'failed', {
             error: (dispatchErr.message || 'dispatch error').slice(0, 500),
+            errorKind,
           });
 
           // Emit signal so dashboard/SSE sees dispatch errors
@@ -308,9 +325,11 @@ function createStepWorker(deps) {
 
     if (latestStep && latestStep.state === 'running') {
       const newState = agentOutput.status === 'succeeded' ? 'succeeded' : 'failed';
+      const errorKind = newState === 'failed' ? classifyError(null, agentOutput) : null;
       stepSchema.transitionStep(latestStep, newState, {
         output_ref: artifactStore.artifactPath(envelope.run_id, envelope.step_id, 'output'),
         error: agentOutput.failure?.failure_signature || null,
+        errorKind,
       });
 
       // 7. Emit signal
@@ -351,6 +370,36 @@ function createStepWorker(deps) {
 }
 
 // --- Helpers (module-level, testable) ---
+
+/**
+ * Classify error based on dispatch error or agent output.
+ * Returns ErrorKind string (TEMPORARY, PROVIDER, AGENT_ERROR, etc.)
+ * 
+ * @param {Error|null} err - Dispatch error object
+ * @param {object|null} agentOutput - Agent output with failure info
+ * @returns {string} ErrorKind
+ */
+function classifyError(err, agentOutput) {
+  // Check agent failure_mode first (more specific)
+  if (agentOutput?.failure?.failure_mode) {
+    for (const rule of ERROR_PATTERNS) {
+      if (rule.failure_mode && agentOutput.failure.failure_mode === rule.failure_mode) {
+        return rule.kind;
+      }
+    }
+  }
+  
+  // Check dispatch error patterns
+  if (err?.message) {
+    for (const rule of ERROR_PATTERNS) {
+      if (rule.pattern && rule.pattern.test(err.message)) {
+        return rule.kind;
+      }
+    }
+  }
+  
+  return 'UNKNOWN';
+}
 
 /**
  * Check working directory for uncommitted git changes.
@@ -824,4 +873,4 @@ function recoverExpiredLocks(board) {
   return recovered;
 }
 
-module.exports = { createStepWorker, parseStepResult, buildStepMessage, recoverExpiredLocks, runPreflight, extractPreflightTargets, validateContract };
+module.exports = { createStepWorker, parseStepResult, buildStepMessage, recoverExpiredLocks, runPreflight, extractPreflightTargets, validateContract, classifyError };

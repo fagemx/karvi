@@ -11,7 +11,7 @@ const assert = require('assert');
 const stepSchema = require('./step-schema');
 const artifactStore = require('./artifact-store');
 const mgmt = require('./management');
-const { createStepWorker, parseStepResult, buildStepMessage, recoverExpiredLocks } = require('./step-worker');
+const { createStepWorker, parseStepResult, buildStepMessage, recoverExpiredLocks, classifyError } = require('./step-worker');
 
 let passed = 0;
 let failed = 0;
@@ -315,6 +315,74 @@ function createMockEnvelope(overrides = {}) {
 
     assert.strictEqual(targets.length, 1, 'should only include queued steps');
     assert.strictEqual(targets[0].step_id, 'T-B1:impl');
+  });
+
+  // Test 12: classifyError() tests
+  console.log('\n=== classifyError() ===\n');
+  
+  await test('classifyError returns TEMPORARY for idle timeout', () => {
+    const err = new Error('Process idle for 300s');
+    const kind = classifyError(err, null);
+    assert.strictEqual(kind, 'TEMPORARY');
+  });
+
+  await test('classifyError returns PROVIDER for exited with code', () => {
+    const err = new Error('Process exited with code 1');
+    const kind = classifyError(err, null);
+    assert.strictEqual(kind, 'PROVIDER');
+  });
+
+  await test('classifyError returns PROVIDER for network errors', () => {
+    const err = new Error('ECONNREFUSED 127.0.0.1:8080');
+    const kind = classifyError(err, null);
+    assert.strictEqual(kind, 'PROVIDER');
+  });
+
+  await test('classifyError returns AGENT_ERROR for TEST_FAILURE', () => {
+    const agentOutput = {
+      failure: { failure_mode: 'TEST_FAILURE' }
+    };
+    const kind = classifyError(null, agentOutput);
+    assert.strictEqual(kind, 'AGENT_ERROR');
+  });
+
+  await test('classifyError returns FINALIZE for FINALIZE_ERROR', () => {
+    const agentOutput = {
+      failure: { failure_mode: 'FINALIZE_ERROR' }
+    };
+    const kind = classifyError(null, agentOutput);
+    assert.strictEqual(kind, 'FINALIZE');
+  });
+
+  await test('classifyError returns PROTECTED for PROTECTED_CODE_VIOLATION', () => {
+    const agentOutput = {
+      failure: { failure_mode: 'PROTECTED_CODE_VIOLATION' }
+    };
+    const kind = classifyError(null, agentOutput);
+    assert.strictEqual(kind, 'PROTECTED');
+  });
+
+  await test('classifyError returns CONTRACT for CONTRACT_VIOLATION', () => {
+    const agentOutput = {
+      failure: { failure_mode: 'CONTRACT_VIOLATION' }
+    };
+    const kind = classifyError(null, agentOutput);
+    assert.strictEqual(kind, 'CONTRACT');
+  });
+
+  await test('classifyError returns UNKNOWN for unrecognized patterns', () => {
+    const err = new Error('Some random error');
+    const kind = classifyError(err, null);
+    assert.strictEqual(kind, 'UNKNOWN');
+  });
+
+  await test('classifyError prioritizes agent failure_mode over dispatch error', () => {
+    const err = new Error('Process idle for 300s');
+    const agentOutput = {
+      failure: { failure_mode: 'TEST_FAILURE' }
+    };
+    const kind = classifyError(err, agentOutput);
+    assert.strictEqual(kind, 'AGENT_ERROR');
   });
 
   // Cleanup

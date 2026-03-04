@@ -28,7 +28,35 @@ const DEFAULT_RETRY_POLICY = {
   timeout_ms: 300_000,
 };
 
+const ERROR_KINDS = {
+  TEMPORARY:    { retryable: true,  backoff: 'exponential' },
+  PROVIDER:     { retryable: true,  backoff: 'exponential' },
+  AGENT_ERROR:  { retryable: true,  backoff: 'linear' },
+  FINALIZE:     { retryable: true,  backoff: 'immediate' },
+  CONTRACT:     { retryable: true,  backoff: 'linear' },
+  PROTECTED:    { retryable: false, backoff: null },
+  CONFIG:       { retryable: false, backoff: null },
+  UNKNOWN:      { retryable: true,  backoff: 'exponential' },
+};
+
 // --- Functions ---
+
+function computeBackoff(kindConfig, step) {
+  if (!kindConfig.backoff) return 0;
+  
+  switch (kindConfig.backoff) {
+    case 'immediate':
+      return 0;
+    case 'linear':
+      return step.retry_policy.backoff_base_ms * step.attempt;
+    case 'exponential':
+    default:
+      return step.retry_policy.backoff_base_ms
+        * Math.pow(step.retry_policy.backoff_multiplier, step.attempt - 1);
+  }
+}
+
+
 
 function createStep(taskId, runId, type, opts = {}) {
   const stepId = `${taskId}:${type}`;
@@ -87,14 +115,15 @@ function transitionStep(step, newState, extra = {}) {
   if (newState === 'failed') {
     step.attempt++;
     step.error = extra.error || step.error;
-    if (step.attempt >= step.max_attempts) {
+    step.errorKind = extra.errorKind || 'UNKNOWN';
+    
+    const kindConfig = ERROR_KINDS[step.errorKind];
+    if (!kindConfig.retryable || step.attempt >= step.max_attempts) {
       step.state = 'dead';
     } else {
-      // schedule retry with exponential backoff
-      const delay = step.retry_policy.backoff_base_ms
-        * Math.pow(step.retry_policy.backoff_multiplier, step.attempt - 1);
+      const delay = computeBackoff(kindConfig, step);
       step.scheduled_at = new Date(Date.now() + delay).toISOString();
-      step.state = 'queued';   // auto-requeue for retry
+      step.state = 'queued';
     }
     step.locked_by = null;
     step.lock_expires_at = null;
@@ -135,10 +164,12 @@ module.exports = {
   STEP_STATES,
   ALLOWED_STEP_TRANSITIONS,
   DEFAULT_RETRY_POLICY,
+  ERROR_KINDS,
   createStep,
   canTransitionStep,
   ensureStepTransition,
   transitionStep,
+  computeBackoff,
   computeIdempotencyKey,
   isStepIdempotent,
 };
