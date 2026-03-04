@@ -1,14 +1,10 @@
-/**
- * test-repo-resolver.js — Unit tests for repo-resolver.js
- */
-
 'use strict';
 
 const assert = require('assert');
 const path = require('path');
 const fs = require('fs');
 const os = require('os');
-const { resolveRepoRoot, validateRepoRoot } = require('./repo-resolver');
+const { resolveRepoRoot, validateRepoRoot, looksLikeSlug, resolveValue } = require('./repo-resolver');
 
 let passed = 0;
 let failed = 0;
@@ -16,105 +12,156 @@ let failed = 0;
 function test(name, fn) {
   try {
     fn();
-    console.log(`  ✓ ${name}`);
     passed++;
+    console.log(`  ✓ ${name}`);
   } catch (err) {
-    console.error(`  ✗ ${name}: ${err.message}`);
     failed++;
+    console.log(`  ✗ ${name}`);
+    console.log(`    ${err.message}`);
   }
 }
 
-console.log('\n=== repo-resolver tests ===\n');
+console.log('test-repo-resolver.js');
+console.log('');
+
+// --- looksLikeSlug ---
+console.log('looksLikeSlug:');
+
+test('detects owner/repo as slug', () => {
+  assert.strictEqual(looksLikeSlug('fagemx/edda'), true);
+  assert.strictEqual(looksLikeSlug('my-org/my-repo.js'), true);
+});
+
+test('rejects absolute paths', () => {
+  assert.strictEqual(looksLikeSlug('C:/ai_agent/edda'), false);
+  assert.strictEqual(looksLikeSlug('/home/user/repo'), false);
+});
+
+test('rejects bare names without slash', () => {
+  assert.strictEqual(looksLikeSlug('edda'), false);
+  assert.strictEqual(looksLikeSlug(''), false);
+});
+
+test('rejects paths with multiple segments', () => {
+  assert.strictEqual(looksLikeSlug('a/b/c'), false);
+});
+
+// --- resolveValue ---
+console.log('');
+console.log('resolveValue:');
+
+test('returns null for falsy input', () => {
+  assert.strictEqual(resolveValue(null, {}), null);
+  assert.strictEqual(resolveValue(undefined, {}), null);
+  assert.strictEqual(resolveValue('', {}), null);
+});
+
+test('returns absolute path as-is', () => {
+  const abs = process.platform === 'win32' ? 'C:\\ai_agent\\edda' : '/home/user/edda';
+  assert.strictEqual(resolveValue(abs, {}), abs);
+});
+
+test('resolves slug via repo_map', () => {
+  const map = { 'fagemx/edda': 'C:/ai_agent/edda' };
+  const result = resolveValue('fagemx/edda', map);
+  assert.strictEqual(result, path.resolve('C:/ai_agent/edda'));
+});
+
+test('returns null for unmapped slug', () => {
+  assert.strictEqual(resolveValue('fagemx/edda', {}), null);
+});
+
+test('resolves relative non-slug path (legacy)', () => {
+  const result = resolveValue('some-dir', {});
+  assert.strictEqual(result, path.resolve('some-dir'));
+});
 
 // --- resolveRepoRoot ---
-
+console.log('');
 console.log('resolveRepoRoot:');
 
-test('returns task.target_repo when set', () => {
-  const result = resolveRepoRoot({ target_repo: '/some/path' }, { controls: { target_repo: '/other' } });
-  assert.strictEqual(result, path.resolve('/some/path'));
+test('task absolute path wins', () => {
+  const abs = process.platform === 'win32' ? 'C:\\ai_agent\\edda' : '/home/user/edda';
+  const result = resolveRepoRoot({ target_repo: abs }, { controls: {} });
+  assert.strictEqual(result, abs);
 });
 
-test('returns board.controls.target_repo when task has none', () => {
-  const result = resolveRepoRoot({}, { controls: { target_repo: '/board/path' } });
-  assert.strictEqual(result, path.resolve('/board/path'));
+test('task slug resolved via repo_map', () => {
+  const board = { controls: { repo_map: { 'fagemx/edda': 'C:/ai_agent/edda' } } };
+  const result = resolveRepoRoot({ target_repo: 'fagemx/edda' }, board);
+  assert.strictEqual(result, path.resolve('C:/ai_agent/edda'));
 });
 
-test('task.target_repo takes priority over board.controls.target_repo', () => {
-  const result = resolveRepoRoot(
-    { target_repo: '/task/path' },
-    { controls: { target_repo: '/board/path' } },
-  );
-  assert.strictEqual(result, path.resolve('/task/path'));
+test('unmapped task slug falls through to board.controls.target_repo', () => {
+  const abs = process.platform === 'win32' ? 'C:\\fallback' : '/fallback';
+  const board = { controls: { target_repo: abs, repo_map: {} } };
+  const result = resolveRepoRoot({ target_repo: 'unknown/repo' }, board);
+  assert.strictEqual(result, abs);
 });
 
-test('returns null when neither set', () => {
-  const result = resolveRepoRoot({}, {});
-  assert.strictEqual(result, null);
+test('board-level target_repo used when task has none', () => {
+  const abs = process.platform === 'win32' ? 'C:\\board\\repo' : '/board/repo';
+  const result = resolveRepoRoot({}, { controls: { target_repo: abs } });
+  assert.strictEqual(result, abs);
 });
 
-test('returns null when task is null', () => {
-  const result = resolveRepoRoot(null, null);
-  assert.strictEqual(result, null);
+test('board-level target_repo slug resolved via repo_map', () => {
+  const board = { controls: { target_repo: 'fagemx/karvi', repo_map: { 'fagemx/karvi': 'C:/ai_agent/karvi' } } };
+  const result = resolveRepoRoot({}, board);
+  assert.strictEqual(result, path.resolve('C:/ai_agent/karvi'));
 });
 
-test('returns board-level when task has no target_repo field', () => {
-  const result = resolveRepoRoot({ id: 'GH-1' }, { controls: { target_repo: '/p' } });
-  assert.strictEqual(result, path.resolve('/p'));
-});
-
-test('returns null when controls exist but target_repo is missing', () => {
-  const result = resolveRepoRoot({}, { controls: { auto_dispatch: true } });
-  assert.strictEqual(result, null);
+test('returns null when nothing configured', () => {
+  assert.strictEqual(resolveRepoRoot({}, {}), null);
+  assert.strictEqual(resolveRepoRoot(null, null), null);
 });
 
 // --- validateRepoRoot ---
-
-console.log('\nvalidateRepoRoot:');
+console.log('');
+console.log('validateRepoRoot:');
 
 test('rejects null path', () => {
-  const result = validateRepoRoot(null);
-  assert.strictEqual(result.valid, false);
-  assert.ok(result.error.includes('No target_repo'));
+  const r = validateRepoRoot(null);
+  assert.strictEqual(r.valid, false);
+  assert.ok(r.error.includes('No target_repo'));
 });
 
 test('rejects non-existent path', () => {
-  const result = validateRepoRoot('/nonexistent/path/xyz123');
-  assert.strictEqual(result.valid, false);
-  assert.ok(result.error.includes('Path not found'));
+  const r = validateRepoRoot('/definitely/does/not/exist/xyz');
+  assert.strictEqual(r.valid, false);
+  assert.ok(r.error.includes('Path not found'));
 });
 
 test('rejects non-git directory', () => {
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'repo-resolver-test-'));
   try {
-    const result = validateRepoRoot(tmpDir);
-    assert.strictEqual(result.valid, false);
-    assert.ok(result.error.includes('Not a git repo'));
+    const r = validateRepoRoot(tmpDir);
+    assert.strictEqual(r.valid, false);
+    assert.ok(r.error.includes('Not a git repo'));
   } finally {
     fs.rmdirSync(tmpDir);
   }
 });
 
-test('accepts valid git repo (karvi itself)', () => {
-  const karviRoot = path.resolve(__dirname, '..');
-  const result = validateRepoRoot(karviRoot);
-  assert.strictEqual(result.valid, true);
+test('validates actual git repo (cwd)', () => {
+  const r = validateRepoRoot(process.cwd());
+  assert.strictEqual(r.valid, true);
 });
 
 test('accepts valid git repo with matching remote', () => {
   const karviRoot = path.resolve(__dirname, '..');
-  const result = validateRepoRoot(karviRoot, 'fagemx/karvi');
-  assert.strictEqual(result.valid, true);
+  const r = validateRepoRoot(karviRoot, 'fagemx/karvi');
+  assert.strictEqual(r.valid, true);
 });
 
 test('rejects valid git repo with mismatched remote', () => {
   const karviRoot = path.resolve(__dirname, '..');
-  const result = validateRepoRoot(karviRoot, 'someone/other-repo');
-  assert.strictEqual(result.valid, false);
-  assert.ok(result.error.includes('Remote mismatch'));
+  const r = validateRepoRoot(karviRoot, 'someone/other-repo');
+  assert.strictEqual(r.valid, false);
+  assert.ok(r.error.includes('Remote mismatch'));
 });
 
 // --- Summary ---
-
-console.log(`\n  ${passed} passed, ${failed} failed\n`);
-process.exit(failed > 0 ? 1 : 0);
+console.log('');
+console.log(`${passed} passed, ${failed} failed`);
+if (failed > 0) process.exit(1);

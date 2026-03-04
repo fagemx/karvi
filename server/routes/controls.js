@@ -40,6 +40,12 @@ module.exports = function controlsRoutes(req, res, helpers, deps) {
             else if (key === 'usage_alert_threshold' && Number.isFinite(val)) board.controls[key] = Math.max(0, Math.min(1, val));
             else if (key === 'max_concurrent_tasks' && Number.isFinite(val)) board.controls[key] = Math.max(1, Math.min(10, val));
             else if (key === 'target_repo' && (val === null || typeof val === 'string')) board.controls[key] = val ? val.trim() : null;
+            else if (key === 'repo_map' && (val === null || typeof val === 'object')) {
+              board.controls[key] = val || {};
+              for (const [slug, localPath] of Object.entries(board.controls[key])) {
+                if (typeof localPath !== 'string') delete board.controls[key][slug];
+              }
+            }
             else if (key === 'step_timeout_sec' && typeof val === 'object' && val !== null) {
               board.controls[key] = { ...mgmt.DEFAULT_CONTROLS.step_timeout_sec, ...board.controls[key], ...val };
               for (const k of Object.keys(board.controls[key])) {
