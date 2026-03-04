@@ -582,10 +582,15 @@ function createKernel(deps) {
  */
 function findPrUrl(steps, runId, artifactStore) {
   if (!steps || !runId) return null;
+  const prRegex = /https?:\/\/github\.com\/[^/]+\/[^/]+\/pull\/\d+/i;
   for (const s of steps) {
     const output = artifactStore.readArtifact(runId, s.step_id, 'output');
+    // 1. Structured payload field (preferred)
     const url = output?.payload?.prUrl;
     if (url && typeof url === 'string') return url;
+    // 2. Fallback: extract from summary text
+    const summaryMatch = (output?.summary || '').match(prRegex);
+    if (summaryMatch) return summaryMatch[0];
   }
   return null;
 }
