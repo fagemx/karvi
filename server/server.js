@@ -151,6 +151,7 @@ const villageRoutes = require('./routes/village');
 const projectsRoutes = require('./routes/projects');
 const tasksRoutes = require('./routes/tasks');
 const statusRoutes = require('./routes/status');
+const discoveryRoutes = require('./routes/discovery');
 
 // --- Route chain ---
 const routes = [
@@ -167,6 +168,7 @@ const routes = [
   projectsRoutes,
   tasksRoutes,
   statusRoutes,
+  discoveryRoutes,
 ];
 
 const { json } = bb;
@@ -376,6 +378,23 @@ process.on('SIGINT', gracefulShutdown);
       process.exit(1);
     }
   }
+}
+
+// --- Boot banner ---
+{
+  const runtimeNames = Object.keys(RUNTIMES);
+  const allRt = ['openclaw', 'claude', 'codex', 'opencode'];
+  const rtLine = allRt.map(r => runtimeNames.includes(r) ? `${r} ✅` : `${r} ❌`).join('  ');
+  const tokenStatus = process.env.KARVI_API_TOKEN ? 'token set ✅' : 'no token (local only)';
+  const addr = HOST || 'localhost';
+
+  console.log('');
+  console.log(`  Karvi v${require('../package.json').version} — http://${addr}:${ctx.port}`);
+  console.log(`  Runtimes:  ${rtLine}`);
+  console.log(`  Auth:      ${tokenStatus}`);
+  console.log('');
+  console.log(`  Quick start:  npm run go -- <issue-number>`);
+  console.log('');
 }
 
 bb.listen(server, ctx);
