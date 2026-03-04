@@ -9,6 +9,7 @@
  * Kernel = routing decisions, StepWorker = execution.
  */
 const { execSync } = require('child_process');
+const mgmt = require('./management');
 const LOCK_GRACE_MS = 30_000; // 30s grace on top of step timeout
 
 /**
@@ -635,6 +636,19 @@ function buildStepMessage(envelope, upstreamArtifacts, board, task) {
   // Step instructions: explicit role, scope constraints, and deliverable checklist.
   // Pattern from Claude Code: READ-ONLY constraints + "Your role is EXCLUSIVELY to..." framing.
   const SKILL_TOOL_HINT = 'You have a "Skill" tool available. Use it to load the skill by name (e.g., Skill("issue-plan")), then follow its instructions.';
+
+  const STEP_CONTEXT_SECTIONS = {
+    plan:      ['requirements', 'upstream_artifacts', 'preflight_lessons'],
+    implement: ['requirements', 'upstream_artifacts', 'coding_standards', 'completion_criteria', 'protected_decisions', 'preflight_lessons'],
+    test:      ['coding_standards'],
+    review:    ['requirements'],
+  };
+
+  function shouldInjectSection(stepType, sectionName) {
+    const allowed = STEP_CONTEXT_SECTIONS[stepType] || [];
+    return allowed.includes(sectionName);
+  }
+
   const STEP_SKILL_MAP = {
     plan: [
       `## Role`,
@@ -757,16 +771,19 @@ function buildStepMessage(envelope, upstreamArtifacts, board, task) {
   }
 
   // Coding standards from skill files
-  const mgmt = require('./management');
-  const skillLines = mgmt.buildSkillContextSection();
-  if (skillLines.length > 0) lines.push(...skillLines);
+  if (shouldInjectSection(envelope.step_type, 'coding_standards')) {
+    const skillLines = mgmt.buildSkillContextSection();
+    if (skillLines.length > 0) lines.push(...skillLines);
+  }
 
   // Completion criteria — prevent premature "done"
-  const completionLines = mgmt.buildCompletionCriteriaSection();
-  if (completionLines.length > 0) lines.push(...completionLines);
+  if (shouldInjectSection(envelope.step_type, 'completion_criteria')) {
+    const completionLines = mgmt.buildCompletionCriteriaSection();
+    if (completionLines.length > 0) lines.push(...completionLines);
+  }
 
   // Preflight lessons (previously missing from step pipeline)
-  if (board && task) {
+  if (shouldInjectSection(envelope.step_type, 'preflight_lessons') && board && task) {
     const preflight = mgmt.buildPreflightSection(board, task);
     if (preflight.lines.length > 0) {
       lines.push('');
@@ -789,9 +806,11 @@ function buildStepMessage(envelope, upstreamArtifacts, board, task) {
   }
 
   // Protected edda decisions — prevent agents from reverting critical fixes
-  const protectedLines = mgmt.buildProtectedDecisionsSection();
-  if (protectedLines.length > 0) {
-    lines.push(...protectedLines);
+  if (shouldInjectSection(envelope.step_type, 'protected_decisions')) {
+    const protectedLines = mgmt.buildProtectedDecisionsSection();
+    if (protectedLines.length > 0) {
+      lines.push(...protectedLines);
+    }
   }
 
   // Instruct agent to output structured result when done
