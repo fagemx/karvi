@@ -12,10 +12,20 @@ const STEP_TYPES = ['plan', 'implement', 'test', 'review'];
 
 const STEP_STATES = ['queued', 'running', 'succeeded', 'failed', 'dead', 'cancelled'];
 
+// Step state transitions:
+// - queued → running (normal execution start)
+// - queued → cancelled (user cancels before step starts)
+// - running → succeeded (task completed successfully)
+// - running → failed (error occurred, retry scheduled)
+// - running → cancelled (user killed step during execution)
+// - failed → queued (retry after backoff)
+// - failed → dead (max retries exhausted)
+// - failed → cancelled (user kills failed step)
+// - succeeded/dead/cancelled → no transitions (terminal states)
 const ALLOWED_STEP_TRANSITIONS = {
-  queued:    ['running'],
+  queued:    ['running', 'cancelled'],
   running:   ['succeeded', 'failed', 'cancelled'],
-  failed:    ['queued', 'dead'],       // queued = retry, dead = give up
+  failed:    ['queued', 'dead', 'cancelled'],
   succeeded: [],
   dead:      [],
   cancelled: [],
