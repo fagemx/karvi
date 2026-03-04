@@ -954,8 +954,8 @@ function buildDispatchPlan(board, task, options = {}) {
   // Compute lesson matching once, pass to message builders
   const lessonResult = matchLessonsForTask(board, task);
 
-  // CLI-based runtimes (opencode, claude) need English prompts
-  const usesGenericMessage = runtimeHint === 'opencode' || runtimeHint === 'claude';
+  // CLI-based runtimes (opencode, claude, codex) need English prompts
+  const usesGenericMessage = runtimeHint === 'opencode' || runtimeHint === 'claude' || runtimeHint === 'codex';
 
   const message = mode === 'redispatch'
     ? buildRedispatchMessage(board, task, { lessonResult })
@@ -990,7 +990,7 @@ function buildDispatchPlan(board, task, options = {}) {
     userId,
     agentId: task.assignee,
     // @protected decision:dispatch.modelHint — AGENT_MODEL_MAP has OpenClaw IDs that CLI runtimes don't recognize; passing them causes silent failure
-    modelHint: (runtimeHint === 'claude' || runtimeHint === 'opencode') ? null : preferredModelFor(task.assignee),
+    modelHint: (runtimeHint === 'claude' || runtimeHint === 'opencode' || runtimeHint === 'codex') ? null : preferredModelFor(task.assignee),
     timeoutSec: options.timeoutSec || 300,
     sessionId: task.childSessionKey || null,
     message,
