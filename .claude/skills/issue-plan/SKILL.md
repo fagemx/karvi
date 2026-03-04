@@ -51,7 +51,7 @@ Use `gh issue view {issue-id} --json title,body,comments,labels` to read complet
 
 Look for existing deep-dive work in the current conversation context:
 
-1. **Search for existing directories** in `/tmp/deep-dive/*/`
+1. **Search for existing directories** in `.tmp/deep-dive/*/`
 2. **Check for artifacts**:
    - `research.md` - Research phase completed
    - `innovate.md` - Innovation phase completed
@@ -77,13 +77,13 @@ For each missing phase, execute in order, then post comments to the issue:
 
 1. **Execute research** following `/deep-research` guidelines (but skip user confirmation)
    - Systematically analyze the codebase related to the issue
-   - Create `/tmp/deep-dive/{task-name}/research.md`
+   - Create `.tmp/deep-dive/{task-name}/research.md`
    - Do NOT ask user what to do next - automatically continue to Phase 2
    - **Update todo:** Mark "Execute research phase" as completed
 
 2. **Post research comment to issue**:
    ```bash
-   gh issue comment {issue-id} --body-file /tmp/deep-dive/{task-name}/research.md
+   gh issue comment {issue-id} --body-file .tmp/deep-dive/{task-name}/research.md
    ```
    - **Update todo:** Mark "Post research comment to issue" as completed
 
@@ -92,13 +92,13 @@ For each missing phase, execute in order, then post comments to the issue:
 1. **Execute innovation** following `/deep-innovate` guidelines (but skip user confirmation)
    - Read research.md for context
    - Explore multiple solution approaches and evaluate trade-offs
-   - Create `/tmp/deep-dive/{task-name}/innovate.md`
+   - Create `.tmp/deep-dive/{task-name}/innovate.md`
    - Do NOT ask user for direction - automatically continue to Phase 3
    - **Update todo:** Mark "Execute innovate phase" as completed
 
 2. **Post innovation comment to issue**:
    ```bash
-   gh issue comment {issue-id} --body-file /tmp/deep-dive/{task-name}/innovate.md
+   gh issue comment {issue-id} --body-file .tmp/deep-dive/{task-name}/innovate.md
    ```
    - **Update todo:** Mark "Post innovate comment to issue" as completed
 
@@ -108,13 +108,13 @@ For each missing phase, execute in order, then post comments to the issue:
    - Read research.md and innovate.md for context
    - Create detailed implementation plan with specific steps
    - Ensure goal focus - connect all planning to original requirements
-   - Create `/tmp/deep-dive/{task-name}/plan.md`
+   - Create `.tmp/deep-dive/{task-name}/plan.md`
    - Do NOT ask user for approval here - that happens via GitHub issue
    - **Update todo:** Mark "Execute plan phase" as completed
 
 2. **Post plan comment to issue**:
    ```bash
-   gh issue comment {issue-id} --body-file /tmp/deep-dive/{task-name}/plan.md
+   gh issue comment {issue-id} --body-file .tmp/deep-dive/{task-name}/plan.md
    ```
    - **Update todo:** Mark "Post plan comment to issue" as completed
 

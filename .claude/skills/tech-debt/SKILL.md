@@ -101,7 +101,7 @@ For each file identified in Phase 1, perform detailed analysis:
 
 #### Phase 3: Generate Report
 
-Create detailed report in `/tmp/tech-debt-YYYYMMDD/`
+Create detailed report in `.tmp/tech-debt-YYYYMMDD/`
 
 #### Phase 4: User Report
 
@@ -118,7 +118,7 @@ Create a GitHub issue based on research findings. If research hasn't been run, a
 #### Step 1: Check for Existing Research
 
 ```bash
-LATEST_REPORT=$(ls -td /tmp/tech-debt-* 2>/dev/null | head -1)
+LATEST_REPORT=$(ls -td .tmp/tech-debt-* 2>/dev/null | head -1)
 ```
 
 #### Step 2: Create GitHub Issue
@@ -127,7 +127,7 @@ LATEST_REPORT=$(ls -td /tmp/tech-debt-* 2>/dev/null | head -1)
 gh issue create \
   --repo fagemx/karvi \
   --title "[Tech Debt] Codebase Quality Scan - $(date +%Y-%m-%d)" \
-  --body-file /tmp/tech-debt-{date}/github-issue-body.md \
+  --body-file .tmp/tech-debt-{date}/github-issue-body.md \
   --label "tech-debt,quality,refactoring"
 ```
 

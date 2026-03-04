@@ -74,10 +74,10 @@ Write the synthesized content to a temporary file, then use `--body-file` to upd
 
 ```bash
 # Write synthesized content to temp file
-# (use Write tool to create /tmp/issue-{issue-id}-compact.md)
+# (use Write tool to create .tmp/issue-{issue-id}-compact.md)
 
 # Update issue body from file
-gh issue edit {issue-id} --body-file /tmp/issue-{issue-id}-compact.md
+gh issue edit {issue-id} --body-file .tmp/issue-{issue-id}-compact.md
 ```
 
 ### Step 6: Delete All Comments

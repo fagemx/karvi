@@ -47,7 +47,7 @@ edda peers
    - If no issue ID found: Ask user "Which issue would you like to continue working on? Please provide the issue ID."
    - Exit and wait for user response if issue ID not found
 
-2. **Locate deep-dive artifacts** in `/tmp/deep-dive/{task-name}/`
+2. **Locate deep-dive artifacts** in `.tmp/deep-dive/{task-name}/`
    - Find the directory associated with this issue from conversation context
    - If multiple directories exist and association is unclear, ask user to confirm
    - Verify these files exist:
@@ -75,7 +75,7 @@ Review new comments for:
 
 - **If plan approved**: Proceed to implementation (Step 6)
 - **If changes requested**:
-  - Update `/tmp/deep-dive/{task-name}/plan.md`
+  - Update `.tmp/deep-dive/{task-name}/plan.md`
   - Post revised plan as comment
   - Add "pending" label and exit
 - **If questions asked**:
