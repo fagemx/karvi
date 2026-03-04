@@ -59,6 +59,25 @@ npm start
 
 No `npm install` needed — zero dependencies.
 
+## Configuration
+
+Copy the environment template and adjust as needed:
+
+```bash
+cp env.template .env
+```
+
+For local development, the defaults work out of the box — no configuration required. The server auto-loads `.env` on startup.
+
+For remote access or production, set at minimum:
+
+| Variable | Purpose |
+|----------|---------|
+| `KARVI_API_TOKEN` | Protect API with Bearer token |
+| `KARVI_VAULT_KEY` | Enable encrypted secret storage (GitHub PAT, etc.) |
+
+See [`env.template`](env.template) for the full list of 35+ available options.
+
 ### Remote Access
 
 Want to access Karvi from your phone or another device? See the **[Self-Hosting Guide](docs/self-hosting.md)** — set up a free Cloudflare Tunnel in under 10 minutes.

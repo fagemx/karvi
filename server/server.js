@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+require('./load-env');
 /**
  * server.js — Karvi Task Engine HTTP Server
  *
@@ -65,7 +66,9 @@ function getRuntime(hint) {
 }
 
 const DIR = __dirname;
-const ROOT = path.resolve(DIR, '..');
+const ROOT = process.env.PROJECT_ROOT
+  ? path.resolve(process.env.PROJECT_ROOT)
+  : path.resolve(DIR, '..');
 const DATA_DIR = process.env.DATA_DIR || DIR;
 const PUSH_TOKENS_PATH = path.join(DATA_DIR, 'push-tokens.json');
 
