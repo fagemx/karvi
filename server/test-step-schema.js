@@ -148,6 +148,115 @@ test('isStepIdempotent returns true only for succeeded', () => {
 });
 
 // ─────────────────────────────────────
+// ERROR_KINDS Tests
+// ─────────────────────────────────────
+
+console.log('\n=== ERROR_KINDS ===\n');
+
+test('ERROR_KINDS has all required kinds', () => {
+  const expectedKinds = ['TEMPORARY', 'PROVIDER', 'AGENT_ERROR', 'FINALIZE', 'CONTRACT', 'PROTECTED', 'CONFIG', 'UNKNOWN'];
+  for (const kind of expectedKinds) {
+    assert.ok(stepSchema.ERROR_KINDS[kind], `ERROR_KINDS should have ${kind}`);
+    assert.ok('retryable' in stepSchema.ERROR_KINDS[kind], `${kind} should have retryable field`);
+    assert.ok('backoff' in stepSchema.ERROR_KINDS[kind], `${kind} should have backoff field`);
+  }
+});
+
+test('ERROR_KINDS non-retryable kinds have null backoff', () => {
+  assert.strictEqual(stepSchema.ERROR_KINDS.PROTECTED.backoff, null);
+  assert.strictEqual(stepSchema.ERROR_KINDS.CONFIG.backoff, null);
+});
+
+// ─────────────────────────────────────
+// computeBackoff Tests
+// ─────────────────────────────────────
+
+console.log('\n=== computeBackoff() ===\n');
+
+test('computeBackoff returns 0 for immediate backoff', () => {
+  const step = stepSchema.createStep('T-1', 'run-1', 'plan');
+  const kindConfig = { backoff: 'immediate' };
+  assert.strictEqual(stepSchema.computeBackoff(kindConfig, step), 0);
+});
+
+test('computeBackoff returns linear delay for linear backoff', () => {
+  const step = stepSchema.createStep('T-1', 'run-1', 'plan');
+  step.attempt = 2;
+  const kindConfig = { backoff: 'linear' };
+  const expected = step.retry_policy.backoff_base_ms * step.attempt; // 5000 * 2 = 10000
+  assert.strictEqual(stepSchema.computeBackoff(kindConfig, step), expected);
+});
+
+test('computeBackoff returns exponential delay for exponential backoff', () => {
+  const step = stepSchema.createStep('T-1', 'run-1', 'plan');
+  step.attempt = 3;
+  const kindConfig = { backoff: 'exponential' };
+  const expected = step.retry_policy.backoff_base_ms
+    * Math.pow(step.retry_policy.backoff_multiplier, step.attempt - 1); // 5000 * 2^2 = 20000
+  assert.strictEqual(stepSchema.computeBackoff(kindConfig, step), expected);
+});
+
+test('computeBackoff returns 0 for null backoff', () => {
+  const step = stepSchema.createStep('T-1', 'run-1', 'plan');
+  const kindConfig = { backoff: null };
+  assert.strictEqual(stepSchema.computeBackoff(kindConfig, step), 0);
+});
+
+// ─────────────────────────────────────
+// transitionStep with errorKind Tests
+// ─────────────────────────────────────
+
+console.log('\n=== transitionStep with errorKind ===\n');
+
+test('transitionStep to failed auto-requeues with backoff', () => {
+  const step = stepSchema.createStep('T-1', 'run-1', 'plan');
+  stepSchema.transitionStep(step, 'running');
+  const beforeFail = Date.now();
+  stepSchema.transitionStep(step, 'failed', { error: 'timeout', errorKind: 'TEMPORARY' });
+  // Should auto-requeue (attempt 1 < max 3)
+  assert.strictEqual(step.state, 'queued');
+  assert.strictEqual(step.attempt, 1);
+  assert.strictEqual(step.error, 'timeout');
+  assert.strictEqual(step.errorKind, 'TEMPORARY');
+  assert.strictEqual(step.locked_by, null);
+  // scheduled_at should be in the future (backoff)
+  const scheduledAt = new Date(step.scheduled_at).getTime();
+  assert.ok(scheduledAt >= beforeFail);
+});
+
+test('transitionStep with FINALIZE errorKind uses immediate backoff', () => {
+  const step = stepSchema.createStep('T-1', 'run-1', 'plan');
+  stepSchema.transitionStep(step, 'running');
+  const beforeFail = Date.now();
+  stepSchema.transitionStep(step, 'failed', { error: 'finalize failed', errorKind: 'FINALIZE' });
+  
+  assert.strictEqual(step.state, 'queued');
+  assert.strictEqual(step.errorKind, 'FINALIZE');
+  // Immediate retry → scheduled_at should be ~now
+  const scheduledAt = new Date(step.scheduled_at).getTime();
+  assert.ok(scheduledAt - beforeFail < 1000, 'should retry immediately');
+});
+
+test('transitionStep with PROTECTED errorKind goes to dead', () => {
+  const step = stepSchema.createStep('T-1', 'run-1', 'plan');
+  stepSchema.transitionStep(step, 'running');
+  stepSchema.transitionStep(step, 'failed', { error: 'protected violation', errorKind: 'PROTECTED' });
+  
+  // PROTECTED is not retryable → dead immediately
+  assert.strictEqual(step.state, 'dead');
+  assert.strictEqual(step.errorKind, 'PROTECTED');
+  assert.strictEqual(step.attempt, 1);
+});
+
+test('transitionStep defaults errorKind to UNKNOWN', () => {
+  const step = stepSchema.createStep('T-1', 'run-1', 'plan');
+  stepSchema.transitionStep(step, 'running');
+  stepSchema.transitionStep(step, 'failed', { error: 'unknown error' });
+  
+  assert.strictEqual(step.errorKind, 'UNKNOWN');
+});
+
+// ─────────────────────────────────────
 // Artifact Store Tests
 // ─────────────────────────────────────
 
