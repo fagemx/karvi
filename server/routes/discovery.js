@@ -13,6 +13,8 @@ const bb = require('../blackboard-server');
 const { json } = bb;
 
 let _skillsCache = null;
+let _skillsCacheTs = 0;
+const SKILLS_TTL_MS = 300_000;
 let _preflightCache = null;
 let _preflightCacheTs = 0;
 const PREFLIGHT_TTL_MS = 30_000;
@@ -32,7 +34,8 @@ function listRuntimes(deps) {
 }
 
 function listSkills(projectRoot) {
-  if (_skillsCache) return _skillsCache;
+  const now = Date.now();
+  if (_skillsCache && (now - _skillsCacheTs) < SKILLS_TTL_MS) return _skillsCache;
   const skillsDir = path.join(projectRoot, '.claude', 'skills');
   if (!fs.existsSync(skillsDir)) return [];
 
@@ -51,11 +54,13 @@ function listSkills(projectRoot) {
     });
   }
   _skillsCache = skills;
+  _skillsCacheTs = now;
   return skills;
 }
 
 function parseFrontmatter(content) {
-  const match = content.match(/^---\n([\s\S]*?)\n---/);
+  const normalized = content.replace(/\r\n/g, '\n');
+  const match = normalized.match(/^---\n([\s\S]*?)\n---/);
   if (!match) return {};
   const result = {};
   for (const line of match[1].split('\n')) {
@@ -135,8 +140,12 @@ function getVersion() {
   }
 }
 
+function urlMatch(url, pattern) {
+  return url === pattern || url.startsWith(pattern + '?');
+}
+
 module.exports = function discoveryRoutes(req, res, helpers, deps) {
-  if (req.method === 'GET' && req.url === '/api/runtimes') {
+  if (req.method === 'GET' && urlMatch(req.url, '/api/runtimes')) {
     const runtimes = listRuntimes(deps);
     return json(res, 200, {
       runtimes,
@@ -145,13 +154,13 @@ module.exports = function discoveryRoutes(req, res, helpers, deps) {
     });
   }
 
-  if (req.method === 'GET' && req.url === '/api/skills') {
+  if (req.method === 'GET' && urlMatch(req.url, '/api/skills')) {
     const projectRoot = deps.ctx.dir;
     const skills = listSkills(projectRoot);
     return json(res, 200, { skills });
   }
 
-  if (req.method === 'GET' && req.url === '/api/health/preflight') {
+  if (req.method === 'GET' && urlMatch(req.url, '/api/health/preflight')) {
     const result = runPreflight(deps);
     return json(res, 200, result);
   }
@@ -162,3 +171,5 @@ module.exports = function discoveryRoutes(req, res, helpers, deps) {
 module.exports.listRuntimes = listRuntimes;
 module.exports.listSkills = listSkills;
 module.exports.runPreflight = runPreflight;
+module.exports.parseFrontmatter = parseFrontmatter;
+module.exports._resetCaches = () => { _skillsCache = null; _skillsCacheTs = 0; _preflightCache = null; _preflightCacheTs = 0; };
