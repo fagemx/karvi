@@ -21,6 +21,9 @@
  */
 const bb = require('../blackboard-server');
 const { json } = bb;
+const worktreeHelper = require('../worktree');
+const { resolveRepoRoot } = require('../repo-resolver');
+const path = require('path');
 
 module.exports = function githubRoutes(req, res, helpers, deps) {
   const { vault, githubApi, githubIntegration, mgmt, push, jiraIntegration, PUSH_TOKENS_PATH } = deps;
@@ -103,6 +106,24 @@ module.exports = function githubRoutes(req, res, helpers, deps) {
                 outcome: result.outcome,
                 source: 'github-webhook',
               });
+
+              // Worktree cleanup — branch no longer needed after PR merged/closed
+              if (task.worktreeDir) {
+                const repoRoot = resolveRepoRoot(task, board) || path.resolve(__dirname, '..');
+                const cleanTaskId = result.taskId;
+                // Clear worktreeDir immediately so kernel fallback timer won't double-clean
+                task.worktreeDir = null;
+                task.worktreeBranch = null;
+                helpers.writeBoard(board);
+                setTimeout(() => {
+                  try {
+                    worktreeHelper.removeWorktree(repoRoot, cleanTaskId);
+                    console.log(`[github-webhook] worktree cleaned up for ${cleanTaskId} (${result.outcome})`);
+                  } catch (err) {
+                    console.error(`[github-webhook] worktree cleanup failed for ${cleanTaskId}:`, err.message);
+                  }
+                }, 3000);
+              }
 
               // Jira notification (fire-and-forget)
               if (jiraIntegration?.isEnabled(board)) {

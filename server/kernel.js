@@ -30,12 +30,27 @@ function createKernel(deps) {
   function cleanupWorktree(task, taskId, board) {
     if (!task?.worktreeDir) return;
     const repoRoot = resolveRepoRoot(task, board) || defaultRepoRoot;
-    try {
-      worktreeHelper.removeWorktree(repoRoot, taskId);
-      console.log(`[kernel] worktree cleaned up for ${taskId}`);
-    } catch (err) {
-      console.error(`[kernel] worktree cleanup failed for ${taskId}:`, err.message);
-    }
+
+    // Delay cleanup to let the runtime process fully exit and release file handles.
+    // On Windows, opencode may still hold locks when the kernel receives step_completed.
+    const CLEANUP_DELAY_MS = 5000;
+    setTimeout(() => {
+      try {
+        worktreeHelper.removeWorktree(repoRoot, taskId);
+        console.log(`[kernel] worktree cleaned up for ${taskId}`);
+      } catch (err) {
+        console.error(`[kernel] worktree cleanup failed for ${taskId}:`, err.message);
+        // Schedule one more retry after a longer delay
+        setTimeout(() => {
+          try {
+            worktreeHelper.removeWorktree(repoRoot, taskId);
+            console.log(`[kernel] worktree cleaned up for ${taskId} (retry)`);
+          } catch (err2) {
+            console.error(`[kernel] worktree cleanup retry failed for ${taskId}:`, err2.message);
+          }
+        }, 15000);
+      }
+    }, CLEANUP_DELAY_MS);
   }
 
   /**
@@ -298,7 +313,30 @@ function createKernel(deps) {
           // Step pipeline includes review as step[3] — all steps succeeded means approved
           latestTask.status = 'approved';
           latestTask.completedAt = helpers.nowIso();
-          cleanupWorktree(latestTask, taskId, latestBoard);
+          // Worktree stays alive — branch is needed until PR is merged or closed.
+          // Primary cleanup: routes/github.js on pr_merged / pr_closed webhook.
+          // Fallback: if no webhook fires within 30 min (dogfood / no webhook configured),
+          // clean up anyway. Remote branch + PR still exist; only local worktree removed.
+          if (latestTask.worktreeDir) {
+            const fallbackTaskId = taskId;
+            const fallbackTask = latestTask;
+            const fallbackBoard = latestBoard;
+            setTimeout(() => {
+              // Re-read board to check if webhook already cleaned up
+              try {
+                const freshBoard = helpers.readBoard();
+                const freshTask = (freshBoard.taskPlan?.tasks || []).find(t => t.id === fallbackTaskId);
+                if (freshTask?.worktreeDir) {
+                  cleanupWorktree(freshTask, fallbackTaskId, freshBoard);
+                  freshTask.worktreeDir = null;
+                  freshTask.worktreeBranch = null;
+                  helpers.writeBoard(freshBoard);
+                }
+              } catch (err) {
+                console.error(`[kernel] fallback worktree cleanup failed for ${fallbackTaskId}:`, err.message);
+              }
+            }, 30 * 60 * 1000); // 30 minutes
+          }
           // Preserve payload from last step's artifact for downstream access
           const lastStepOutput = artifactStore.readArtifact(step.run_id, stepId, 'output');
           latestTask.result = {

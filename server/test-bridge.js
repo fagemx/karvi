@@ -143,8 +143,8 @@ function createFullDeps(runtimeOverrides = {}) {
     const t = currentBoard.taskPlan.tasks[0];
     t.steps = mgmt.generateStepsForTask(t, runId);
 
-    assert.strictEqual(t.steps.length, 4);
-    assert.deepStrictEqual(t.steps.map(s => s.type), ['plan', 'implement', 'test', 'review']);
+    assert.strictEqual(t.steps.length, mgmt.DEFAULT_STEP_PIPELINE.length);
+    assert.deepStrictEqual(t.steps.map(s => s.type), mgmt.DEFAULT_STEP_PIPELINE.map(e => typeof e === 'string' ? e : e.type));
     assert.ok(t.steps.every(s => s.state === 'queued'));
 
     // Build envelope for step[0]
@@ -226,14 +226,14 @@ function createFullDeps(runtimeOverrides = {}) {
     t1.budget = { limits: { ...require('./route-engine').BUDGET_DEFAULTS }, used: { llm_calls: 0, tokens: 0, wall_clock_ms: 0, steps: 0 } };
 
     // Manually succeed all steps except last (review)
-    for (let i = 0; i < 3; i++) {
+    for (let i = 0; i < t1.steps.length - 1; i++) {
       stepSchema.transitionStep(t1.steps[i], 'running');
       stepSchema.transitionStep(t1.steps[i], 'succeeded');
       artifactStore.writeArtifact(runId, t1.steps[i].step_id, 'output', { status: 'succeeded', summary: 'done', tokens_used: 100 });
     }
 
     // Review step: run through kernel which should mark done
-    const reviewStep = t1.steps[3];
+    const reviewStep = t1.steps[t1.steps.length - 1];
     stepSchema.transitionStep(reviewStep, 'running');
     stepSchema.transitionStep(reviewStep, 'succeeded');
     artifactStore.writeArtifact(runId, reviewStep.step_id, 'output', { status: 'succeeded', summary: 'review passed', tokens_used: 100 });

@@ -199,9 +199,9 @@ function dispatchTask(task, board, deps, helpers, opts = {}) {
     task.history.push({ ts: helpers.nowIso(), status: 'in_progress', by: source, runtime: 'step-pipeline' });
     if (board.taskPlan) board.taskPlan.phase = 'executing';
 
-    if (!task.budget) {
-      task.budget = { limits: { ...routeEngine.BUDGET_DEFAULTS }, used: { llm_calls: 0, tokens: 0, wall_clock_ms: 0, steps: 0 } };
-    }
+    // Always reset budget on (re-)dispatch — previous run's usage must not carry over
+    task.budget = { limits: { ...routeEngine.BUDGET_DEFAULTS, ...task.budget?.limits }, used: { llm_calls: 0, tokens: 0, wall_clock_ms: 0, steps: 0 } };
+
 
     mgmt.ensureEvolutionFields(board);
     board.signals.push({
