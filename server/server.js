@@ -147,6 +147,7 @@ const jiraRoutes = require('./routes/jira');
 const villageRoutes = require('./routes/village');
 const projectsRoutes = require('./routes/projects');
 const tasksRoutes = require('./routes/tasks');
+const statusRoutes = require('./routes/status');
 
 // --- Route chain ---
 const routes = [
@@ -162,6 +163,7 @@ const routes = [
   villageRoutes,
   projectsRoutes,
   tasksRoutes,
+  statusRoutes,
 ];
 
 const { json } = bb;
