@@ -32,6 +32,40 @@ function sanitizeId(taskId) {
 }
 
 /**
+ * Copy essential .claude/ files into a worktree.
+ * Always overwrites to ensure latest versions from main repo.
+ */
+function copyEssentialFiles(repoRoot, worktreePath) {
+  const destClaudeDir = path.join(worktreePath, '.claude');
+  fs.mkdirSync(destClaudeDir, { recursive: true });
+
+  // settings.json — agent permissions
+  const srcSettings = path.join(repoRoot, '.claude', 'settings.json');
+  if (fs.existsSync(srcSettings)) {
+    fs.copyFileSync(srcSettings, path.join(destClaudeDir, 'settings.json'));
+  }
+
+  // skills/ — agent skills (always overwrite to pick up updates)
+  const srcSkills = path.join(repoRoot, '.claude', 'skills');
+  if (fs.existsSync(srcSkills)) {
+    copyDirSync(srcSkills, path.join(destClaudeDir, 'skills'));
+  }
+
+  // CLAUDE.md — project instructions
+  const srcClaudeMd = path.join(repoRoot, '.claude', 'CLAUDE.md');
+  if (fs.existsSync(srcClaudeMd)) {
+    fs.copyFileSync(srcClaudeMd, path.join(destClaudeDir, 'CLAUDE.md'));
+  }
+
+  // AGENTS.md — opencode agent rules
+  const srcAgentsMd = path.join(repoRoot, 'AGENTS.md');
+  const destAgentsMd = path.join(worktreePath, 'AGENTS.md');
+  if (fs.existsSync(srcAgentsMd)) {
+    fs.copyFileSync(srcAgentsMd, destAgentsMd);
+  }
+}
+
+/**
  * Create a git worktree for a task.
  * If the worktree already exists (e.g., resume after crash), returns existing path.
  * @param {string} repoRoot — main repo root path
@@ -47,6 +81,8 @@ function createWorktree(repoRoot, taskId) {
     // Validate it's a real git worktree (has .git file), not an empty/broken dir
     const gitMarker = path.join(worktreePath, '.git');
     if (fs.existsSync(gitMarker)) {
+      // Existing valid worktree — ensure essential files are up-to-date
+      copyEssentialFiles(repoRoot, worktreePath);
       return { worktreePath, branch };
     }
     // Broken worktree — remove empty dir and recreate
@@ -81,38 +117,7 @@ function createWorktree(repoRoot, taskId) {
     timeout: 30000,
   });
 
-  // Copy essential .claude/ files into worktree.
-  // These are gitignored (per-instance) but agents need them to function.
-  const destClaudeDir = path.join(worktreePath, '.claude');
-  fs.mkdirSync(destClaudeDir, { recursive: true });
-
-  // settings.json — agent permissions (without this, headless mode blocks all Bash tools)
-  const srcSettings = path.join(repoRoot, '.claude', 'settings.json');
-  if (fs.existsSync(srcSettings)) {
-    fs.copyFileSync(srcSettings, path.join(destClaudeDir, 'settings.json'));
-  }
-
-  // skills/ — agent skills (without these, skill tool returns "not found")
-  // Even if tracked by git, copy as safety net for timing/gitignore edge cases
-  const srcSkills = path.join(repoRoot, '.claude', 'skills');
-  if (fs.existsSync(srcSkills)) {
-    copyDirSync(srcSkills, path.join(destClaudeDir, 'skills'));
-  }
-
-  // CLAUDE.md — project instructions (may be gitignored)
-  const srcClaudeMd = path.join(repoRoot, '.claude', 'CLAUDE.md');
-  if (fs.existsSync(srcClaudeMd)) {
-    fs.copyFileSync(srcClaudeMd, path.join(destClaudeDir, 'CLAUDE.md'));
-  }
-
-  // AGENTS.md — opencode agent rules (at repo root, should be tracked by git,
-  // but copy if worktree checkout missed it)
-  const srcAgentsMd = path.join(repoRoot, 'AGENTS.md');
-  const destAgentsMd = path.join(worktreePath, 'AGENTS.md');
-  if (fs.existsSync(srcAgentsMd) && !fs.existsSync(destAgentsMd)) {
-    fs.copyFileSync(srcAgentsMd, destAgentsMd);
-  }
-
+  copyEssentialFiles(repoRoot, worktreePath);
   return { worktreePath, branch };
 }
 
