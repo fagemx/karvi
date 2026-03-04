@@ -42,7 +42,7 @@ function extractSessionId(obj) {
   );
 }
 
-function runOpenclawTurn({ agentId, sessionId, message, timeoutSec = 180 }) {
+function runOpenclawTurn({ agentId, sessionId, message, timeoutSec = 180, onActivity }) {
   return new Promise((resolve, reject) => {
     const args = ['agent'];
 
@@ -76,9 +76,22 @@ function runOpenclawTurn({ agentId, sessionId, message, timeoutSec = 180 }) {
     let stdout = '';
     let stderr = '';
 
+    let lastHeartbeat = 0;
+    const HEARTBEAT_INTERVAL_MS = 60_000;
+    function heartbeat() {
+      if (!onActivity) return;
+      const now = Date.now();
+      if (now - lastHeartbeat < HEARTBEAT_INTERVAL_MS) return;
+      lastHeartbeat = now;
+      try { onActivity(); } catch {}
+    }
+
     child.stdout.setEncoding('utf8');
     child.stderr.setEncoding('utf8');
-    child.stdout.on('data', chunk => (stdout += chunk));
+    child.stdout.on('data', chunk => {
+      stdout += chunk;
+      heartbeat();
+    });
     child.stderr.on('data', chunk => (stderr += chunk));
 
     child.on('error', reject);
@@ -136,6 +149,7 @@ function dispatch(plan) {
     sessionId: plan.sessionId || undefined,
     message: plan.message,
     timeoutSec: plan.timeoutSec || 180,
+    onActivity: plan.onActivity,
   });
 }
 
