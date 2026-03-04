@@ -11,6 +11,22 @@ const { execFileSync } = require('child_process');
 const path = require('path');
 const fs = require('fs');
 
+/**
+ * Recursively copy a directory. Overwrites existing files.
+ */
+function copyDirSync(src, dest) {
+  fs.mkdirSync(dest, { recursive: true });
+  for (const entry of fs.readdirSync(src, { withFileTypes: true })) {
+    const srcPath = path.join(src, entry.name);
+    const destPath = path.join(dest, entry.name);
+    if (entry.isDirectory()) {
+      copyDirSync(srcPath, destPath);
+    } else {
+      fs.copyFileSync(srcPath, destPath);
+    }
+  }
+}
+
 function sanitizeId(taskId) {
   return taskId.replace(/[^a-zA-Z0-9_-]/g, '-');
 }
@@ -28,7 +44,14 @@ function createWorktree(repoRoot, taskId) {
   const branch = `agent/${sanitized}`;
 
   if (fs.existsSync(worktreePath)) {
-    return { worktreePath, branch };
+    // Validate it's a real git worktree (has .git file), not an empty/broken dir
+    const gitMarker = path.join(worktreePath, '.git');
+    if (fs.existsSync(gitMarker)) {
+      return { worktreePath, branch };
+    }
+    // Broken worktree — remove empty dir and recreate
+    console.log(`[worktree] broken worktree detected for ${taskId} (no .git marker), recreating`);
+    try { fs.rmSync(worktreePath, { recursive: true, force: true }); } catch {}
   }
 
   // Ensure parent dir exists
@@ -58,14 +81,36 @@ function createWorktree(repoRoot, taskId) {
     timeout: 30000,
   });
 
-  // Copy .claude/settings.json into worktree so agents inherit project permissions.
-  // Without this, Claude Code headless mode has no project-level allow-list and
-  // blocks all Bash tools (gh, curl, etc.) requiring user approval that never comes.
+  // Copy essential .claude/ files into worktree.
+  // These are gitignored (per-instance) but agents need them to function.
+  const destClaudeDir = path.join(worktreePath, '.claude');
+  fs.mkdirSync(destClaudeDir, { recursive: true });
+
+  // settings.json — agent permissions (without this, headless mode blocks all Bash tools)
   const srcSettings = path.join(repoRoot, '.claude', 'settings.json');
   if (fs.existsSync(srcSettings)) {
-    const destDir = path.join(worktreePath, '.claude');
-    fs.mkdirSync(destDir, { recursive: true });
-    fs.copyFileSync(srcSettings, path.join(destDir, 'settings.json'));
+    fs.copyFileSync(srcSettings, path.join(destClaudeDir, 'settings.json'));
+  }
+
+  // skills/ — agent skills (without these, skill tool returns "not found")
+  // Even if tracked by git, copy as safety net for timing/gitignore edge cases
+  const srcSkills = path.join(repoRoot, '.claude', 'skills');
+  if (fs.existsSync(srcSkills)) {
+    copyDirSync(srcSkills, path.join(destClaudeDir, 'skills'));
+  }
+
+  // CLAUDE.md — project instructions (may be gitignored)
+  const srcClaudeMd = path.join(repoRoot, '.claude', 'CLAUDE.md');
+  if (fs.existsSync(srcClaudeMd)) {
+    fs.copyFileSync(srcClaudeMd, path.join(destClaudeDir, 'CLAUDE.md'));
+  }
+
+  // AGENTS.md — opencode agent rules (at repo root, should be tracked by git,
+  // but copy if worktree checkout missed it)
+  const srcAgentsMd = path.join(repoRoot, 'AGENTS.md');
+  const destAgentsMd = path.join(worktreePath, 'AGENTS.md');
+  if (fs.existsSync(srcAgentsMd) && !fs.existsSync(destAgentsMd)) {
+    fs.copyFileSync(srcAgentsMd, destAgentsMd);
   }
 
   return { worktreePath, branch };
@@ -95,9 +140,15 @@ function removeWorktree(repoRoot, taskId) {
         timeout: 15000,
       });
     } catch (err) {
-      console.error(`[worktree] remove failed for ${taskId}:`, err.message);
-      // Fall through — still try to delete branch
+      console.error(`[worktree] git worktree remove failed for ${taskId}:`, err.message);
+      // Fallback: force-delete the directory so no broken empty dir remains
+      try { fs.rmSync(worktreePath, { recursive: true, force: true }); } catch {}
     }
+  } else {
+    // Directory doesn't exist but git might still have a stale worktree ref
+    try {
+      execFileSync('git', ['worktree', 'prune'], { cwd: repoRoot, stdio: 'pipe', timeout: 5000 });
+    } catch {}
   }
 
   // Always try to delete branch (even if worktree remove failed/skipped)

@@ -17,6 +17,10 @@ brief-panel/brief.json
 brief-panel/brief-log.jsonl
 brief-panel/output/
 
-.claude/
+# Claude Code — track skills + CLAUDE.md, ignore per-instance state
+.claude/*
+!.claude/skills/
+!.claude/skills/**
+!.claude/CLAUDE.md
 .edda/
 .env
