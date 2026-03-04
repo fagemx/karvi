@@ -10,14 +10,15 @@ const crypto = require('crypto');
 
 const STEP_TYPES = ['plan', 'implement', 'test', 'review'];
 
-const STEP_STATES = ['queued', 'running', 'succeeded', 'failed', 'dead'];
+const STEP_STATES = ['queued', 'running', 'succeeded', 'failed', 'dead', 'cancelled'];
 
 const ALLOWED_STEP_TRANSITIONS = {
   queued:    ['running'],
-  running:   ['succeeded', 'failed'],
+  running:   ['succeeded', 'failed', 'cancelled'],
   failed:    ['queued', 'dead'],       // queued = retry, dead = give up
   succeeded: [],
   dead:      [],
+  cancelled: [],
 };
 
 const DEFAULT_RETRY_POLICY = {
@@ -95,6 +96,13 @@ function transitionStep(step, newState, extra = {}) {
       step.scheduled_at = new Date(Date.now() + delay).toISOString();
       step.state = 'queued';   // auto-requeue for retry
     }
+    step.locked_by = null;
+    step.lock_expires_at = null;
+  }
+
+  if (newState === 'cancelled') {
+    step.completed_at = new Date().toISOString();
+    step.error = extra.error || 'step cancelled';
     step.locked_by = null;
     step.lock_expires_at = null;
   }
