@@ -6,6 +6,7 @@
   "scripts": {
     "start": "node server/server.js",
     "gateway": "node server/gateway.js",
+    "go": "node scripts/go.js",
     "test": "node server/test-evolution-loop.js",
     "test:gateway": "node server/test-gateway.js"
   },
