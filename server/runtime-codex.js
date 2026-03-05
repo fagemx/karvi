@@ -91,12 +91,17 @@ function dispatch(plan) {
     const msgFile = path.join(os.tmpdir(), `karvi-dispatch-${Date.now()}.md`);
     fs.writeFileSync(msgFile, plan.message, 'utf8');
 
-    const timeoutMs = (plan.timeoutSec || 300) * 1000;
+    const baseTimeoutMs = (plan.timeoutSec || 300) * 1000;
+    const TOOL_TIMEOUT_MS = baseTimeoutMs;
+    const IDLE_TIMEOUT_MS = Math.min(baseTimeoutMs, 120_000);
+    let currentTimeoutMs = IDLE_TIMEOUT_MS;
+    
     console.log('[codex-rt] spawn:', CODEX_EXE);
     console.log('[codex-rt] model:', model || '(default)');
     console.log('[codex-rt] message length:', plan.message?.length || 0);
     console.log('[codex-rt] message file:', msgFile);
-    console.log('[codex-rt] cwd:', workDir, 'timeout:', timeoutMs);
+    console.log('[codex-rt] cwd:', workDir, 'base timeout:', baseTimeoutMs,
+      'idle timeout:', IDLE_TIMEOUT_MS, 'tool timeout:', TOOL_TIMEOUT_MS);
 
     let lastHeartbeat = 0;
     const HEARTBEAT_INTERVAL_MS = 60_000;
@@ -136,6 +141,7 @@ function dispatch(plan) {
     let totalTokens = { input: 0, output: 0 };
     let totalCost = 0;
     let toolCallCount = 0;
+    let toolExecutionDepth = 0;
 
     child.stdout.setEncoding('utf8');
     child.stderr.setEncoding('utf8');
@@ -151,15 +157,38 @@ function dispatch(plan) {
       if (err) reject(err); else resolve(result);
     }
 
+    function enterToolExecution() {
+      toolExecutionDepth++;
+      if (toolExecutionDepth === 1) {
+        currentTimeoutMs = TOOL_TIMEOUT_MS;
+        console.log('[codex-rt] entering tool execution (depth=%d), timeout=%ds',
+          toolExecutionDepth, Math.round(currentTimeoutMs / 1000));
+        resetInactivityTimer();
+      }
+    }
+
+    function exitToolExecution() {
+      if (toolExecutionDepth > 0) {
+        toolExecutionDepth--;
+        if (toolExecutionDepth === 0) {
+          currentTimeoutMs = IDLE_TIMEOUT_MS;
+          console.log('[codex-rt] exited tool execution (depth=%d), timeout=%ds',
+            toolExecutionDepth, Math.round(currentTimeoutMs / 1000));
+          resetInactivityTimer();
+        }
+      }
+    }
+
     let inactivityTimer = null;
     function resetInactivityTimer() {
       if (settled) return;
       clearTimeout(inactivityTimer);
       inactivityTimer = setTimeout(() => {
-        console.log('[codex-rt] idle for %ds, killing', Math.round(timeoutMs / 1000));
-        settle(new Error(`codex idle for ${Math.round(timeoutMs / 1000)}s`));
+        console.log('[codex-rt] idle for %ds (depth=%d), killing',
+          Math.round(currentTimeoutMs / 1000), toolExecutionDepth);
+        settle(new Error(`codex idle for ${Math.round(currentTimeoutMs / 1000)}s`));
         killTree(child.pid);
-      }, timeoutMs);
+      }, currentTimeoutMs);
     }
     resetInactivityTimer();
 
@@ -217,6 +246,9 @@ function dispatch(plan) {
 
         // item.started — track tool/command usage for progress
         if (obj.type === 'item.started' && obj.item) {
+          if (obj.item.type !== 'agent_message') {
+            enterToolExecution();
+          }
           toolCallCount++;
           if (plan.onProgress) {
             try {
@@ -228,6 +260,11 @@ function dispatch(plan) {
               });
             } catch {}
           }
+        }
+
+        // item.completed — tool execution finished
+        if (obj.type === 'item.completed') {
+          exitToolExecution();
         }
 
         // turn.completed — accumulate tokens/cost
