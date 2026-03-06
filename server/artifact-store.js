@@ -12,7 +12,9 @@
 const fs = require('fs');
 const path = require('path');
 
-const ARTIFACT_DIR = path.join(__dirname, 'artifacts');
+const ARTIFACT_DIR = process.env.DATA_DIR
+  ? path.join(path.resolve(process.env.DATA_DIR), 'artifacts')
+  : path.join(__dirname, 'artifacts');
 
 function artifactPath(runId, stepId, kind) {
   // step_id may contain ":" (e.g., "T-00001:plan") — replace for filesystem safety

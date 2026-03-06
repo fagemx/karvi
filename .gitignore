@@ -25,3 +25,7 @@ brief-panel/output/
 !.claude/CLAUDE.md
 .edda/
 .env
+
+# Runtime state
+board.json
+server/usage/

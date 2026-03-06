@@ -10,6 +10,7 @@
  */
 const { execSync } = require('child_process');
 const mgmt = require('./management');
+const { resolveRepoRoot } = require('./repo-resolver');
 const LOCK_GRACE_MS = 30_000; // 30s grace on top of step timeout
 
 const ERROR_PATTERNS = [
@@ -842,9 +843,10 @@ function buildStepMessage(envelope, upstreamArtifacts, board, task) {
     lines.push('');
   }
 
-  // Coding standards from skill files
+  // Coding standards from skill files (resolve from target project if set)
   if (shouldInjectSection(envelope.step_type, 'coding_standards')) {
-    const skillLines = mgmt.buildSkillContextSection();
+    const projectRoot = resolveRepoRoot(task, board);
+    const skillLines = mgmt.buildSkillContextSection(projectRoot);
     if (skillLines.length > 0) lines.push(...skillLines);
   }
 
