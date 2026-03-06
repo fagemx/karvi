@@ -1,0 +1,26 @@
+# .claude/project.yaml — 專案配置
+# Skills 會讀這個檔案來適配專案特定的行為
+# 複製到 .claude/project.yaml 後填入你的專案資訊
+
+project:
+  name: my-project              # 專案名稱
+  repo: owner/repo-name         # GitHub repo（owner/name 格式）
+  language: TypeScript           # 主要語言
+  framework: null                # 框架（null 表示無）
+
+# 品質檢查指令 — commit 和 pull-request skill 會用
+quality:
+  syntax_check: "npx tsc --noEmit"    # 語法檢查（null 表示跳過）
+  test_command: "npm test"             # 測試指令
+  lint_command: null                   # lint 指令（null 表示跳過）
+
+# PR review 的專案特定檢查規則 — pr-review skill 會用
+# 每個規則會被加到 review 的 Reality check 裡
+review_checks:
+  # - name: "規則名稱"
+  #   rule: "具體描述：什麼情況算違反"
+
+# 專案原則 — 可選，讓 agent 理解專案的核心約束
+principles:
+  # - "原則 1"
+  # - "原則 2"
