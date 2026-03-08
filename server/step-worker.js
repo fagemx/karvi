@@ -335,7 +335,7 @@ function createStepWorker(deps) {
     }
 
     if (latestStep && latestStep.state === 'running') {
-      const newState = agentOutput.status === 'succeeded' ? 'succeeded' : 'failed';
+      const newState = (agentOutput.status === 'succeeded' || agentOutput.status === 'needs_revision') ? 'succeeded' : 'failed';
       const errorKind = newState === 'failed' ? classifyError(null, agentOutput) : null;
       stepSchema.transitionStep(latestStep, newState, {
         output_ref: artifactStore.artifactPath(envelope.run_id, envelope.step_id, 'output'),

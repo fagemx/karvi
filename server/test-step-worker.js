@@ -487,7 +487,7 @@ function createMockEnvelope(overrides = {}) {
     };
     const decision = decideNext(agentOutput, runState);
     assert.strictEqual(decision.action, 'revision', 'should route to revision');
-    assert.strictEqual(decision.rule, 'review_needs_revision');
+    assert.strictEqual(decision.rule, 'review_needs_fix');
     assert.strictEqual(decision.next_step.step_type, 'implement', 'should target implement step');
     assert.strictEqual(decision.review_feedback, 'Add unit tests', 'should use revision_notes as feedback');
   });

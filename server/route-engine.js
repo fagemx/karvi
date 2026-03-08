@@ -99,10 +99,8 @@ function needsRevision(agentOutput) {
   const text = [agentOutput.summary, agentOutput.failure?.failure_signature].filter(Boolean).join(' ').toLowerCase();
   // "Approve with nits" is not actionable — skip revision
   if (/approve/i.test(text) && !/request.changes/i.test(text)) return false;
-  // Explicit "request changes" verdict
-  if (/request.changes/i.test(text)) return true;
-  // "Changes Requested" verdict (from review step instruction)
-  if (/changes\s+requested/i.test(text)) return true;
+  // Explicit "request changes" or "changes requested" verdict
+  if (/request.changes|changes\s+requested/i.test(text)) return true;
   // High/critical severity findings (medium alone is not worth a revision cycle)
   if (/\bhigh\b.*\bfind/i.test(text) || /\bcritical\b.*\bfind/i.test(text)) return true;
   return false;
@@ -163,25 +161,7 @@ function decideNext(agentOutput, runState) {
       next_step: null, retry: null, human_review: null };
   }
 
-  // 4. Explicit needs_revision → trigger revision loop directly
-  if (agentOutput.status === 'needs_revision') {
-    if (fromStep?.revision_target) {
-      const targetStep = steps.find(s => s.type === fromStep.revision_target);
-      if (targetStep) {
-        const maxCycles = fromStep.max_revision_cycles || MAX_REVISION_CYCLES;
-        const revisionCount = task._revisionCounts?.[targetStep.step_id] || 0;
-        if (revisionCount < maxCycles) {
-          return { ...base, action: 'revision', rule: 'review_needs_revision', confidence: 1.0,
-            retry: null, human_review: null,
-            next_step: { step_id: targetStep.step_id, step_type: targetStep.type, priority: 0 },
-            review_feedback: agentOutput.revision_notes || agentOutput.summary || null };
-        }
-      }
-    }
-    // No revision target or max cycles reached — treat as succeeded (accept as-is)
-  }
-
-  // 5. Succeeded → find next step
+  // 4. Succeeded (or needs_revision — review completed but wants changes) → find next step
   if (agentOutput.status === 'succeeded' || agentOutput.status === 'needs_revision') {
     const stepTypes = steps.map(s => s.type);
     const currentIdx = stepTypes.indexOf(fromStep?.type);
@@ -201,7 +181,7 @@ function decideNext(agentOutput, runState) {
           return { ...base, action: 'revision', rule: 'review_needs_fix', confidence: 0.9,
             retry: null, human_review: null,
             next_step: { step_id: targetStep.step_id, step_type: targetStep.type, priority: 0 },
-            review_feedback: agentOutput.summary || null };
+            review_feedback: agentOutput.revision_notes || agentOutput.summary || null };
         }
         // Max cycles reached — accept as-is
       }
