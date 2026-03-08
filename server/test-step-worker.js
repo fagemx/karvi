@@ -508,6 +508,37 @@ function createMockEnvelope(overrides = {}) {
     assert.strictEqual(execs.length, 0);
   });
 
+  // Test 21: ALLOWED_TASK_TRANSITIONS includes cancelled
+  console.log('\n=== Task Cancel Transitions (#274) ===\n');
+
+  await test('cancelled is a terminal state with no outbound transitions', () => {
+    assert.deepStrictEqual(mgmt.ALLOWED_TASK_TRANSITIONS.cancelled, []);
+  });
+
+  await test('blocked → cancelled is allowed', () => {
+    assert.ok(mgmt.canTransitionTaskStatus('blocked', 'cancelled'));
+  });
+
+  await test('dispatched → cancelled is allowed', () => {
+    assert.ok(mgmt.canTransitionTaskStatus('dispatched', 'cancelled'));
+  });
+
+  await test('in_progress → cancelled is allowed', () => {
+    assert.ok(mgmt.canTransitionTaskStatus('in_progress', 'cancelled'));
+  });
+
+  await test('pending → cancelled is allowed', () => {
+    assert.ok(mgmt.canTransitionTaskStatus('pending', 'cancelled'));
+  });
+
+  await test('approved → cancelled is NOT allowed', () => {
+    assert.ok(!mgmt.canTransitionTaskStatus('approved', 'cancelled'));
+  });
+
+  await test('cancelled → dispatched is NOT allowed (terminal)', () => {
+    assert.ok(!mgmt.canTransitionTaskStatus('cancelled', 'dispatched'));
+  });
+
   // Cleanup
   try {
     fs.rmSync(path.join(artifactStore.ARTIFACT_DIR, testRunId), { recursive: true, force: true });

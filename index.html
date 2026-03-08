@@ -384,6 +384,10 @@
       box-shadow: 0 0 8px #ff6b6b;
     }
 
+    .task-card.cancelled::before {
+      background: #666;
+    }
+
     @keyframes pulse {
       0%, 100% { opacity: 1; }
       50% { opacity: 0.4; }
@@ -442,6 +446,12 @@
       background: #31191b;
       border-color: #b44;
       color: #ff9999;
+    }
+
+    .t-status.cancelled {
+      background: #1a1a1a;
+      border-color: #555;
+      color: #999;
     }
 
     .t-depends {
@@ -1061,6 +1071,13 @@
         }
         if (t.status === 'approved') {
           actionsHtml += `<span class="t-btn-done">✅ Approved</span>`;
+        }
+        if (t.status === 'cancelled') {
+          actionsHtml += `<span style="color:#999; font-size:12px;">🚫 Cancelled</span>`;
+        }
+        // Cancel button for non-terminal statuses
+        if (!['approved', 'cancelled', 'completed', 'reviewing', 'needs_revision'].includes(t.status)) {
+          actionsHtml += `<button class="t-btn block" onclick="if(confirm('Cancel task ${t.id}?')) setTaskStatus('${t.id}','cancelled')" style="background:#333;">🚫 Cancel</button>`;
         }
         actionsHtml += '</div>';
 

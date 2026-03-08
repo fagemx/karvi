@@ -330,14 +330,15 @@ function getControls(board) {
 }
 
 const ALLOWED_TASK_TRANSITIONS = {
-  pending: ['dispatched'],
-  dispatched: ['in_progress', 'pending'],
-  in_progress: ['blocked', 'completed', 'dispatched'],
-  blocked: ['in_progress', 'dispatched'],
+  pending: ['dispatched', 'cancelled'],
+  dispatched: ['in_progress', 'pending', 'cancelled'],
+  in_progress: ['blocked', 'completed', 'dispatched', 'cancelled'],
+  blocked: ['in_progress', 'dispatched', 'cancelled'],
   completed: ['reviewing', 'approved', 'needs_revision'],
   reviewing: ['approved', 'needs_revision'],
   needs_revision: ['in_progress', 'approved'],
   approved: [],
+  cancelled: [],
 };
 
 function canTransitionTaskStatus(fromStatus, toStatus) {
