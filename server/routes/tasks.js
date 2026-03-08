@@ -1239,9 +1239,10 @@ module.exports = function tasksRoutes(req, res, helpers, deps) {
     step.output_ref = null;
     step.scheduled_at = helpers.nowIso();
 
-    // Unblock task if it was blocked due to dead step
+    // Unblock task only if it was blocked due to dead/failed step (not dependency blocks)
     let taskUnblocked = false;
-    if (task.status === 'blocked') {
+    const blockerReason = task.blocker?.reason || '';
+    if (task.status === 'blocked' && (blockerReason.includes('Dead letter') || blockerReason.includes('dead') || blockerReason.includes('failed'))) {
       task.status = 'in_progress';
       task.blocker = null;
       taskUnblocked = true;
