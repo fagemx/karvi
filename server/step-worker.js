@@ -9,6 +9,8 @@
  * Kernel = routing decisions, StepWorker = execution.
  */
 const { execSync } = require('child_process');
+const fs = require('fs');
+const path = require('path');
 const mgmt = require('./management');
 const { resolveRepoRoot } = require('./repo-resolver');
 const LOCK_GRACE_MS = 30_000; // 30s grace on top of step timeout
@@ -243,6 +245,25 @@ function createStepWorker(deps) {
       if (status === 'succeeded') {
         const postResult = await runPostCheck(plan.workingDir || plan.cwd);
         postCheckResult = postResult;
+
+        // 5b1. Scope guard — revert out-of-scope files before commit
+        if (postResult.hasUncommittedChanges) {
+          const scopeConfig = task.scope || null;
+          const scopeGuardResult = applyScopeGuard(
+            plan.workingDir || plan.cwd,
+            scopeConfig,
+            postResult.files
+          );
+          if (scopeGuardResult.reverted.length > 0) {
+            summary = (summary || '') +
+              ` [scope-guard: reverted ${scopeGuardResult.reverted.length} file(s): ${scopeGuardResult.reverted.join(', ')}]`;
+          }
+          // Re-check after scope guard removed out-of-scope files
+          const recheck = await runPostCheck(plan.workingDir || plan.cwd);
+          postResult.hasUncommittedChanges = recheck.hasUncommittedChanges;
+          postResult.files = recheck.files;
+        }
+
         if (postResult.hasUncommittedChanges) {
           // Attempt auto-finalize
           const finalized = autoFinalize(plan.workingDir || plan.cwd, envelope);
@@ -478,6 +499,64 @@ function autoFinalize(workDir, envelope) {
     return { ok: true, commitHash: hash };
   } catch (err) {
     return { ok: false, error: err.message?.slice(0, 200) || 'unknown' };
+  }
+}
+
+/**
+ * Revert files that fall outside the task's scope config.
+ * Default deny: .claude/** (most common agent scope creep target).
+ * Returns { reverted: string[], kept: string[] }.
+ */
+function applyScopeGuard(workDir, scopeConfig, changedFiles) {
+  const DEFAULT_DENY = ['.claude/**'];
+  const deny = (scopeConfig?.deny || []).concat(DEFAULT_DENY);
+  const allow = scopeConfig?.allow || [];
+
+  const reverted = [];
+  const kept = [];
+
+  for (const entry of changedFiles) {
+    // git status --porcelain format: "XY filename" (first 2 chars = status, char 3 = space)
+    const statusCode = entry.slice(0, 2).trim();
+    const filePath = entry.slice(3);
+
+    if (isOutOfScope(filePath, allow, deny)) {
+      revertFile(workDir, filePath, statusCode);
+      reverted.push(filePath);
+    } else {
+      kept.push(filePath);
+    }
+  }
+
+  return { reverted, kept };
+}
+
+function isOutOfScope(filePath, allow, deny) {
+  // Deny takes priority
+  for (const pattern of deny) {
+    if (path.matchesGlob(filePath, pattern)) return true;
+  }
+  // If allow list exists, file must match at least one
+  if (allow.length > 0) {
+    return !allow.some(pattern => path.matchesGlob(filePath, pattern));
+  }
+  return false;
+}
+
+function revertFile(workDir, filePath, statusCode) {
+  const opts = { cwd: workDir, encoding: 'utf8', timeout: 5000 };
+
+  if (statusCode === '??' || statusCode === 'A') {
+    // Untracked or newly added — delete
+    const fullPath = path.join(workDir, filePath);
+    if (fs.existsSync(fullPath)) {
+      fs.statSync(fullPath).isDirectory()
+        ? fs.rmSync(fullPath, { recursive: true })
+        : fs.unlinkSync(fullPath);
+    }
+  } else {
+    // Modified or deleted — restore from HEAD
+    execSync(`git checkout -- "${filePath}"`, opts);
   }
 }
 
@@ -842,6 +921,20 @@ function buildStepMessage(envelope, upstreamArtifacts, board, task) {
     lines.push('', envelope.input_refs.task_description);
   }
 
+  // Scope constraints (soft hint — hard guard enforces post-execution)
+  if (envelope.scope_config) {
+    lines.push('', '## File Scope Constraint');
+    if (envelope.scope_config.allow?.length) {
+      lines.push('You MUST only modify files matching these patterns:');
+      for (const p of envelope.scope_config.allow) lines.push(`  ✓ ${p}`);
+    }
+    if (envelope.scope_config.deny?.length) {
+      lines.push('You MUST NOT modify files matching these patterns:');
+      for (const p of envelope.scope_config.deny) lines.push(`  ✗ ${p}`);
+    }
+    lines.push('Out-of-scope changes will be automatically reverted after your step completes.');
+  }
+
   // Inject upstream artifacts (from completed dependency tasks)
   // Use UPSTREAM_RELEVANCE to filter what each step type needs
   const relevance = UPSTREAM_RELEVANCE[envelope.step_type];
@@ -944,4 +1037,4 @@ function recoverExpiredLocks(board) {
   return recovered;
 }
 
-module.exports = { createStepWorker, parseStepResult, buildStepMessage, recoverExpiredLocks, runPreflight, extractPreflightTargets, validateContract, classifyError };
+module.exports = { createStepWorker, parseStepResult, buildStepMessage, recoverExpiredLocks, runPreflight, extractPreflightTargets, validateContract, classifyError, applyScopeGuard, isOutOfScope, revertFile };
