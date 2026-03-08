@@ -15,6 +15,23 @@ const mgmt = require('./management');
 const { resolveRepoRoot } = require('./repo-resolver');
 const LOCK_GRACE_MS = 30_000; // 30s grace on top of step timeout
 
+const TEMPLATES_DIR = path.join(__dirname, 'templates');
+
+function renderTemplate(template, vars) {
+  return template.replace(/\{\{(\w+(?:\.\w+)*)\}\}/g, (_, pathStr) => {
+    return pathStr.split('.').reduce((o, k) => o?.[k], vars) ?? '';
+  });
+}
+
+function loadTemplate(stepType) {
+  const tplPath = path.join(TEMPLATES_DIR, `${stepType}.md`);
+  try {
+    return fs.readFileSync(tplPath, 'utf8');
+  } catch {
+    return null;
+  }
+}
+
 const ERROR_PATTERNS = [
   // Environment errors — non-retryable (fix environment before retrying)
   { pattern: /ENOENT/i, kind: 'CONFIG' },
@@ -987,11 +1004,19 @@ function buildStepMessage(envelope, upstreamArtifacts, board, task) {
     ].join('\n'),
   };
 
-  // Prefer task-defined semantic instructions over hard-coded step map.
-  const skillMsg = (typeof envelope.instruction === 'string' && envelope.instruction.trim())
-    || (typeof envelope.skill === 'string' && envelope.skill.trim() ? `Execute ${envelope.skill.trim()}` : null)
-    || STEP_SKILL_MAP[envelope.step_type]
-    || `Complete the ${envelope.step_type} step for task ${envelope.task_id}.`;
+  // Prefer external template, then task-defined instructions, then hardcoded map.
+  const tplContent = loadTemplate(envelope.step_type);
+  let skillMsg;
+  if (tplContent) {
+    skillMsg = renderTemplate(tplContent, { issueNumber, step_type: envelope.step_type });
+  } else if (typeof envelope.instruction === 'string' && envelope.instruction.trim()) {
+    skillMsg = envelope.instruction.trim();
+  } else if (typeof envelope.skill === 'string' && envelope.skill.trim()) {
+    skillMsg = `Execute ${envelope.skill.trim()}`;
+  } else {
+    skillMsg = STEP_SKILL_MAP[envelope.step_type]
+      || `Complete the ${envelope.step_type} step for task ${envelope.task_id}.`;
+  }
 
   const stepHeader = String(envelope.step_type || '').toUpperCase();
   const objective = envelope.objective || `Execute step: ${envelope.step_type}`;
@@ -1137,4 +1162,4 @@ function recoverExpiredLocks(board) {
   return recovered;
 }
 
-module.exports = { createStepWorker, parseStepResult, buildStepMessage, recoverExpiredLocks, runPreflight, extractPreflightTargets, validateContract, classifyError, applyScopeGuard, isOutOfScope, revertFile };
+module.exports = { createStepWorker, parseStepResult, buildStepMessage, recoverExpiredLocks, runPreflight, extractPreflightTargets, validateContract, classifyError, applyScopeGuard, isOutOfScope, revertFile, renderTemplate, loadTemplate };
