@@ -16,6 +16,10 @@ const { resolveRepoRoot } = require('./repo-resolver');
 const LOCK_GRACE_MS = 30_000; // 30s grace on top of step timeout
 
 const ERROR_PATTERNS = [
+  // Environment errors — non-retryable (fix environment before retrying)
+  { pattern: /ENOENT/i, kind: 'CONFIG' },
+  { pattern: /EACCES/i, kind: 'CONFIG' },
+
   // Dispatch error patterns (from err.message)
   { pattern: /idle for \d+s/i, kind: 'TEMPORARY' },
   { pattern: /exited with code/i, kind: 'PROVIDER' },
@@ -62,6 +66,29 @@ function createStepWorker(deps) {
   async function executeStep(envelope, board, helpers) {
     const task = (board.taskPlan?.tasks || []).find(t => t.id === envelope.task_id);
     if (!task) throw new Error(`Task ${envelope.task_id} not found`);
+
+    // 0. Worktree lifecycle: validate/rebuild before dispatch
+    if (task.worktreeDir && !fs.existsSync(task.worktreeDir)) {
+      console.log(`[step-worker] worktree missing for ${task.id}: ${task.worktreeDir}, rebuilding`);
+      try {
+        const worktree = require('./worktree');
+        const repoRoot = resolveRepoRoot(task, board) || path.resolve(__dirname, '..');
+        const wt = worktree.createWorktree(repoRoot, task.id);
+        task.worktreeDir = wt.worktreePath;
+        task.worktreeBranch = wt.branch;
+        // Persist rebuilt worktree path
+        const wtBoard = helpers.readBoard();
+        const wtTask = (wtBoard.taskPlan?.tasks || []).find(t => t.id === task.id);
+        if (wtTask) {
+          wtTask.worktreeDir = wt.worktreePath;
+          wtTask.worktreeBranch = wt.branch;
+          helpers.writeBoard(wtBoard);
+        }
+        console.log(`[step-worker] worktree rebuilt: ${wt.worktreePath}`);
+      } catch (err) {
+        throw new Error(`ENOENT: worktree rebuild failed for ${task.id}: ${err.message}`);
+      }
+    }
 
     // 1. Build dispatch plan — compute timeout once, share between lock and runtime
     const timeoutMs = envelope.timeout_ms || 300_000;
@@ -163,6 +190,26 @@ function createStepWorker(deps) {
           helpers.writeBoard(pgBoard);
         } catch {}
       };
+      // Write initial progress before spawn (so progress is never undefined)
+      try {
+        const initBoard = helpers.readBoard();
+        const initTask = (initBoard.taskPlan?.tasks || []).find(t => t.id === envelope.task_id);
+        const initStep = initTask?.steps?.find(s => s.step_id === envelope.step_id);
+        if (initStep && initStep.state === 'running') {
+          initStep.progress = {
+            tool_calls: 0,
+            tokens: null,
+            last_tool: null,
+            last_activity: new Date().toISOString(),
+            elapsed_ms: 0,
+            dispatched_at: new Date().toISOString(),
+            cwd: plan.workingDir || plan.cwd || null,
+            runtime: runtimeHint || 'unknown',
+          };
+          helpers.writeBoard(initBoard);
+        }
+      } catch {}
+
       let result;
       const ac = new AbortController();
       activeExecutions.set(envelope.step_id, { abort: () => ac.abort(), startedAt: Date.now() });
@@ -197,6 +244,23 @@ function createStepWorker(deps) {
 
           helpers.writeBoard(failBoard);
           helpers.appendLog({ ts: helpers.nowIso(), event: 'step_dispatch_error', taskId: envelope.task_id, stepId: envelope.step_id, error: dispatchErr.message, duration_ms: dispatchDurationMs });
+
+          // Log diagnostic for dead steps
+          if (failStep.state === 'dead') {
+            console.log(`[step-worker] DEAD LETTER: ${envelope.step_id} after ${failStep.attempt} attempts`);
+            console.log(`[step-worker]   error: ${failStep.error}`);
+            console.log(`[step-worker]   errorKind: ${errorKind}`);
+            console.log(`[step-worker]   cwd: ${plan.workingDir || plan.cwd || 'none'}`);
+            console.log(`[step-worker]   runtime: ${runtimeHint || 'default'}`);
+            console.log(`[step-worker]   duration_ms: ${dispatchDurationMs}`);
+            helpers.appendLog({
+              ts: helpers.nowIso(), event: 'step_dead_diagnostic',
+              taskId: envelope.task_id, stepId: envelope.step_id,
+              attempt: failStep.attempt, error: failStep.error, errorKind,
+              cwd: plan.workingDir || plan.cwd || null, runtime: runtimeHint,
+              duration_ms: dispatchDurationMs,
+            });
+          }
 
           // Trigger kernel for dead steps — dead-letter routing, worktree cleanup, push notification
           if (failStep.state === 'dead' && deps.kernel) {
