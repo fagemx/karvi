@@ -652,7 +652,7 @@ module.exports = function tasksRoutes(req, res, helpers, deps) {
         const oldStatus = task.status;
         if (payload.status) {
           const nextStatus = String(payload.status).trim();
-          const validStatuses = ['pending', 'dispatched', 'in_progress', 'blocked', 'completed', 'reviewing', 'approved', 'needs_revision'];
+          const validStatuses = ['pending', 'dispatched', 'in_progress', 'blocked', 'completed', 'reviewing', 'approved', 'needs_revision', 'cancelled'];
           if (!validStatuses.includes(nextStatus)) {
             return json(res, 400, { error: `Invalid status. Must be one of: ${validStatuses.join(', ')}` });
           }
@@ -885,7 +885,7 @@ module.exports = function tasksRoutes(req, res, helpers, deps) {
       try {
         const payload = JSON.parse(body || '{}');
         const newStatus = String(payload.status || '').trim();
-        const validStatuses = ['pending', 'dispatched', 'in_progress', 'blocked', 'completed', 'reviewing', 'approved', 'needs_revision'];
+        const validStatuses = ['pending', 'dispatched', 'in_progress', 'blocked', 'completed', 'reviewing', 'approved', 'needs_revision', 'cancelled'];
         if (!validStatuses.includes(newStatus)) {
           return json(res, 400, { error: `Invalid status. Must be one of: ${validStatuses.join(', ')}` });
         }
@@ -926,6 +926,19 @@ module.exports = function tasksRoutes(req, res, helpers, deps) {
         }
         if (newStatus !== 'blocked') task.blocker = null;
 
+        // Cancel: kill running steps, transition queued/running steps to cancelled
+        if (newStatus === 'cancelled') {
+          task.completedAt = helpers.nowIso();
+          for (const step of (task.steps || [])) {
+            if (step.state === 'running') {
+              try { deps.stepWorker.killStep(step.step_id); } catch {}
+              deps.stepSchema.transitionStep(step, 'cancelled', { error: 'Task cancelled' });
+            } else if (step.state === 'queued' || step.state === 'failed') {
+              deps.stepSchema.transitionStep(step, 'cancelled', { error: 'Task cancelled' });
+            }
+          }
+        }
+
         // Strict gate: only approved can unlock dependents
         if (newStatus === 'approved') {
           const unlocked = mgmt.autoUnlockDependents(board);
@@ -940,8 +953,8 @@ module.exports = function tasksRoutes(req, res, helpers, deps) {
           setImmediate(() => tryAutoDispatch(task.id, deps, helpers));
         }
 
-        // Update phase if all tasks approved
-        const allApproved = board.taskPlan.tasks.every(t => t.status === 'approved');
+        // Update phase if all tasks approved (cancelled tasks don't block)
+        const allApproved = board.taskPlan.tasks.every(t => t.status === 'approved' || t.status === 'cancelled');
         if (allApproved) board.taskPlan.phase = 'done';
 
         // Evolution Layer: emit status_change signal
@@ -967,7 +980,7 @@ module.exports = function tasksRoutes(req, res, helpers, deps) {
         }
 
         // Push notification: fire-and-forget
-        if (['completed', 'blocked', 'needs_revision', 'approved'].includes(newStatus)) {
+        if (['completed', 'blocked', 'needs_revision', 'approved', 'cancelled'].includes(newStatus)) {
           push.notifyTaskEvent(PUSH_TOKENS_PATH, task, `task.${newStatus}`)
             .catch(err => console.error('[push] notify failed:', err.message));
         }
