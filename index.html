@@ -388,6 +388,12 @@
       background: #666;
     }
 
+    .t-scope-indicator {
+      font-size: 14px;
+      cursor: help;
+      margin: 0 4px;
+    }
+
     @keyframes pulse {
       0%, 100% { opacity: 1; }
       50% { opacity: 0.4; }
@@ -1114,20 +1120,21 @@
           replyHtml = `<div class="t-reply"><div class="t-reply-label">Last reply (${fmtTime(t.lastReplyAt)}):</div><div class="t-reply-text">${escapeHtml(preview)}</div></div>`;
         }
 
-        return `
-           <div class="task-card ${t.status}">
-              <div class="t-meta">
-                <span>#${t.id} · ${participantName(t.assignee)}</span>
-                <span class="t-status ${t.status}">${t.status}</span>
-              </div>
-              <div class="t-title">${escapeHtml(t.title)}</div>
-              ${dependsHtml}
-              ${blockerHtml}
-              ${reviewHtml}
-              ${replyHtml}
-              ${actionsHtml}
-           </div>
-         `;
+         return `
+            <div class="task-card ${t.status}">
+               <div class="t-meta">
+                 <span>#${t.id} · ${participantName(t.assignee)}</span>
+                 ${t.scope ? `<span class="t-scope-indicator" title="Scope: allow=${t.scope.allow?.join(',') || 'none'}, deny=${t.scope.deny?.join(',') || 'none'}">🔒</span>` : ''}
+                 <span class="t-status ${t.status}">${t.status}</span>
+               </div>
+               <div class="t-title">${escapeHtml(t.title)}</div>
+               ${dependsHtml}
+               ${blockerHtml}
+               ${reviewHtml}
+               ${replyHtml}
+               ${actionsHtml}
+            </div>
+          `;
       }).join('');
     }
 
