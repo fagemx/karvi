@@ -1150,6 +1150,44 @@ module.exports = function tasksRoutes(req, res, helpers, deps) {
     return;
   }
 
+  // POST /api/tasks/:id/steps/:stepId/kill — kill a running step
+  const stepKillMatch = req.url.match(/^\/api\/tasks\/([^/]+)\/steps\/([^/]+)\/kill$/);
+  if (req.method === 'POST' && stepKillMatch) {
+    const taskId = decodeURIComponent(stepKillMatch[1]);
+    const stepId = decodeURIComponent(stepKillMatch[2]);
+
+    const board = helpers.readBoard();
+    const task = (board.taskPlan?.tasks || []).find(t => t.id === taskId);
+    if (!task) return json(res, 404, { error: `Task ${taskId} not found` });
+
+    const step = (task.steps || []).find(s => s.step_id === stepId);
+    if (!step) return json(res, 404, { error: `Step ${stepId} not found` });
+    if (step.state !== 'running') return json(res, 409, { error: `Step is ${step.state}, not running` });
+
+    // Kill the agent process
+    const killResult = deps.stepWorker.killStep(stepId);
+    if (!killResult.ok) return json(res, 409, { error: killResult.reason });
+
+    // Transition to cancelled
+    deps.stepSchema.transitionStep(step, 'cancelled', { error: 'Killed by user' });
+
+    // Emit signal
+    mgmt.ensureEvolutionFields(board);
+    board.signals.push({
+      id: helpers.uid('sig'), ts: helpers.nowIso(), by: 'user',
+      type: 'step_cancelled',
+      content: `${taskId} step ${stepId} running → cancelled (killed)`,
+      refs: [taskId],
+      data: { taskId, stepId, from: 'running', to: 'cancelled' },
+    });
+    if (board.signals.length > 500) board.signals = board.signals.slice(-500);
+
+    helpers.writeBoard(board);
+    helpers.appendLog({ ts: helpers.nowIso(), event: 'step_killed', taskId, stepId });
+
+    return json(res, 200, { ok: true, step_id: stepId, new_state: 'cancelled' });
+  }
+
   // POST /api/tasks/:id/steps/dispatch-batch — dispatch multiple steps in parallel
   const batchDispatchMatch = req.url.match(/^\/api\/tasks\/([^/]+)\/steps\/dispatch-batch$/);
   if (req.method === 'POST' && batchDispatchMatch) {

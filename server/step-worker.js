@@ -47,6 +47,8 @@ const UPSTREAM_RELEVANCE = {
 function createStepWorker(deps) {
   const { artifactStore, stepSchema, mgmt } = deps;
 
+  const activeExecutions = new Map(); // stepId → { abort(), startedAt }
+
   /**
    * Execute a single step: build plan, acquire lock, dispatch to runtime,
    * parse output, write artifact, transition state, emit signal.
@@ -160,9 +162,13 @@ function createStepWorker(deps) {
         } catch {}
       };
       let result;
+      const ac = new AbortController();
+      activeExecutions.set(envelope.step_id, { abort: () => ac.abort(), startedAt: Date.now() });
+      plan.signal = ac.signal;
       try {
         result = await rt.dispatch(plan);
       } catch (dispatchErr) {
+        activeExecutions.delete(envelope.step_id);
         const dispatchDurationMs = Date.now() - startMs;
         // Transition step to failed instead of leaving it stuck in 'running'
         const failBoard = helpers.readBoard();
@@ -201,6 +207,7 @@ function createStepWorker(deps) {
         }
         throw dispatchErr;
       }
+      activeExecutions.delete(envelope.step_id);
       durationMs = Date.now() - startMs;
 
       // 5. Parse output — try STEP_RESULT from extracted reply first (critical for
@@ -377,7 +384,19 @@ function createStepWorker(deps) {
     return agentOutput;
   }
 
-  return { executeStep };
+  function killStep(stepId) {
+    const exec = activeExecutions.get(stepId);
+    if (!exec) return { ok: false, reason: 'not_running' };
+    exec.abort();
+    activeExecutions.delete(stepId);
+    return { ok: true };
+  }
+
+  function getActiveExecutions() {
+    return Array.from(activeExecutions.entries()).map(([stepId, { startedAt }]) => ({ stepId, startedAt }));
+  }
+
+  return { executeStep, killStep, getActiveExecutions };
 }
 
 // --- Helpers (module-level, testable) ---
