@@ -212,7 +212,7 @@ function dispatch(plan) {
         if (obj.sessionID) sessionId = obj.sessionID;
 
         // Debug: log unknown event types to diagnose provider-specific NDJSON formats
-        if (!['text', 'step_start', 'step_finish', 'tool_call', 'tool_result'].includes(obj.type)) {
+        if (!['text', 'step_start', 'step_finish', 'tool_call', 'tool_result', 'tool_use'].includes(obj.type)) {
           console.log('[opencode-rt] event type=%s keys=%s', obj.type, Object.keys(obj).join(','));
         }
 
@@ -241,13 +241,20 @@ function dispatch(plan) {
           totalCost += lastFinish.cost || 0;
           console.log('[opencode-rt] step_finish: reason=%s cost=%s tokens=%j (cumulative: cost=%s tokens=%j)',
             lastFinish.reason, lastFinish.cost, lastFinish.tokens, totalCost, totalTokens);
+          // step_finish means a tool call round completed — reset tool execution depth
+          // (opencode emits tool_use but no tool_result, so exitToolExecution never fires)
+          if (toolExecutionDepth > 0) {
+            toolExecutionDepth = 0;
+            currentTimeoutMs = IDLE_TIMEOUT_MS;
+          }
           // Do NOT settle here. opencode's agentic loop may have more steps.
           // Settlement happens via: STEP_RESULT marker, process exit, or inactivity timeout.
         }
         // @end-protected
 
-        // Emit progress for tool_call events (consumed by step-worker onProgress)
-        if (obj.type === 'tool_call') {
+        // Emit progress for tool_call/tool_use events (consumed by step-worker onProgress)
+        // opencode emits 'tool_use' (not 'tool_call') for tool execution start
+        if (obj.type === 'tool_call' || obj.type === 'tool_use') {
           toolCallCount++;
           enterToolExecution();
           if (plan.onProgress) {
