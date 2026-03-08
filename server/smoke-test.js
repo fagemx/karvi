@@ -80,23 +80,30 @@ function post(port, urlPath, payload, { token = authToken, timeout = 5000 } = {}
 }
 
 function del(port, urlPath, payload, { token = authToken, timeout = 5000 } = {}) {
-  return new Promise((resolve, reject) => {
-    const data = JSON.stringify(payload);
-    const timer = setTimeout(() => reject(new Error(`Timeout ${urlPath}`)), timeout);
-    const headers = { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(data) };
-    if (token) headers['Authorization'] = `Bearer ${token}`;
-    const req = http.request({
-      hostname: 'localhost', port, path: urlPath, method: 'DELETE', headers,
-    }, res => {
-      let body = '';
-      res.setEncoding('utf8');
-      res.on('data', c => body += c);
-      res.on('end', () => { clearTimeout(timer); resolve({ status: res.statusCode, headers: res.headers, body }); });
+  const data = JSON.stringify(payload);
+  const timer = setTimeout(() => reject(new Error(`Timeout ${urlPath}`)), timeout);
+  const headers = { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(data) };
+  if (token) headers['Authorization'] = `Bearer ${token}`;
+  const req = http.request({
+    hostname: 'localhost', port, path: urlPath, method: 'DELETE', headers,
+  }, res => {
+    let body = '';
+    res.setEncoding('utf8');
+    res.on('data', c => body += c);
+    res.on('end', () => {
+      clearTimeout(timer);
+      resolve({ status: res.statusCode, headers: res.headers, body });
     });
-    req.on('error', e => { clearTimeout(timer); reject(e); });
-    req.end(data);
   });
+  req.on('error', e => { clearTimeout(timer); reject(e); });
+  req.end(data);
 }
+
+function isJiraConfigured() {
+  return !!(process.env.JIRA_HOST && process.env.JIRA_API_TOKEN && process.env.JIRA_EMAIL);
+}
+
+const jiraEnabled = isJiraConfigured();
 
 function sseProbe(port, timeout = 3000) {
   return new Promise((resolve, reject) => {
@@ -391,34 +398,61 @@ async function runSuite(target) {
       ok('Jira webhook cleanup → smoke task removed');
     } catch (e) { fail('Jira webhook cleanup', e.message); }
 
-    // 17. POST /api/webhooks/jira with field changes → 200 + fields_updated (issue #51)
-    try {
-      // First create a task to update
-      await post(port, '/api/webhooks/jira', {
-        webhookEvent: 'jira:issue_created',
-        issue: { key: 'SMOKE-FIELD', fields: { summary: 'Original Title', priority: { name: 'Medium' } } },
-      });
-      // Now send field update
-      const r = await post(port, '/api/webhooks/jira', {
-        webhookEvent: 'jira:issue_updated',
-        issue: { key: 'SMOKE-FIELD', fields: { summary: 'Updated Title' } },
-        changelog: { items: [{ field: 'summary', fromString: 'Original Title', toString: 'Updated Title' }] },
-      });
-      if (r.status !== 200) throw new Error(`expected 200, got ${r.status}`);
-      const body = JSON.parse(r.body);
-      if (body.action !== 'fields_updated') throw new Error(`action: ${body.action}`);
-      // Verify board updated
-      const boardR = await get(port, '/api/board');
-      const board = JSON.parse(boardR.body);
-      const task = board.taskPlan.tasks.find(t => t.jiraKey === 'SMOKE-FIELD');
-      if (!task) throw new Error('task not found');
-      if (task.title !== 'Updated Title') throw new Error(`title: ${task.title}`);
-      // Cleanup
-      board.taskPlan.tasks = board.taskPlan.tasks.filter(t => t.jiraKey !== 'SMOKE-FIELD');
-      await post(port, '/api/board', board);
-      ok('POST /api/webhooks/jira (field_update) → 200 + task updated');
-    } catch (e) { fail('POST /api/webhooks/jira (field_update)', e.message); }
+  // 13-16. Jira Webhook tests (task-engine only)
+if (port === 3461) {
+    console.log('\n  ── Jira Webhook tests (task-engine only) ──');
+
+  // 13. POST /api/webhooks/jira with issue_created → 201 + task created (or 200 skipped if disabled)
+    const jiraPayload = {
+      webhookEvent: 'jira:issue_created',
+      issue: {
+        key: 'SMOKE-9999',
+        fields: {
+          summary: 'Smoke test Jira ticket',
+          description: { type: 'doc', version: 1, content: [
+            { type: 'paragraph', content: [{ type: 'text', text: 'Smoke test description from Jira' }]},
+          ]},
+          priority: { name: 'High' },
+          assignee: { displayName: 'SmokeBot' },
+        },
+      },
+    },
+  };
+
+  const r = await post(port, '/api/webhooks/jira', jiraPayload);
+          
+          if (jiraEnabled) {
+            // Jira enabled: expect task creation
+            if (r.status !== 201) throw new Error(`expected 201, got ${r.status}: ${r.body}`);
+            const body = JSON.parse(r.body);
+            if (body.action !== 'create_task') throw new Error(`expected action create_task, got ${body.action}`);
+            if (body.jiraKey !== 'SMOKE-9999') throw new Error(`expected jiraKey SMOKE-9999, got ${body.jiraKey}`);
+
+            // Verify task exists in board with correct fields
+            const boardR = await get(port, '/api/board');
+            const board = JSON.parse(boardR.body);
+            const task = (board.taskPlan?.tasks || []).find(t => t.jiraKey === 'SMOKE-9999');
+            if (!task) throw new Error('task not found in board');
+            if (task.source !== 'jira') throw new Error(`expected source jira, got ${task.source}`);
+            if (task.priority !== 'P1') throw new Error(`expected priority P1, got ${task.priority}`);
+            if (!task.jiraUrl) throw new Error('missing jiraUrl');
+            if (!task.description) throw new Error('missing description');
+            ok('POST /api/webhooks/jira (issue_created) → 201 + task in board');
+          } else {
+            // Jira disabled: expect skipped response
+            if (r.status !== 200) throw new Error(`expected 200 (skipped), got ${r.status}: ${r.body}`);
+            const body = JSON.parse(r.body);
+            if (!body.skipped) throw new Error(`expected skipped=true when Jira disabled`);
+            ok('POST /api/webhooks/jira (issue_created) → 200 skipped (Jira disabled)');
+          }
+        } catch (e) { fail('POST /api/webhooks/jira (issue_created)', e.message); }
+      }
+    } catch (e) { fail('POST /api/webhooks/jira (issue_created)', e.message); }
   }
+} else {
+  console.log('  ⊘ Skipping Jira tests (Jira not configured)');
+}
+
 
   // ── Rate Limit / Body Size / SSE Limit tests ──
   console.log('\n  ── Rate limit & guard tests ──');

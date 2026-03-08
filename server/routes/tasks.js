@@ -554,7 +554,13 @@ module.exports = function tasksRoutes(req, res, helpers, deps) {
     });
   }
 
-  if (req.method === 'GET' && req.url.startsWith('/api/tasks') && !req.url.includes('/steps')) {
+  if (req.method === 'GET' && req.url.startsWith('/api/tasks') && 
+      !req.url.includes('/steps') && 
+      !req.url.includes('/digest') &&
+      !req.url.includes('/timeline') &&
+      !req.url.includes('/report') &&
+      !req.url.includes('/confidence') &&
+      !req.url.includes('/progress')) {
     try {
       const board = helpers.readBoard();
       return json(res, 200, board.taskPlan || {});
