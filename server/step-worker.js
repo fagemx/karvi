@@ -67,6 +67,30 @@ function createStepWorker(deps) {
     const task = (board.taskPlan?.tasks || []).find(t => t.id === envelope.task_id);
     if (!task) throw new Error(`Task ${envelope.task_id} not found`);
 
+    // 0. Worktree lifecycle: validate/rebuild before dispatch
+    if (task.worktreeDir && !fs.existsSync(task.worktreeDir)) {
+      console.log(`[step-worker] worktree missing for ${task.id}: ${task.worktreeDir}, rebuilding`);
+      try {
+        const worktree = require('./worktree');
+        const { resolveRepoRoot } = require('./repo-resolver');
+        const repoRoot = resolveRepoRoot(task, board) || path.resolve(__dirname, '..');
+        const wt = worktree.createWorktree(repoRoot, task.id);
+        task.worktreeDir = wt.worktreePath;
+        task.worktreeBranch = wt.branch;
+        // Persist rebuilt worktree path
+        const wtBoard = helpers.readBoard();
+        const wtTask = (wtBoard.taskPlan?.tasks || []).find(t => t.id === task.id);
+        if (wtTask) {
+          wtTask.worktreeDir = wt.worktreePath;
+          wtTask.worktreeBranch = wt.branch;
+          helpers.writeBoard(wtBoard);
+        }
+        console.log(`[step-worker] worktree rebuilt: ${wt.worktreePath}`);
+      } catch (err) {
+        throw new Error(`ENOENT: worktree rebuild failed for ${task.id}: ${err.message}`);
+      }
+    }
+
     // 1. Build dispatch plan — compute timeout once, share between lock and runtime
     const timeoutMs = envelope.timeout_ms || 300_000;
     const timeoutSec = Math.ceil(timeoutMs / 1000);
