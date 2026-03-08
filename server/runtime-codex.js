@@ -40,18 +40,7 @@ function resolveCodexPath() {
 
 const CODEX_EXE = resolveCodexPath();
 
-/**
- * Kill an entire process tree.
- */
-function killTree(pid) {
-  try {
-    if (process.platform === 'win32') {
-      execSync(`taskkill /PID ${pid} /T /F`, { stdio: 'ignore' });
-    } else {
-      process.kill(-pid, 'SIGKILL');
-    }
-  } catch {}
-}
+const killTree = require('./kill-tree');
 
 /**
  * Dispatch a plan to Codex headless CLI.
@@ -128,6 +117,11 @@ function dispatch(plan) {
       shell: false,
       stdio: ['pipe', 'pipe', 'pipe'],
     });
+
+    // Allow external abort (kill step)
+    if (plan.signal) {
+      plan.signal.addEventListener('abort', () => killTree(child.pid), { once: true });
+    }
 
     // Pipe message via stdin then close (codex reads prompt from stdin when '-' is used)
     child.stdin.write(plan.message);

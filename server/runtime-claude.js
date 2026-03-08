@@ -32,19 +32,7 @@ function resolveClaudePath() {
 
 const CLAUDE_EXE = resolveClaudePath();
 
-/**
- * Kill an entire process tree.
- * Windows: taskkill /T /F (tree kill). Unix: negative pid (process group).
- */
-function killTree(pid) {
-  try {
-    if (process.platform === 'win32') {
-      execSync(`taskkill /PID ${pid} /T /F`, { stdio: 'ignore' });
-    } else {
-      process.kill(-pid, 'SIGKILL');
-    }
-  } catch {}
-}
+const killTree = require('./kill-tree');
 
 /**
  * Extract all text from a Claude assistant message content array.
@@ -104,6 +92,11 @@ function dispatch(plan) {
       shell: false,
       stdio: ['ignore', 'pipe', 'pipe'],  // stdin MUST be ignored on Windows
     });
+
+    // Allow external abort (kill step)
+    if (plan.signal) {
+      plan.signal.addEventListener('abort', () => killTree(child.pid), { once: true });
+    }
 
     let stderr = '';
     let settled = false;

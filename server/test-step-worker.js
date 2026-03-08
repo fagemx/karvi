@@ -492,6 +492,22 @@ function createMockEnvelope(overrides = {}) {
     assert.strictEqual(decision.review_feedback, 'Add unit tests', 'should use revision_notes as feedback');
   });
 
+  // Test 20: killStep / getActiveExecutions
+  console.log('\n=== killStep / getActiveExecutions ===\n');
+
+  await test('killStep returns not_running for unknown stepId', () => {
+    const worker = createStepWorker({ artifactStore, stepSchema, mgmt });
+    const result = worker.killStep('nonexistent:step');
+    assert.strictEqual(result.ok, false);
+    assert.strictEqual(result.reason, 'not_running');
+  });
+
+  await test('getActiveExecutions returns empty when no active steps', () => {
+    const worker = createStepWorker({ artifactStore, stepSchema, mgmt });
+    const execs = worker.getActiveExecutions();
+    assert.strictEqual(execs.length, 0);
+  });
+
   // Cleanup
   try {
     fs.rmSync(path.join(artifactStore.ARTIFACT_DIR, testRunId), { recursive: true, force: true });
