@@ -8,10 +8,12 @@
  * Usage: node server/test-step-worker.js
  */
 const assert = require('assert');
+const { execSync } = require('child_process');
+const os = require('os');
 const stepSchema = require('./step-schema');
 const artifactStore = require('./artifact-store');
 const mgmt = require('./management');
-const { createStepWorker, parseStepResult, buildStepMessage, recoverExpiredLocks, classifyError } = require('./step-worker');
+const { createStepWorker, parseStepResult, buildStepMessage, recoverExpiredLocks, classifyError, applyScopeGuard, isOutOfScope, revertFile } = require('./step-worker');
 
 let passed = 0;
 let failed = 0;
@@ -537,6 +539,106 @@ function createMockEnvelope(overrides = {}) {
 
   await test('cancelled → dispatched is NOT allowed (terminal)', () => {
     assert.ok(!mgmt.canTransitionTaskStatus('cancelled', 'dispatched'));
+  });
+
+  // ─── Scope guard tests ───────────────────────────────────
+
+  console.log('\n--- Scope Guard: isOutOfScope ---');
+
+  await test('isOutOfScope: deny match returns true', async () => {
+    assert.strictEqual(isOutOfScope('.claude/skills/foo.js', [], ['.claude/**']), true);
+  });
+
+  await test('isOutOfScope: deny miss returns false', async () => {
+    assert.strictEqual(isOutOfScope('server/foo.js', [], ['.claude/**']), false);
+  });
+
+  await test('isOutOfScope: deny takes priority over allow', async () => {
+    assert.strictEqual(isOutOfScope('.claude/CLAUDE.md', ['.claude/**'], ['.claude/**']), true);
+  });
+
+  await test('isOutOfScope: allow list — matching file in scope', async () => {
+    assert.strictEqual(isOutOfScope('server/foo.js', ['server/**'], []), false);
+  });
+
+  await test('isOutOfScope: allow list — non-matching file out of scope', async () => {
+    assert.strictEqual(isOutOfScope('index.html', ['server/**'], []), true);
+  });
+
+  await test('isOutOfScope: empty allow = allow all (only deny filters)', async () => {
+    assert.strictEqual(isOutOfScope('index.html', [], []), false);
+    assert.strictEqual(isOutOfScope('server/foo.js', [], []), false);
+  });
+
+  console.log('\n--- Scope Guard: applyScopeGuard ---');
+
+  await test('applyScopeGuard: default deny reverts .claude/** files', async () => {
+    // Create a temp git repo to test with
+    const tmpDir = path.join(os.tmpdir(), `scope-guard-test-${Date.now()}`);
+    fs.mkdirSync(tmpDir, { recursive: true });
+    const execOpts = { cwd: tmpDir, encoding: 'utf8', timeout: 5000 };
+    execSync('git init', execOpts);
+    execSync('git commit --allow-empty -m "init"', execOpts);
+
+    // Create out-of-scope file
+    fs.mkdirSync(path.join(tmpDir, '.claude'), { recursive: true });
+    fs.writeFileSync(path.join(tmpDir, '.claude', 'junk.md'), 'scope creep');
+    // Create in-scope file
+    fs.writeFileSync(path.join(tmpDir, 'server.js'), 'good change');
+
+    const files = ['?? .claude/junk.md', '?? server.js'];
+    const result = applyScopeGuard(tmpDir, null, files);
+
+    assert.deepStrictEqual(result.reverted, ['.claude/junk.md']);
+    assert.deepStrictEqual(result.kept, ['server.js']);
+    assert.strictEqual(fs.existsSync(path.join(tmpDir, '.claude', 'junk.md')), false);
+    assert.strictEqual(fs.existsSync(path.join(tmpDir, 'server.js')), true);
+
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  await test('applyScopeGuard: explicit deny + allow filters correctly', async () => {
+    const tmpDir = path.join(os.tmpdir(), `scope-guard-test2-${Date.now()}`);
+    fs.mkdirSync(tmpDir, { recursive: true });
+    const execOpts = { cwd: tmpDir, encoding: 'utf8', timeout: 5000 };
+    execSync('git init', execOpts);
+    execSync('git commit --allow-empty -m "init"', execOpts);
+
+    // In-scope
+    fs.mkdirSync(path.join(tmpDir, 'server'), { recursive: true });
+    fs.writeFileSync(path.join(tmpDir, 'server', 'foo.js'), 'ok');
+    // Out-of-scope (not in allow list)
+    fs.writeFileSync(path.join(tmpDir, 'package.json'), '{}');
+
+    const files = ['?? server/foo.js', '?? package.json'];
+    const result = applyScopeGuard(tmpDir, { allow: ['server/**'], deny: [] }, files);
+
+    assert.deepStrictEqual(result.kept, ['server/foo.js']);
+    assert.deepStrictEqual(result.reverted, ['package.json']);
+    assert.strictEqual(fs.existsSync(path.join(tmpDir, 'package.json')), false);
+
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  await test('applyScopeGuard: revert modified tracked file', async () => {
+    const tmpDir = path.join(os.tmpdir(), `scope-guard-test3-${Date.now()}`);
+    fs.mkdirSync(tmpDir, { recursive: true });
+    const execOpts = { cwd: tmpDir, encoding: 'utf8', timeout: 5000 };
+    execSync('git init', execOpts);
+    fs.writeFileSync(path.join(tmpDir, 'tracked.txt'), 'original');
+    execSync('git add tracked.txt', execOpts);
+    execSync('git commit -m "add tracked"', execOpts);
+
+    // Modify tracked file
+    fs.writeFileSync(path.join(tmpDir, 'tracked.txt'), 'modified by agent');
+
+    const files = [' M tracked.txt'];
+    const result = applyScopeGuard(tmpDir, { allow: ['server/**'], deny: [] }, files);
+
+    assert.deepStrictEqual(result.reverted, ['tracked.txt']);
+    assert.strictEqual(fs.readFileSync(path.join(tmpDir, 'tracked.txt'), 'utf8'), 'original');
+
+    fs.rmSync(tmpDir, { recursive: true, force: true });
   });
 
   // Cleanup

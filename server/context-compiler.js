@@ -95,6 +95,7 @@ function buildEnvelope(decision, runState, deps) {
     })(),
     model_hint: null,
     contract: task.contract || STEP_DEFAULT_CONTRACTS[stepType] || null,
+    scope_config: task.scope || null,
   };
 
   return envelope;
