@@ -48,7 +48,7 @@ function hasCycle(normalizedTasks) {
  */
 function normalizeTask(entry, repo) {
   if (entry.issue && typeof entry.issue === 'number') {
-    return {
+    const t = {
       id: `GH-${entry.issue}`,
       title: entry.title || `Issue #${entry.issue}`,
       assignee: entry.assignee || null,
@@ -62,9 +62,11 @@ function normalizeTask(entry, repo) {
       estimate: entry.estimate || null,
       target_repo: entry.target_repo || repo || null,
     };
+    if (entry.scope) t.scope = entry.scope;
+    return t;
   }
   if (entry.id && typeof entry.id === 'string') {
-    return {
+    const t = {
       id: entry.id,
       title: entry.title || entry.id,
       assignee: entry.assignee || null,
@@ -75,6 +77,8 @@ function normalizeTask(entry, repo) {
       estimate: entry.estimate || null,
       target_repo: entry.target_repo || repo || null,
     };
+    if (entry.scope) t.scope = entry.scope;
+    return t;
   }
   throw new Error(`task must have either 'issue' (number) or 'id' (string): ${JSON.stringify(entry)}`);
 }
@@ -206,6 +210,7 @@ module.exports = function projectsRoutes(req, res, helpers, deps) {
             };
             if (t.type) newTask.type = t.type;
             if (t.source) newTask.source = t.source;
+            if (t.scope) newTask.scope = t.scope;
             if (t.githubIssue) newTask.githubIssue = t.githubIssue;
             if (projectId) {
               newTask.projectId = projectId;
