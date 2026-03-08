@@ -246,6 +246,23 @@ function createStepWorker(deps) {
           helpers.writeBoard(failBoard);
           helpers.appendLog({ ts: helpers.nowIso(), event: 'step_dispatch_error', taskId: envelope.task_id, stepId: envelope.step_id, error: dispatchErr.message, duration_ms: dispatchDurationMs });
 
+          // Log diagnostic for dead steps
+          if (failStep.state === 'dead') {
+            console.log(`[step-worker] DEAD LETTER: ${envelope.step_id} after ${failStep.attempt} attempts`);
+            console.log(`[step-worker]   error: ${failStep.error}`);
+            console.log(`[step-worker]   errorKind: ${errorKind}`);
+            console.log(`[step-worker]   cwd: ${plan.workingDir || plan.cwd || 'none'}`);
+            console.log(`[step-worker]   runtime: ${runtimeHint || 'default'}`);
+            console.log(`[step-worker]   duration_ms: ${dispatchDurationMs}`);
+            helpers.appendLog({
+              ts: helpers.nowIso(), event: 'step_dead_diagnostic',
+              taskId: envelope.task_id, stepId: envelope.step_id,
+              attempt: failStep.attempt, error: failStep.error, errorKind,
+              cwd: plan.workingDir || plan.cwd || null, runtime: runtimeHint,
+              duration_ms: dispatchDurationMs,
+            });
+          }
+
           // Trigger kernel for dead steps — dead-letter routing, worktree cleanup, push notification
           if (failStep.state === 'dead' && deps.kernel) {
             const signal = { type: 'step_dead', data: { taskId: envelope.task_id, stepId: envelope.step_id } };
