@@ -806,6 +806,32 @@ function buildStepMessage(envelope, upstreamArtifacts, board, task) {
     return allowed.includes(sectionName);
   }
 
+  const RETRY_CHECKLISTS = {
+    plan: [
+      '- [ ] Check existing plan comment on issue: `gh issue view {issueNumber} --comments`',
+      '- [ ] If plan exists, review for completeness',
+      '- [ ] Only create new plan if missing or incomplete',
+      '- [ ] Focus on addressing the specific error',
+    ],
+    implement: [
+      '- [ ] Verify branch exists: `git branch --show-current`',
+      '- [ ] Check commits: `git log --oneline -5`',
+      '- [ ] Check PR status: `gh pr list --head "$(git branch --show-current)"`',
+      '- [ ] Continue from last successful state',
+      '- [ ] Focus on fixing the specific error',
+    ],
+    test: [
+      '- [ ] Review previous test failure output',
+      '- [ ] Fix specific failing tests',
+      '- [ ] Do not re-run passing tests unnecessarily',
+    ],
+    review: [
+      '- [ ] Check for existing review comment on PR',
+      '- [ ] If review exists, update rather than recreate',
+      '- [ ] Focus on addressing the specific error',
+    ],
+  };
+
   const STEP_SKILL_MAP = {
     plan: [
       `## Role`,
@@ -991,6 +1017,16 @@ function buildStepMessage(envelope, upstreamArtifacts, board, task) {
     if (envelope.retry_context.previous_error) lines.push(`  Previous error: ${envelope.retry_context.previous_error}`);
     if (envelope.retry_context.failure_mode) lines.push(`  Failure mode: ${envelope.retry_context.failure_mode}`);
     if (envelope.retry_context.remediation_hint) lines.push(`  Hint: ${envelope.retry_context.remediation_hint}`);
+    
+    lines.push('', '## Before Starting');
+    lines.push('Do NOT start over. Check existing work to avoid repeating:');
+    const checklist = RETRY_CHECKLISTS[envelope.step_type];
+    if (checklist) {
+      lines.push(...checklist.map(item => item.replace('{issueNumber}', issueNumber)));
+    } else {
+      lines.push('- [ ] Check what was already done');
+      lines.push('- [ ] Continue from where previous attempt stopped');
+    }
   }
 
   if (envelope.review_feedback) {
