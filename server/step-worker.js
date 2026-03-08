@@ -16,6 +16,10 @@ const { resolveRepoRoot } = require('./repo-resolver');
 const LOCK_GRACE_MS = 30_000; // 30s grace on top of step timeout
 
 const ERROR_PATTERNS = [
+  // Environment errors — non-retryable (fix environment before retrying)
+  { pattern: /ENOENT/i, kind: 'CONFIG' },
+  { pattern: /EACCES/i, kind: 'CONFIG' },
+
   // Dispatch error patterns (from err.message)
   { pattern: /idle for \d+s/i, kind: 'TEMPORARY' },
   { pattern: /exited with code/i, kind: 'PROVIDER' },

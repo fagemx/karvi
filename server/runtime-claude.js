@@ -76,6 +76,10 @@ function dispatch(plan) {
       ));
     }
     const workDir = plan.workingDir;
+    // Validate cwd exists before spawn (fail immediately, not after 300s timeout)
+    if (workDir && !fs.existsSync(workDir)) {
+      return reject(new Error(`ENOENT: working directory does not exist: ${workDir}`));
+    }
     const env = { ...process.env };
     delete env.CLAUDECODE;
 

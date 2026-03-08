@@ -92,6 +92,11 @@ function dispatch(plan) {
       try { plan.onActivity(); } catch {}
     }
 
+    // Validate cwd exists before spawn (fail immediately, not after 300s timeout)
+    if (!fs.existsSync(workDir)) {
+      return reject(new Error(`ENOENT: working directory does not exist: ${workDir}`));
+    }
+
     const env = { ...process.env };
 
     // Windows: .cmd shims must be invoked via cmd.exe
