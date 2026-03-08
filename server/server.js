@@ -75,7 +75,7 @@ const PUSH_TOKENS_PATH = path.join(DATA_DIR, 'push-tokens.json');
 const HOST = process.env.HOST || process.env.BIND_ADDRESS || undefined;
 
 const ctx = bb.createContext({
-  dir: ROOT,
+  dir: process.env.KARVI_PKG_DIR || ROOT,
   boardPath: path.join(DATA_DIR, 'board.json'),
   logPath: path.join(DATA_DIR, 'task-log.jsonl'),
   port: Number(process.env.PORT || 3461),

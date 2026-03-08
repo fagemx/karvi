@@ -1,8 +1,27 @@
 {
-  "name": "@fagemx/task-engine",
-  "version": "0.1.0",
+  "name": "@fagemx/karvi",
+  "version": "0.2.0",
   "description": "AI task orchestration engine — board + brief + multi-runtime dispatch",
   "main": "server/server.js",
+  "bin": {
+    "karvi": "bin/karvi.js"
+  },
+  "files": [
+    "bin/",
+    "server/",
+    "scripts/go.js",
+    "shared/",
+    "index.html",
+    "env.template"
+  ],
+  "engines": {
+    "node": ">=22"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/fagemx/karvi.git"
+  },
+  "homepage": "https://github.com/fagemx/karvi",
   "scripts": {
     "start": "node server/server.js",
     "gateway": "node server/gateway.js",

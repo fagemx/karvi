@@ -1,6 +1,6 @@
 # Opencode Dispatch 操作指南
 
-> 交接文件 — 2026-03-04（updated）
+> 交接文件 — 2026-03-09（updated）
 
 ## 架構總覽
 
@@ -44,12 +44,34 @@ Karvi Server (port 3461)
 
 ### 1. 全自動 Dispatch（推薦）
 
+**最快方式 — CLI 一行搞定：**
+
+```bash
+# 派一個 issue
+npm run go -- 279
+
+# 派多個 issue
+npm run go -- 276 288
+
+# 跳過確認
+npm run go -- 279 -y
+
+# 指定 skill
+npm run go -- 279 --skill pr
+
+# 指定 repo 路徑
+npm run go -- 138 --repo C:\ai_agent\edda
+```
+
+`npm run go` 自動抓 issue title、顯示預覽、確認後 POST `/api/projects`。
+
+**等效 curl（進階用法）：**
+
 ```bash
 # 確認 controls
 curl -s http://localhost:3461/api/controls | node -e "const d=JSON.parse(require('fs').readFileSync(0,'utf8')); console.log('worktrees:', d.use_worktrees, 'auto_dispatch:', d.auto_dispatch, 'step_pipeline:', d.use_step_pipeline, 'auto_merge:', d.auto_merge_on_approve)"
 
 # 建立任務（auto_dispatch 自動接手）
-# 注意：/api/project (singular) 仍可用但已 deprecated
 curl -X POST http://localhost:3461/api/projects \
   -H "Content-Type: application/json" \
   -d '{
@@ -200,8 +222,14 @@ cat server/artifacts/<run-id>/GH-XXX_plan.output.json
 ### 7. 手動 Reset Task（用 API）
 
 ```bash
-# 重新 dispatch（API 方式，不直接改 board.json）
+# 重新 dispatch 整個 task（API 方式，不直接改 board.json）
 curl -X POST http://localhost:3461/api/tasks/GH-XXX/dispatch
+
+# Reset 單一 step（dead/failed → queued，可重跑）
+curl -X POST http://localhost:3461/api/tasks/GH-XXX/steps/GH-XXX:implement/reset
+
+# Kill 正在執行的 step
+curl -X POST http://localhost:3461/api/tasks/GH-XXX/steps/GH-XXX:implement/kill
 ```
 
 **注意**：不要直接寫 `server/board.json` — server 會用記憶體中的版本覆蓋你的修改。所有操作透過 API。
@@ -228,9 +256,11 @@ curl -X POST http://localhost:3461/api/tasks/GH-XXX/dispatch
 
 | Step | 做什麼 | Skill | Contract | 預期時間 |
 |------|--------|-------|----------|---------|
-| **plan** | 讀 issue、研究 codebase、產出 plan | `issue-plan` | — | 2-5 分鐘 |
-| **implement** | 按 plan 寫 code、commit、推 branch、建 PR | `issue-action` | `{ deliverable: 'pr' }` | 3-10 分鐘 |
-| **review** | 自我審查 PR diff | `pr-review` | — | 1-3 分鐘 |
+| **plan** | 讀 issue、研究 codebase、產出 plan | `issue-plan` | — | 1-3 分鐘 |
+| **implement** | 按 plan 寫 code、commit、推 branch、建 PR | `issue-action` | `{ deliverable: 'pr' }` | 2-5 分鐘 |
+| **review** | 自我審查 PR diff | `pr-review` | — | 1-2 分鐘 |
+
+**端到端實測**：單個 issue 全 pipeline（plan→implement→review→auto-merge）約 6-10 分鐘。
 
 ### Step Instruction 結構（Claude Code 模式）
 
@@ -292,7 +322,7 @@ curl -X POST http://localhost:3461/api/controls \
 | Agent 不輸出 prUrl | **已修** | implement instruction 明確要求 STEP_RESULT 帶 prUrl |
 | Step instruction 太簡陋 | **已修** | 改為 Role + Required Actions + Deliverable 結構 |
 | Implement 沒有 contract | **已修** | `STEP_DEFAULT_CONTRACTS: { implement: { deliverable: 'pr' } }` |
-| Opencode idle timeout | 部分修復 | 300s idle → 被殺。opencode 執行 tool 時不產生 stdout，timer 不 reset |
+| Opencode idle timeout | **已修** | opencode 發 `tool_use` 事件（非 `tool_call`），runtime 現已正確處理，tool 執行期 timeout 提升至 base timeout |
 | Server 重啟後 board 覆蓋 | 已知 | Server 記憶體版本覆蓋 disk 版本，不要直接改 board.json |
 | full pipeline test flaky | 已知 | `test-bridge.js` 的 full pipeline test 偶爾 timeout |
 
@@ -306,6 +336,9 @@ curl -X POST http://localhost:3461/api/controls \
 | `git add .` 加了 `.tmp/` | `.gitignore` 沒有 `.tmp/` | 已加入 `.gitignore` |
 | Agent summary 有 PR URL 但 task.pr 空 | `findPrUrl` 只看 payload | 已加 summary fallback |
 | Ollama 本地模型太慢 | 300s timeout 殺掉 | 用雲端 API（GLM-5）或調 `step_timeout_sec` |
+| opencode `tool_use` vs `tool_call` | runtime 只處理 `tool_call`，267 events/session 被忽略 | 已修，`tool_use` + `tool_call` 都處理 |
+| spawn ENOENT 誤報 timeout | worktree 目錄不存在，spawn 瞬間失敗但等 300s 才發現 | 已修，dispatch 前驗 cwd + ENOENT 歸類 CONFIG（不重試） |
+| worktree 消失後 dispatch 失敗 | cancel 刪 worktree 但 redispatch 不重建 | 已修，step-worker 自動重建缺失 worktree |
 | 跨專案 worktree 建錯地方 | `target_repo` 沒正確傳遞 | 已修（GH-250），用 `/api/projects` + `target_repo` |
 | 發新 task 覆蓋整個 board | 舊 `/api/project` 用 `=` 覆寫 taskPlan | 已修（GH-250），改為 merge 模式 |
 | `/api/project` vs `/api/projects` | 兩個只差一個 s 的 endpoint | 已合併（GH-251），用 `/api/projects` |

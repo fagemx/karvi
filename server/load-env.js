@@ -3,7 +3,10 @@
 const fs = require('fs');
 const path = require('path');
 
-const envPath = path.resolve(__dirname, '..', '.env');
+// Check cwd first (global install), then package root (local dev)
+const cwdEnv = path.resolve(process.cwd(), '.env');
+const pkgEnv = path.resolve(__dirname, '..', '.env');
+const envPath = fs.existsSync(cwdEnv) ? cwdEnv : pkgEnv;
 if (fs.existsSync(envPath)) {
   for (const line of fs.readFileSync(envPath, 'utf8').split('\n')) {
     const trimmed = line.trim();
