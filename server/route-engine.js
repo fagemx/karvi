@@ -94,11 +94,13 @@ function isBudgetExceeded(budget) {
 const MAX_REVISION_CYCLES = 2;
 
 function needsRevision(agentOutput) {
+  // Structured status takes priority — agent explicitly said "needs_revision"
+  if (agentOutput.status === 'needs_revision') return true;
   const text = [agentOutput.summary, agentOutput.failure?.failure_signature].filter(Boolean).join(' ').toLowerCase();
   // "Approve with nits" is not actionable — skip revision
   if (/approve/i.test(text) && !/request.changes/i.test(text)) return false;
-  // Explicit "request changes" verdict
-  if (/request.changes/i.test(text)) return true;
+  // Explicit "request changes" or "changes requested" verdict
+  if (/request.changes|changes\s+requested/i.test(text)) return true;
   // High/critical severity findings (medium alone is not worth a revision cycle)
   if (/\bhigh\b.*\bfind/i.test(text) || /\bcritical\b.*\bfind/i.test(text)) return true;
   return false;
@@ -159,8 +161,8 @@ function decideNext(agentOutput, runState) {
       next_step: null, retry: null, human_review: null };
   }
 
-  // 4. Succeeded → find next step
-  if (agentOutput.status === 'succeeded') {
+  // 4. Succeeded (or needs_revision — review completed but wants changes) → find next step
+  if (agentOutput.status === 'succeeded' || agentOutput.status === 'needs_revision') {
     const stepTypes = steps.map(s => s.type);
     const currentIdx = stepTypes.indexOf(fromStep?.type);
     const nextIdx = currentIdx + 1;
@@ -179,7 +181,7 @@ function decideNext(agentOutput, runState) {
           return { ...base, action: 'revision', rule: 'review_needs_fix', confidence: 0.9,
             retry: null, human_review: null,
             next_step: { step_id: targetStep.step_id, step_type: targetStep.type, priority: 0 },
-            review_feedback: agentOutput.summary || null };
+            review_feedback: agentOutput.revision_notes || agentOutput.summary || null };
         }
         // Max cycles reached — accept as-is
       }
@@ -211,5 +213,6 @@ module.exports = {
   MAX_REVISION_CYCLES,
   classifyFailure,
   isBudgetExceeded,
+  needsRevision,
   decideNext,
 };

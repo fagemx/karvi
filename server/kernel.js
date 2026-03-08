@@ -85,7 +85,7 @@ function createKernel(deps) {
     const agentOutput = {
       run_id: step.run_id,
       step_id: stepId,
-      status: step.state === 'succeeded' ? 'succeeded' : 'failed',
+      status: output?.status || (step.state === 'succeeded' ? 'succeeded' : 'failed'),
       failure: output?.failure || (step.error ? { failure_signature: step.error, retryable: true } : null),
       summary: output?.summary || null,
       error: step.error,

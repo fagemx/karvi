@@ -213,7 +213,8 @@ function createStepWorker(deps) {
 
       if (stepResult) {
         // Structured output from agent
-        status = stepResult.status === 'succeeded' ? 'succeeded' : 'failed';
+        const validStatuses = ['succeeded', 'needs_revision'];
+        status = validStatuses.includes(stepResult.status) ? stepResult.status : 'failed';
         summary = stepResult.summary || replyText?.slice(0, 500) || null;
         failure = status === 'failed' ? {
           failure_signature: stepResult.error || replyText?.slice(0, 200),
@@ -319,6 +320,7 @@ function createStepWorker(deps) {
       post_check: postCheckResult,
       payload,
       sessionId: sessionId || null,
+      ...(stepResult?.revision_notes ? { revision_notes: stepResult.revision_notes } : {}),
       ...(preflightResult.alreadyDone ? { skipped: true, preflight: preflightResult } : {}),
     };
     artifactStore.writeArtifact(envelope.run_id, envelope.step_id, 'output', agentOutput);
@@ -333,7 +335,7 @@ function createStepWorker(deps) {
     }
 
     if (latestStep && latestStep.state === 'running') {
-      const newState = agentOutput.status === 'succeeded' ? 'succeeded' : 'failed';
+      const newState = (agentOutput.status === 'succeeded' || agentOutput.status === 'needs_revision') ? 'succeeded' : 'failed';
       const errorKind = newState === 'failed' ? classifyError(null, agentOutput) : null;
       stepSchema.transitionStep(latestStep, newState, {
         output_ref: artifactStore.artifactPath(envelope.run_id, envelope.step_id, 'output'),
@@ -785,6 +787,12 @@ function buildStepMessage(envelope, upstreamArtifacts, board, task) {
       `3. Run the four-point check: Scope, Reality, Testing, YAGNI`,
       `4. Post your review as a PR comment: \`gh pr comment <number> --body "..."\``,
       `5. Include a clear verdict: **LGTM** or **Changes Requested**`,
+      ``,
+      `## STEP_RESULT Mapping`,
+      `Your final STEP_RESULT status MUST match your verdict:`,
+      `- LGTM (no blocking issues): STEP_RESULT:{"status":"succeeded","summary":"LGTM — ..."}`,
+      `- Changes Requested: STEP_RESULT:{"status":"needs_revision","summary":"Changes Requested — ...","revision_notes":"what to fix"}`,
+      `- Critical blocker (security, data loss): STEP_RESULT:{"status":"failed","summary":"Blocker — ..."}`,
       ``,
       `## Deliverable`,
       `A review comment posted on the PR with a clear verdict.`,
