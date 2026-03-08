@@ -72,7 +72,6 @@ function createStepWorker(deps) {
       console.log(`[step-worker] worktree missing for ${task.id}: ${task.worktreeDir}, rebuilding`);
       try {
         const worktree = require('./worktree');
-        const { resolveRepoRoot } = require('./repo-resolver');
         const repoRoot = resolveRepoRoot(task, board) || path.resolve(__dirname, '..');
         const wt = worktree.createWorktree(repoRoot, task.id);
         task.worktreeDir = wt.worktreePath;
@@ -205,7 +204,7 @@ function createStepWorker(deps) {
             elapsed_ms: 0,
             dispatched_at: new Date().toISOString(),
             cwd: plan.workingDir || plan.cwd || null,
-            runtime: rt.name || runtimeHint || 'unknown',
+            runtime: runtimeHint || 'unknown',
           };
           helpers.writeBoard(initBoard);
         }

@@ -267,13 +267,17 @@ const retryPoller = setInterval(() => {
         // Safety net: recover steps stuck in 'running' with expired locks
         if (step.state === 'running' && step.lock_expires_at && step.lock_expires_at <= now) {
           // Activity-aware: if step was active recently, renew lock instead of killing
+          // But cap total runtime at 3x timeout to prevent infinite renewal
           const lastActivity = step.progress?.last_activity;
-          if (lastActivity) {
+          const dispatchedAt = step.progress?.dispatched_at;
+          const timeout = step.retry_policy?.timeout_ms || 300_000;
+          const maxTotalMs = timeout * 3;
+          const totalElapsed = dispatchedAt ? Date.now() - new Date(dispatchedAt).getTime() : 0;
+          if (lastActivity && totalElapsed < maxTotalMs) {
             const silentMs = Date.now() - new Date(lastActivity).getTime();
             const graceMs = 120_000; // 2 min grace after last activity
             if (silentMs < graceMs) {
-              console.log(`[retry-poller] ${step.step_id} lock expired but active ${Math.round(silentMs/1000)}s ago, renewing`);
-              const timeout = step.retry_policy?.timeout_ms || 300_000;
+              console.log(`[retry-poller] ${step.step_id} lock expired but active ${Math.round(silentMs/1000)}s ago, renewing (total: ${Math.round(totalElapsed/1000)}s/${Math.round(maxTotalMs/1000)}s)`);
               step.lock_expires_at = new Date(Date.now() + timeout + 30_000).toISOString();
               writeBoard(board);
               return;
