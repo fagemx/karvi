@@ -54,6 +54,19 @@ module.exports = function controlsRoutes(req, res, helpers, deps) {
                 }
               }
             }
+            else if (key === 'max_concurrent_by_type') {
+              if (val === null || typeof val !== 'object') {
+                board.controls[key] = null;
+              } else {
+                const valid = {};
+                for (const [stepType, limit] of Object.entries(val)) {
+                  if (typeof limit === 'number' && Number.isFinite(limit) && limit > 0) {
+                    valid[stepType] = Math.max(1, Math.min(10, Math.floor(limit)));
+                  }
+                }
+                board.controls[key] = Object.keys(valid).length > 0 ? valid : null;
+              }
+            }
           }
         }
         helpers.writeBoard(board);

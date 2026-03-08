@@ -128,6 +128,25 @@ function createKernel(deps) {
     // Execute decision
     switch (decision.action) {
       case 'next_step': {
+        const nextStepType = decision.next_step?.step_type;
+        
+        // Per-step-type concurrency check
+        const ctrl = mgmt.getControls(latestBoard);
+        const limit = ctrl.max_concurrent_by_type?.[nextStepType];
+        if (limit) {
+          let running = 0;
+          for (const t of (latestBoard.taskPlan?.tasks || [])) {
+            for (const s of (t.steps || [])) {
+              if (s.type === nextStepType && s.state === 'running') running++;
+            }
+          }
+          if (running >= limit) {
+            console.log(`[kernel] ${nextStepType} concurrency limit reached (${running}/${limit}), queuing step`);
+            helpers.writeBoard(latestBoard);
+            return;
+          }
+        }
+        
         const envelope = contextCompiler.buildEnvelope(decision, runState, deps);
         if (!envelope) break;
         // Write input artifact

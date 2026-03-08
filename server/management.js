@@ -25,6 +25,7 @@ const DEFAULT_CONTROLS = {
   usage_limits: null,            // { dispatches_per_month, runtime_sec_per_month, tokens_per_month }
   usage_alert_threshold: 0.8,    // Alert when usage > 80% of limit
   max_concurrent_tasks: 2,       // max in-progress tasks at once (worktree or not)
+  max_concurrent_by_type: null,  // { plan: 3, implement: 2, review: 2, test: 1 } or null
   use_worktrees: true,           // create git worktree per task for parallel execution
   target_repo: null,             // absolute path to target repo (null = karvi itself / dogfood mode)
   repo_map: {},                  // GitHub slug → local absolute path, e.g. { "owner/repo": "C:/path/to/repo" }
