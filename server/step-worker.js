@@ -8,7 +8,7 @@
  * Extracted from kernel.js:dispatchStep() (issue #92).
  * Kernel = routing decisions, StepWorker = execution.
  */
-const { execSync } = require('child_process');
+const { execSync, execFileSync } = require('child_process');
 const fs = require('fs');
 const path = require('path');
 const mgmt = require('./management');
@@ -556,7 +556,7 @@ function revertFile(workDir, filePath, statusCode) {
     }
   } else {
     // Modified or deleted — restore from HEAD
-    execSync(`git checkout -- "${filePath}"`, opts);
+    execFileSync('git', ['checkout', '--', filePath], opts);
   }
 }
 
