@@ -605,7 +605,7 @@ module.exports = function tasksRoutes(req, res, helpers, deps) {
         if (!board.taskPlan.createdAt) board.taskPlan.createdAt = payload.createdAt || helpers.nowIso();
 
         const ACTIVE_STATUSES = ['in_progress', 'dispatched'];
-        const SAFE_FIELDS = ['title', 'description', 'assignee', 'depends', 'spec', 'skill', 'estimate', 'target_repo'];
+        const SAFE_FIELDS = ['title', 'description', 'assignee', 'depends', 'spec', 'skill', 'estimate', 'target_repo', 'scope'];
         const incomingTasks = Array.isArray(payload.tasks) ? payload.tasks : [];
         const existingIds = new Set(board.taskPlan.tasks.map(t => t.id));
         for (const t of incomingTasks) {
@@ -618,7 +618,21 @@ module.exports = function tasksRoutes(req, res, helpers, deps) {
             }
             continue;
           }
-          board.taskPlan.tasks.push(t);
+          const newTask = {
+            id: t.id,
+            title: t.title,
+            description: t.description || '',
+            assignee: t.assignee || null,
+            depends: t.depends || [],
+            status: (t.depends?.length > 0) ? 'pending' : 'dispatched',
+            spec: t.spec || null,
+            skill: t.skill || null,
+            estimate: t.estimate || null,
+            target_repo: t.target_repo || null,
+            history: [{ ts: helpers.nowIso(), status: (t.depends?.length > 0) ? 'pending' : 'dispatched', reason: 'api_created' }],
+          };
+          if (t.scope) newTask.scope = t.scope;
+          board.taskPlan.tasks.push(newTask);
         }
 
         helpers.writeBoard(board);
