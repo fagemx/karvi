@@ -184,6 +184,97 @@ async function runTests() {
       fail('Backward compatible', `testTask.steps=${JSON.stringify(testTask?.steps)}, others with steps=${otherTasks.filter(t => t.steps).length}`);
     }
   }
+  // ─── Step Reset Tests (#285) ───────────────────────────────
+
+  // Setup: get review step into dead state by exhausting retries
+  // transitionStep auto-increments attempt on each failed; at max_attempts(3) → dead
+  {
+    // Attempt 1: queued → running → failed (attempt becomes 1, auto-retries to queued)
+    await patch('/api/tasks/T-STEP-TEST/steps/T-STEP-TEST:review', { state: 'running' });
+    await patch('/api/tasks/T-STEP-TEST/steps/T-STEP-TEST:review', { state: 'failed', error: 'attempt 1' });
+    // Attempt 2: queued → running → failed (attempt becomes 2, auto-retries to queued)
+    await patch('/api/tasks/T-STEP-TEST/steps/T-STEP-TEST:review', { state: 'running' });
+    await patch('/api/tasks/T-STEP-TEST/steps/T-STEP-TEST:review', { state: 'failed', error: 'attempt 2' });
+    // Attempt 3: queued → running → failed (attempt becomes 3 >= max_attempts → dead)
+    await patch('/api/tasks/T-STEP-TEST/steps/T-STEP-TEST:review', { state: 'running' });
+    await patch('/api/tasks/T-STEP-TEST/steps/T-STEP-TEST:review', { state: 'failed', error: 'attempt 3' });
+  }
+
+  // Test 8: Reset dead step → queued succeeds
+  {
+    const res = await post('/api/tasks/T-STEP-TEST/steps/T-STEP-TEST:review/reset', {});
+    if (res.ok && res.new_state === 'queued' && res.from === 'dead') {
+      ok('POST reset dead → queued succeeds');
+    } else {
+      fail('POST reset dead → queued', JSON.stringify(res));
+    }
+  }
+
+  // Test 9: Verify reset step is now queued with cleared fields
+  {
+    const res = await get('/api/tasks/T-STEP-TEST/steps');
+    const step = (res.steps || []).find(s => s.step_id === 'T-STEP-TEST:review');
+    if (step && step.state === 'queued' && step.attempt === 0 && step.error === null) {
+      ok('Reset step has state=queued, attempt=0, error=null');
+    } else {
+      fail('Reset step fields', JSON.stringify(step));
+    }
+  }
+
+  // Test 10: Reset succeeded step → rejected (409)
+  {
+    const res = await post('/api/tasks/T-STEP-TEST/steps/T-STEP-TEST:plan/reset', {});
+    if (res.error && res.error.includes('can only reset')) {
+      ok('POST reset succeeded step returns 409');
+    } else {
+      fail('POST reset succeeded step', JSON.stringify(res));
+    }
+  }
+
+  // Test 11: Reset cancelled step → queued succeeds
+  {
+    // Cancel review, then reset it
+    await patch('/api/tasks/T-STEP-TEST/steps/T-STEP-TEST:review', { state: 'running' });
+    await patch('/api/tasks/T-STEP-TEST/steps/T-STEP-TEST:review', { state: 'cancelled', error: 'test cancel' });
+    const res = await post('/api/tasks/T-STEP-TEST/steps/T-STEP-TEST:review/reset', {});
+    if (res.ok && res.new_state === 'queued' && res.from === 'cancelled') {
+      ok('POST reset cancelled → queued succeeds');
+    } else {
+      fail('POST reset cancelled → queued', JSON.stringify(res));
+    }
+  }
+
+  // Test 12: Reset nonexistent step → 404
+  {
+    const res = await post('/api/tasks/T-STEP-TEST/steps/T-STEP-TEST:nonexistent/reset', {});
+    if (res.error && res.error.includes('not found')) {
+      ok('POST reset nonexistent step returns 404');
+    } else {
+      fail('POST reset nonexistent step', JSON.stringify(res));
+    }
+  }
+
+  // Test 13: Reset step on nonexistent task → 404
+  {
+    const res = await post('/api/tasks/FAKE-TASK/steps/FAKE:plan/reset', {});
+    if (res.error && res.error.includes('not found')) {
+      ok('POST reset on nonexistent task returns 404');
+    } else {
+      fail('POST reset nonexistent task', JSON.stringify(res));
+    }
+  }
+
+  // Test 14: Reset signal emitted
+  {
+    const signals = await get('/api/signals');
+    const resetSignals = (Array.isArray(signals) ? signals : [])
+      .filter(s => s.type === 'step_reset');
+    if (resetSignals.length >= 1) {
+      ok('step_reset signal emitted');
+    } else {
+      fail('step_reset signal', `expected >= 1, got ${resetSignals.length}`);
+    }
+  }
 }
 
 (async () => {

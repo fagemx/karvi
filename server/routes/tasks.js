@@ -1207,6 +1207,71 @@ module.exports = function tasksRoutes(req, res, helpers, deps) {
     return json(res, 200, { ok: true, step_id: stepId, new_state: 'cancelled' });
   }
 
+  // POST /api/tasks/:id/steps/:stepId/reset — reset a dead/failed/cancelled step to queued
+  const stepResetMatch = req.url.match(/^\/api\/tasks\/([^/]+)\/steps\/([^/]+)\/reset$/);
+  if (req.method === 'POST' && stepResetMatch) {
+    const taskId = decodeURIComponent(stepResetMatch[1]);
+    const stepId = decodeURIComponent(stepResetMatch[2]);
+
+    const board = helpers.readBoard();
+    const task = (board.taskPlan?.tasks || []).find(t => t.id === taskId);
+    if (!task) return json(res, 404, { error: `Task ${taskId} not found` });
+
+    const step = (task.steps || []).find(s => s.step_id === stepId);
+    if (!step) return json(res, 404, { error: `Step ${stepId} not found` });
+
+    // Only allow reset from terminal states (not succeeded — that's intentionally final)
+    const RESETTABLE = ['dead', 'failed', 'cancelled'];
+    if (!RESETTABLE.includes(step.state)) {
+      return json(res, 409, { error: `Step is ${step.state}, can only reset dead/failed/cancelled steps` });
+    }
+
+    const fromState = step.state;
+
+    // Reset step fields
+    step.state = 'queued';
+    step.attempt = 0;
+    step.error = null;
+    step.completed_at = null;
+    step.started_at = null;
+    step.locked_by = null;
+    step.lock_expires_at = null;
+    step.output_ref = null;
+    step.scheduled_at = helpers.nowIso();
+
+    // Unblock task only if it was blocked due to dead/failed step (not dependency blocks)
+    let taskUnblocked = false;
+    const blockerReason = task.blocker?.reason || '';
+    if (task.status === 'blocked' && (blockerReason.includes('Dead letter') || blockerReason.includes('dead') || blockerReason.includes('failed'))) {
+      task.status = 'in_progress';
+      task.blocker = null;
+      taskUnblocked = true;
+      task.history = task.history || [];
+      task.history.push({ ts: helpers.nowIso(), status: 'in_progress', from: 'blocked', by: 'step_reset' });
+    }
+
+    // Emit signal
+    mgmt.ensureEvolutionFields(board);
+    board.signals.push({
+      id: helpers.uid('sig'), ts: helpers.nowIso(), by: 'user',
+      type: 'step_reset',
+      content: `${taskId} step ${stepId} ${fromState} → queued (reset)`,
+      refs: [taskId],
+      data: { taskId, stepId, from: fromState, to: 'queued', taskUnblocked },
+    });
+    if (board.signals.length > 500) board.signals = board.signals.slice(-500);
+
+    helpers.writeBoard(board);
+    helpers.appendLog({ ts: helpers.nowIso(), event: 'step_reset', taskId, stepId, from: fromState });
+
+    // Trigger auto-dispatch if task was unblocked
+    if (taskUnblocked) {
+      setImmediate(() => tryAutoDispatch(taskId, deps, helpers));
+    }
+
+    return json(res, 200, { ok: true, step_id: stepId, from: fromState, new_state: 'queued', task_unblocked: taskUnblocked });
+  }
+
   // POST /api/tasks/:id/steps/dispatch-batch — dispatch multiple steps in parallel
   const batchDispatchMatch = req.url.match(/^\/api\/tasks\/([^/]+)\/steps\/dispatch-batch$/);
   if (req.method === 'POST' && batchDispatchMatch) {
