@@ -188,6 +188,15 @@ function dispatchTask(task, board, deps, helpers, opts = {}) {
 
   // --- Phase 2: Step pipeline (if enabled) ---
   if (ctrl.use_step_pipeline && deps.stepWorker) {
+    // Per-step-type concurrency check for step pipeline
+    const firstStepType = task.pipeline?.[0] || 'plan';
+    if (!canDispatchStepType(firstStepType, board, mgmt)) {
+      _dispatchLocks.delete(taskId);
+      const running = countRunningStepsByType(firstStepType, board);
+      console.log(`[dispatchTask:${taskId}] skip: ${firstStepType} concurrency ${running}/${ctrl.max_concurrent_by_type?.[firstStepType]}`);
+      return { dispatched: false, reason: `${firstStepType} concurrency limit reached` };
+    }
+    
     console.log(`[dispatchTask:${taskId}] step-pipeline via ${source}`);
     const runId = helpers.uid('run');
     task.steps = mgmt.generateStepsForTask(task, runId, task.pipeline || null, board);
@@ -391,6 +400,30 @@ function dispatchTask(task, board, deps, helpers, opts = {}) {
   return { dispatched: true, planId: plan.planId, mode: 'legacy' };
 }
 
+// --- Per-step-type concurrency helpers ---
+function countRunningStepsByType(stepType, board) {
+  let count = 0;
+  const tasks = board?.taskPlan?.tasks || [];
+  for (let i = 0; i < tasks.length; i++) {
+    const steps = tasks[i].steps;
+    if (!steps) continue;
+    for (let j = 0; j < steps.length; j++) {
+      if (steps[j].type === stepType && steps[j].state === 'running') {
+        count++;
+      }
+    }
+  }
+  return count;
+}
+
+function canDispatchStepType(stepType, board, mgmt) {
+  const ctrl = mgmt.getControls(board);
+  const limit = ctrl.max_concurrent_by_type?.[stepType];
+  if (!limit) return true;
+  const running = countRunningStepsByType(stepType, board);
+  return running < limit;
+}
+
 // --- Auto-dispatch: automatically dispatch tasks when auto_dispatch control is enabled ---
 function tryAutoDispatch(taskId, deps, helpers) {
   const { mgmt } = deps;
@@ -441,6 +474,16 @@ function tryAutoDispatch(taskId, deps, helpers) {
         console.log(`[auto-dispatch:${taskId}] skip: project concurrency ${projectInProgress}/${project.concurrency}`);
         return;
       }
+    }
+  }
+
+  // Per-step-type concurrency gate (if using step pipeline)
+  if (ctrl.use_step_pipeline) {
+    const firstStepType = 'plan';
+    if (!canDispatchStepType(firstStepType, board, mgmt)) {
+      const running = countRunningStepsByType(firstStepType, board);
+      console.log(`[auto-dispatch:${taskId}] skip: ${firstStepType} concurrency ${running}/${ctrl.max_concurrent_by_type?.[firstStepType]}`);
+      return;
     }
   }
 
@@ -1328,6 +1371,17 @@ module.exports = function tasksRoutes(req, res, helpers, deps) {
               results.push({ step_id: step.step_id, status: 'skipped', reason: `state is ${currentStep?.state}` });
               continue;
             }
+            
+            // Per-step-type concurrency check
+            const ctrl = mgmt.getControls(currentBoard);
+            if (ctrl.max_concurrent_by_type?.[step.type]) {
+              const running = countRunningStepsByType(step.type, currentBoard);
+              if (running >= ctrl.max_concurrent_by_type[step.type]) {
+                results.push({ step_id: step.step_id, status: 'skipped', reason: `${step.type} concurrency limit (${running}/${ctrl.max_concurrent_by_type[step.type]})` });
+                continue;
+              }
+            }
+            
             deps.stepSchema.transitionStep(currentStep, 'running', {
               locked_by: 'batch-dispatch',
               input_ref: deps.artifactStore.artifactPath(envelope.run_id, envelope.step_id, 'input'),
