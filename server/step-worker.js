@@ -191,6 +191,26 @@ function createStepWorker(deps) {
           helpers.writeBoard(pgBoard);
         } catch {}
       };
+      // Write initial progress before spawn (so progress is never undefined)
+      try {
+        const initBoard = helpers.readBoard();
+        const initTask = (initBoard.taskPlan?.tasks || []).find(t => t.id === envelope.task_id);
+        const initStep = initTask?.steps?.find(s => s.step_id === envelope.step_id);
+        if (initStep && initStep.state === 'running') {
+          initStep.progress = {
+            tool_calls: 0,
+            tokens: null,
+            last_tool: null,
+            last_activity: new Date().toISOString(),
+            elapsed_ms: 0,
+            dispatched_at: new Date().toISOString(),
+            cwd: plan.workingDir || plan.cwd || null,
+            runtime: rt.name || runtimeHint || 'unknown',
+          };
+          helpers.writeBoard(initBoard);
+        }
+      } catch {}
+
       let result;
       const ac = new AbortController();
       activeExecutions.set(envelope.step_id, { abort: () => ac.abort(), startedAt: Date.now() });
