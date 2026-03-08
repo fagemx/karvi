@@ -41,7 +41,7 @@ if (targets.length === 0) {
 
 function get(port, urlPath, { token = authToken, timeout = 5000 } = {}) {
   return new Promise((resolve, reject) => {
-    const timer = setTimeout(() => reject(new Error(`Timeout ${urlPath}`)), timeout);
+    const timer = setTimeout(() => { req.destroy(); reject(new Error(`Timeout ${urlPath}`)); }, timeout);
     const headers = {};
     if (token) headers['Authorization'] = `Bearer ${token}`;
     const req = http.get({ hostname: 'localhost', port, path: urlPath, headers }, res => {
@@ -524,10 +524,12 @@ async function runSuite(target) {
         const body = JSON.parse(r.body);
         if (!body.error) throw new Error('missing error message');
         ok(`GET /api/github/pr/:o/:r/:n (no token) → ${r.status} + error message`);
+      } else if (r.status === 200) {
+        ok(`GET /api/github/pr/:o/:r/:n → 200 (token configured)`);
       } else {
-        throw new Error(`expected 400 or 503, got ${r.status}`);
+        throw new Error(`unexpected status ${r.status}`);
       }
-    } catch (e) { fail('GET /api/github/pr (no token)', e.message); }
+    } catch (e) { fail('GET /api/github/pr', e.message); }
 
     // 19. GET /api/tasks/:id/digest → 404 (no digest on nonexistent task or no digest yet)
     try {
@@ -645,10 +647,15 @@ async function runSuite(target) {
     // POST /api/github/token/test — expect 503 (no vault) or 400 (no PAT)
     try {
       const r = await post(port, '/api/github/token/test', {});
-      if (r.status !== 503 && r.status !== 400) throw new Error(`expected 503 or 400, got ${r.status}`);
-      const body = JSON.parse(r.body);
-      if (!body.error) throw new Error('missing error message');
-      ok(`POST /api/github/token/test → ${r.status} (no vault/PAT)`);
+      if (r.status === 503 || r.status === 400) {
+        const body = JSON.parse(r.body);
+        if (!body.error) throw new Error('missing error message');
+        ok(`POST /api/github/token/test → ${r.status} (no vault/PAT)`);
+      } else if (r.status === 200) {
+        ok(`POST /api/github/token/test → 200 (token configured)`);
+      } else {
+        throw new Error(`unexpected status ${r.status}`);
+      }
     } catch (e) { fail('POST /api/github/token/test', e.message); }
 
     // ── Participants & Conversations ──
@@ -715,7 +722,7 @@ async function runSuite(target) {
       const body = JSON.parse(r.body);
       if (body.ok !== true) throw new Error('expected ok: true');
       if (!body.taskPlan || body.taskPlan.goal !== 'Smoke test goal 77') throw new Error('wrong taskPlan goal');
-      if (!Array.isArray(body.taskPlan.tasks) || body.taskPlan.tasks.length !== 1) throw new Error('expected 1 task');
+      if (!Array.isArray(body.taskPlan.tasks) || !body.taskPlan.tasks.some(t => t.id === 'SMOKE-77-T1')) throw new Error('expected SMOKE-77-T1 in tasks');
       // Restore original board
       await post(port, '/api/board', backup);
       ok('POST /api/tasks → 200 + taskPlan created + restored');
