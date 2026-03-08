@@ -298,6 +298,7 @@ module.exports = function chatRoutes(req, res, helpers, deps) {
 
         const participant = { id, type, displayName };
         if (type === 'agent') participant.agentId = agentId;
+        board.participants = board.participants || [];
         board.participants.push(participant);
 
         const conversationId = String(payload.conversationId || '').trim();
