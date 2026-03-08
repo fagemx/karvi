@@ -431,6 +431,67 @@ function createMockEnvelope(overrides = {}) {
     assert.ok(message.includes('Full output: artifacts/run1/T-UP1_plan.output.json'), 'should include output_ref');
   });
 
+  // Test 16: review step instruction includes STEP_RESULT mapping for needs_revision
+  await test('buildStepMessage review step includes needs_revision mapping', () => {
+    const envelope = createMockEnvelope({ step_type: 'review' });
+    const message = buildStepMessage(envelope);
+    assert.ok(message.includes('needs_revision'), 'review instruction should mention needs_revision status');
+    assert.ok(message.includes('STEP_RESULT Mapping'), 'review instruction should have STEP_RESULT Mapping section');
+    assert.ok(message.includes('revision_notes'), 'review instruction should mention revision_notes field');
+  });
+
+  // Test 17: parseStepResult passes through needs_revision status
+  await test('parseStepResult preserves needs_revision status', () => {
+    const stdout = 'STEP_RESULT:{"status":"needs_revision","summary":"Changes Requested — missing tests","revision_notes":"Add unit tests for the new helper"}';
+    const result = parseStepResult(stdout);
+    assert.strictEqual(result.status, 'needs_revision');
+    assert.ok(result.summary.includes('Changes Requested'));
+    assert.strictEqual(result.revision_notes, 'Add unit tests for the new helper');
+  });
+
+  // Test 18: route-engine needsRevision recognizes needs_revision status
+  console.log('\n=== route-engine needsRevision() ===\n');
+
+  const { needsRevision, decideNext } = require('./route-engine');
+
+  await test('needsRevision returns true for status needs_revision', () => {
+    const output = { status: 'needs_revision', summary: 'Changes Requested' };
+    assert.strictEqual(needsRevision(output), true);
+  });
+
+  await test('needsRevision returns true for "changes requested" text', () => {
+    const output = { status: 'succeeded', summary: 'Changes Requested — add tests' };
+    assert.strictEqual(needsRevision(output), true);
+  });
+
+  await test('needsRevision returns false for LGTM', () => {
+    const output = { status: 'succeeded', summary: 'LGTM — code looks good' };
+    assert.strictEqual(needsRevision(output), false);
+  });
+
+  // Test 19: decideNext routes needs_revision to revision action
+  await test('decideNext routes needs_revision to revision action', () => {
+    const agentOutput = {
+      step_id: 'T1:review',
+      status: 'needs_revision',
+      summary: 'Changes Requested — missing tests',
+      revision_notes: 'Add unit tests',
+    };
+    const runState = {
+      task: { budget: {}, _revisionCounts: {} },
+      steps: [
+        { step_id: 'T1:plan', type: 'plan', attempt: 1, max_attempts: 3 },
+        { step_id: 'T1:impl', type: 'implement', attempt: 1, max_attempts: 3 },
+        { step_id: 'T1:review', type: 'review', attempt: 1, max_attempts: 3, revision_target: 'implement' },
+      ],
+    };
+    const decision = decideNext(agentOutput, runState);
+    assert.strictEqual(decision.action, 'revision', 'should route to revision');
+    assert.strictEqual(decision.rule, 'review_needs_revision');
+    assert.strictEqual(decision.next_step.step_type, 'implement', 'should target implement step');
+    assert.strictEqual(decision.review_feedback, 'Add unit tests', 'should use revision_notes as feedback');
+  });
+
   // Cleanup
   try {
     fs.rmSync(path.join(artifactStore.ARTIFACT_DIR, testRunId), { recursive: true, force: true });
