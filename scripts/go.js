@@ -193,7 +193,7 @@ async function main() {
 
   // Build payload
   const tasks = issueData.map(({ num, title }) => {
-    const t = { issue: num, title };
+    const t = { issue: num, title, assignee: 'engineer_lite' };
     if (skill) t.skill = skill;
     return t;
   });
