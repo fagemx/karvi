@@ -2,6 +2,7 @@
  * routes/tasks.js — Task Engine APIs
  *
  * POST /api/tasks/:id/review — manual review trigger
+ * POST /api/tasks/:id/reopen — reopen completed task with session continuation
  * GET  /api/tasks — task list
  * GET  /api/spec/:file — serve spec files
  * POST /api/tasks — create task plan
@@ -931,6 +932,92 @@ module.exports = function tasksRoutes(req, res, helpers, deps) {
         }
 
         json(res, 200, { ok: true, task });
+      } catch (error) {
+        json(res, 400, { error: error.message });
+      }
+    });
+    return;
+  }
+
+  const reopenMatch = req.url.match(/^\/api\/tasks\/([^/]+)\/reopen$/);
+  if (req.method === 'POST' && reopenMatch) {
+    const taskId = decodeURIComponent(reopenMatch[1]);
+    let body = '';
+    req.on('data', c => (body += c));
+    req.on('end', () => {
+      try {
+        const payload = JSON.parse(body || '{}');
+        const message = String(payload.message || '').trim();
+        const customSteps = payload.steps;
+        
+        const REOPENABLE_STATUSES = ['approved', 'needs_revision', 'blocked', 'completed'];
+        const board = helpers.readBoard();
+        const task = (board.taskPlan?.tasks || []).find(t => t.id === taskId);
+        
+        if (!task) return json(res, 404, { error: `Task ${taskId} not found` });
+        if (!REOPENABLE_STATUSES.includes(task.status)) {
+          return json(res, 400, { error: `Cannot reopen task in ${task.status} status. Allowed: ${REOPENABLE_STATUSES.join(', ')}` });
+        }
+        if (!task.childSessionKey) {
+          return json(res, 400, { error: 'No session to resume (childSessionKey missing)' });
+        }
+        
+        const oldStatus = task.status;
+        task.status = 'in_progress';
+        delete task.result;
+        delete task.completedAt;
+        delete task.blocker;
+        
+        const runId = helpers.uid('run');
+        const stepTypes = customSteps || ['implement', 'review'];
+        const newSteps = mgmt.generateStepsForTask(task, runId, stepTypes, board);
+        task.steps = task.steps || [];
+        task.steps.push(...newSteps);
+        task._revisionCounts = {};
+        
+        task.history = task.history || [];
+        task.history.push({
+          ts: helpers.nowIso(),
+          status: 'in_progress',
+          reopened_from: oldStatus,
+          by: 'human',
+          message: message || '(no message)'
+        });
+        
+        mgmt.ensureEvolutionFields(board);
+        board.signals.push({
+          id: helpers.uid('sig'),
+          ts: helpers.nowIso(),
+          by: 'human',
+          type: 'task_reopened',
+          content: `${taskId} reopened from ${oldStatus}`,
+          refs: [taskId],
+          data: { taskId, from: oldStatus, runId, steps: newSteps.map(s => s.step_id) }
+        });
+        if (board.signals.length > 500) board.signals = board.signals.slice(-500);
+        
+        helpers.writeBoard(board);
+        helpers.appendLog({ 
+          ts: helpers.nowIso(), 
+          event: 'task_reopened', 
+          taskId, 
+          from: oldStatus, 
+          runId,
+          stepCount: newSteps.length 
+        });
+        
+        const result = dispatchTask(task, board, deps, helpers, { source: 'reopen' });
+        
+        json(res, 200, { 
+          ok: true, 
+          task,
+          reopened: {
+            runId,
+            steps: newSteps.map(s => s.step_id),
+            sessionId: task.childSessionKey,
+            dispatched: result.dispatched
+          }
+        });
       } catch (error) {
         json(res, 400, { error: error.message });
       }

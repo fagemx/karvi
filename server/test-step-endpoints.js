@@ -501,6 +501,93 @@ async function runTests() {
       fail('Conditional unblock reset', JSON.stringify(res));
     }
   }
+
+  // --- Test: POST /api/tasks/:id/reopen ---
+  console.log('\nTesting POST /api/tasks/:id/reopen...');
+  {
+    // Test 1: Reopen approved task
+    await post('/api/tasks', {
+      tasks: [{
+        id: 'task-reopen-test',
+        title: 'Test Reopen',
+        assignee: 'agent-007'
+      }]
+    });
+    
+    // Manually set to approved (bypass transition rules for test setup)
+    const tmpFile = path.join(tmpDataDir, 'board.json');
+    const board = JSON.parse(fs.readFileSync(tmpFile, 'utf8'));
+    const boardTask = (board.taskPlan?.tasks || []).find(t => t.id === 'task-reopen-test');
+    if (boardTask) {
+      boardTask.status = 'approved';
+      boardTask.childSessionKey = 'sess-test-123';
+      boardTask.steps = [
+        { step_id: 'step-1', type: 'plan', state: 'succeeded' },
+        { step_id: 'step-2', type: 'implement', state: 'succeeded' },
+        { step_id: 'step-3', type: 'review', state: 'succeeded' }
+      ];
+      fs.writeFileSync(tmpFile, JSON.stringify(board, null, 2));
+    }
+    
+    const res = await post('/api/tasks/task-reopen-test/reopen', { message: 'Fix PR review comments' });
+    
+    if (res.ok && res.task.status === 'in_progress') {
+      ok('POST /api/tasks/:id/reopen reopens approved task');
+      if (res.reopened && res.reopened.sessionId === 'sess-test-123') {
+        ok('Reopen preserves sessionId');
+      } else {
+        fail('Reopen sessionId', JSON.stringify(res.reopened));
+      }
+      if (res.task.steps && res.task.steps.length > 3) {
+        ok('Reopen appends new steps');
+      } else {
+        fail('Reopen steps not appended', `count: ${res.task.steps?.length}`);
+      }
+    } else {
+      fail('POST /api/tasks/:id/reopen', JSON.stringify(res));
+    }
+    
+    // Test 2: Reject invalid status
+    await post('/api/tasks', {
+      tasks: [{
+        id: 'task-reopen-invalid',
+        title: 'Invalid Status',
+        assignee: 'agent-007'
+      }]
+    });
+    
+    const res2 = await post('/api/tasks/task-reopen-invalid/reopen', {});
+    if (!res2.ok && res2.error && res2.error.includes('Cannot reopen')) {
+      ok('POST /api/tasks/:id/reopen rejects invalid status');
+    } else {
+      fail('Should reject invalid status', JSON.stringify(res2));
+    }
+    
+    // Test 3: Reject missing session
+    await post('/api/tasks', {
+      tasks: [{
+        id: 'task-reopen-no-sess',
+        title: 'No Session',
+        assignee: 'agent-007'
+      }]
+    });
+    
+    // Manually set to approved but without session key
+    const board2 = JSON.parse(fs.readFileSync(tmpFile, 'utf8'));
+    const boardTask2 = (board2.taskPlan?.tasks || []).find(t => t.id === 'task-reopen-no-sess');
+    if (boardTask2) {
+      boardTask2.status = 'approved';
+      // No childSessionKey
+      fs.writeFileSync(tmpFile, JSON.stringify(board2, null, 2));
+    }
+    
+    const res3 = await post('/api/tasks/task-reopen-no-sess/reopen', {});
+    if (!res3.ok && res3.error && res3.error.includes('No session to resume')) {
+      ok('POST /api/tasks/:id/reopen rejects missing session');
+    } else {
+      fail('Should reject missing session', JSON.stringify(res3));
+    }
+  }
 }
 
 (async () => {
