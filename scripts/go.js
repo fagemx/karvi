@@ -112,6 +112,159 @@ function confirm(message) {
   });
 }
 
+// --- Preflight check ---
+async function runPreflight() {
+  console.log('\nPreflight check...');
+  
+  try {
+    const result = await fetchPreflightFromServer();
+    return handleServerPreflight(result);
+  } catch (err) {
+    if (err.code === 'ECONNREFUSED') {
+      return runLocalPreflight();
+    }
+    throw err;
+  }
+}
+
+async function fetchPreflightFromServer() {
+  return new Promise((resolve, reject) => {
+    const req = http.request(
+      { hostname: 'localhost', port: PORT, path: '/api/health/preflight', method: 'GET', timeout: 5000 },
+      (res) => {
+        let data = '';
+        res.on('data', c => (data += c));
+        res.on('end', () => {
+          try {
+            resolve(JSON.parse(data));
+          } catch {
+            reject(new Error('Invalid preflight response'));
+          }
+        });
+      }
+    );
+    req.on('error', reject);
+    req.on('timeout', () => { req.destroy(); reject(new Error('Preflight timeout')); });
+    req.end();
+  });
+}
+
+function handleServerPreflight(result) {
+  const lines = [];
+  const failures = [];
+  
+  lines.push(`  ✓ Server running (localhost:${PORT})`);
+  
+  if (result.checks.runtimes.count > 0) {
+    const names = result.checks.runtimes.available.join(', ');
+    lines.push(`  ✓ Runtimes: ${names}`);
+  } else {
+    lines.push('  ✗ No agent runtime found');
+    failures.push({
+      name: 'runtimes',
+      message: 'Install at least one:\n      npm i -g @anthropic-ai/claude-code\n      npm i -g @opencode-ai/opencode\n      npm i -g @openai/codex'
+    });
+  }
+  
+  if (result.checks.gh.ok && result.checks.gh.authenticated) {
+    const user = result.checks.gh.user || 'unknown';
+    lines.push(`  ✓ gh authenticated (${user})`);
+  } else if (!result.checks.gh.ok) {
+    lines.push('  ✗ gh CLI not found');
+    failures.push({ name: 'gh', message: 'Install: https://cli.github.com' });
+  } else {
+    lines.push('  ✗ gh not authenticated');
+    failures.push({ name: 'gh', message: 'Run: gh auth login' });
+  }
+  
+  if (result.checks.git.ok) {
+    lines.push(`  ✓ git available (${result.checks.git.version})`);
+  } else {
+    lines.push('  ✗ git not found');
+    failures.push({ name: 'git', message: 'Install: https://git-scm.com' });
+  }
+  
+  console.log(lines.join('\n'));
+  
+  if (failures.length > 0) {
+    console.log('\n  Dispatch aborted. Fix the issues above and retry.');
+    for (const f of failures) {
+      console.log(`    ${f.message}`);
+    }
+    return { ok: false };
+  }
+  
+  return { ok: true };
+}
+
+function runLocalPreflight() {
+  const lines = [];
+  const failures = [];
+  let runtimeFound = false;
+  
+  try {
+    execSync('gh --version', { stdio: 'pipe', timeout: 5000 });
+    try {
+      const out = execSync('gh auth status 2>&1', { encoding: 'utf8', timeout: 5000 });
+      const userMatch = out.match(/Logged in to .* account (\S+)/);
+      const user = userMatch ? userMatch[1] : 'unknown';
+      lines.push(`  ✓ gh authenticated (${user})`);
+    } catch {
+      lines.push('  ✗ gh not authenticated');
+      failures.push({ name: 'gh', message: 'Run: gh auth login' });
+    }
+  } catch {
+    lines.push('  ✗ gh CLI not found');
+    failures.push({ name: 'gh', message: 'Install: https://cli.github.com' });
+  }
+  
+  try {
+    const out = execSync('git --version', { encoding: 'utf8', timeout: 5000 });
+    const match = out.match(/git version ([\d.]+)/);
+    const version = match ? match[1] : 'unknown';
+    lines.push(`  ✓ git available (${version})`);
+  } catch {
+    lines.push('  ✗ git not found');
+    failures.push({ name: 'git', message: 'Install: https://git-scm.com' });
+  }
+  
+  const runtimeCommands = [
+    { cmd: 'claude --version', name: 'claude' },
+    { cmd: 'opencode --version', name: 'opencode' },
+    { cmd: 'codex --version', name: 'codex' },
+  ];
+  
+  for (const { cmd, name } of runtimeCommands) {
+    try {
+      execSync(cmd, { stdio: 'pipe', timeout: 5000 });
+      lines.push(`  ✓ Runtime CLI found: ${name}`);
+      runtimeFound = true;
+      break;
+    } catch {}
+  }
+  
+  if (!runtimeFound) {
+    lines.push('  ✗ No runtime CLI found');
+    failures.push({
+      name: 'runtimes',
+      message: 'Install at least one:\n      npm i -g @anthropic-ai/claude-code\n      npm i -g @opencode-ai/opencode\n      npm i -g @openai/codex'
+    });
+  }
+  
+  console.log(lines.join('\n'));
+  
+  if (failures.length > 0) {
+    console.log('\n  Fix the issues above and retry.');
+    for (const f of failures) {
+      console.log(`    ${f.message}`);
+    }
+    return { ok: false };
+  }
+  
+  console.log('\n  Server not running. Start with: npm start');
+  return { ok: false, needServer: true };
+}
+
 // --- POST to Karvi ---
 function dispatch(payload) {
   return new Promise((resolve, reject) => {
@@ -138,7 +291,7 @@ function dispatch(payload) {
     });
     req.on('error', (err) => {
       if (err.code === 'ECONNREFUSED') {
-        reject(new Error(`Cannot connect to localhost:${PORT} — is the server running? (npm start)`));
+        reject(new Error(`Server not running at localhost:${PORT}\n  Start with: npm start`));
       } else {
         reject(err);
       }
@@ -151,6 +304,12 @@ function dispatch(payload) {
 // --- Main ---
 async function main() {
   const repo = detectRepo();
+
+  // Preflight check
+  const preflight = await runPreflight();
+  if (!preflight.ok) {
+    process.exit(preflight.needServer ? 0 : 1);
+  }
 
   console.log('');
 
