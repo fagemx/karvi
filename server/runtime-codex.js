@@ -89,7 +89,8 @@ function dispatch(plan) {
 
     const baseTimeoutMs = (plan.timeoutSec || 300) * 1000;
     const TOOL_TIMEOUT_MS = baseTimeoutMs;
-    const IDLE_TIMEOUT_MS = Math.min(baseTimeoutMs, 120_000);
+    // Codex does extended reasoning before emitting events — 120s too aggressive
+    const IDLE_TIMEOUT_MS = Math.min(baseTimeoutMs, 300_000);
     let currentTimeoutMs = IDLE_TIMEOUT_MS;
     
     console.log('[codex-rt] spawn:', CODEX_EXE);
