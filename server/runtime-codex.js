@@ -71,7 +71,9 @@ function dispatch(plan) {
       ));
     }
     const workDir = plan.workingDir;
-    args.push('-C', workDir);
+    if (!plan.sessionId) {
+      args.push('-C', workDir);
+    }
 
     // '-' tells codex to read the prompt from stdin (avoids cmd.exe multi-line truncation)
     args.push('-');
