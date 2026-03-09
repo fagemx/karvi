@@ -296,6 +296,18 @@ function createStepWorker(deps) {
       activeExecutions.delete(envelope.step_id);
       durationMs = Date.now() - startMs;
 
+      // 4b. Extend lock immediately after dispatch returns — prevent retry-poller from
+      //     re-dispatching while we parse results and run post-checks
+      try {
+        const extBoard = helpers.readBoard();
+        const extTask = (extBoard.taskPlan?.tasks || []).find(t => t.id === envelope.task_id);
+        const extStep = extTask?.steps?.find(s => s.step_id === envelope.step_id);
+        if (extStep && extStep.state === 'running') {
+          extStep.lock_expires_at = new Date(Date.now() + 120_000).toISOString(); // 2 min for post-check
+          helpers.writeBoard(extBoard);
+        }
+      } catch {}
+
       // 5. Parse output — try STEP_RESULT from extracted reply first (critical for
       //    JSON-wrapping runtimes like claude --output-format json where STEP_RESULT
       //    is inside parsed.result, not in raw stdout)
