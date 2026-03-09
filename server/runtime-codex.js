@@ -63,6 +63,8 @@ function dispatch(plan) {
 
     // Enable network access in sandbox so agent can use gh CLI, git push, etc.
     args.push('-c', 'sandbox_workspace_write.network_access=true');
+    // Inherit full parent environment so gh auth tokens are available
+    args.push('-c', 'shell_environment_policy.inherit=all');
 
     const model = plan.modelHint || process.env.CODEX_MODEL || null;
     if (model) args.push('-m', model);
