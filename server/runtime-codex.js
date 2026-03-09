@@ -71,7 +71,7 @@ function dispatch(plan) {
       ));
     }
     const workDir = plan.workingDir;
-    if (!plan.sessionId) args.push('-C', workDir);
+    args.push('-C', workDir);
 
     // '-' tells codex to read the prompt from stdin (avoids cmd.exe multi-line truncation)
     args.push('-');
@@ -100,6 +100,11 @@ function dispatch(plan) {
       if (now - lastHeartbeat < HEARTBEAT_INTERVAL_MS) return;
       lastHeartbeat = now;
       try { plan.onActivity(); } catch {}
+    }
+
+    // Validate cwd exists before spawn (fail immediately, not after 300s timeout)
+    if (!fs.existsSync(workDir)) {
+      return reject(new Error(`ENOENT: working directory does not exist: ${workDir}`));
     }
 
     const env = { ...process.env };
@@ -256,12 +261,12 @@ function dispatch(plan) {
           }
         }
 
-        // item.completed — tool execution finished
-        if (obj.type === 'item.completed') {
+        // item.completed — tool execution finished (only for non-agent_message items)
+        if (obj.type === 'item.completed' && obj.item?.type !== 'agent_message') {
           exitToolExecution();
         }
 
-        // turn.completed — accumulate tokens/cost
+        // turn.completed — accumulate tokens/cost + reset tool execution depth
         if (obj.type === 'turn.completed') {
           const usage = obj.usage || {};
           totalTokens.input += usage.input_tokens || 0;
@@ -269,6 +274,12 @@ function dispatch(plan) {
           if (obj.cost) totalCost += obj.cost;
           console.log('[codex-rt] turn.completed: tokens=%j (cumulative: %j)',
             usage, totalTokens);
+          // turn.completed means all items in this turn are done — reset depth
+          // (prevents stale depth from missed item.completed events)
+          if (toolExecutionDepth > 0) {
+            toolExecutionDepth = 0;
+            currentTimeoutMs = IDLE_TIMEOUT_MS;
+          }
         }
 
         // turn.failed — log but don't settle (codex may have more turns)
@@ -351,7 +362,7 @@ function extractUsage(parsed, _stdout) {
 function capabilities() {
   return {
     runtime: 'codex',
-    supportsReview: false,
+    supportsReview: true,
     supportsSessionResume: true,
     supportsModelSelection: true,
     supportsBudgetLimit: false,
