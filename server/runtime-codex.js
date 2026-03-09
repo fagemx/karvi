@@ -116,6 +116,15 @@ function dispatch(plan) {
 
     const env = { ...process.env };
 
+    // Ensure GH_TOKEN is set for gh CLI auth inside sandbox
+    // (sandbox can't access Windows credential store / keyring)
+    if (!env.GH_TOKEN && !env.GITHUB_TOKEN) {
+      try {
+        const token = execSync('gh auth token', { encoding: 'utf8', timeout: 5000 }).trim();
+        if (token) env.GH_TOKEN = token;
+      } catch {}
+    }
+
     // Windows: .cmd shims must be invoked via cmd.exe
     const spawnCmd = process.platform === 'win32' ? 'cmd.exe' : CODEX_EXE;
     const spawnArgs = process.platform === 'win32'
