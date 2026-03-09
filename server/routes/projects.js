@@ -63,6 +63,7 @@ function normalizeTask(entry, repo) {
       target_repo: entry.target_repo || repo || null,
     };
     if (entry.scope) t.scope = entry.scope;
+    if (entry.runtimeHint) t.runtimeHint = entry.runtimeHint;
     return t;
   }
   if (entry.id && typeof entry.id === 'string') {
@@ -78,6 +79,7 @@ function normalizeTask(entry, repo) {
       target_repo: entry.target_repo || repo || null,
     };
     if (entry.scope) t.scope = entry.scope;
+    if (entry.runtimeHint) t.runtimeHint = entry.runtimeHint;
     return t;
   }
   throw new Error(`task must have either 'issue' (number) or 'id' (string): ${JSON.stringify(entry)}`);
