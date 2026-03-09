@@ -176,7 +176,7 @@ function createStepWorker(deps) {
           const hbBoard = helpers.readBoard();
           const hbTask = (hbBoard.taskPlan?.tasks || []).find(t => t.id === envelope.task_id);
           const hbStep = hbTask?.steps?.find(s => s.step_id === envelope.step_id);
-          if (hbStep && hbStep.state === 'running' && hbStep.locked_by === 'step-worker') {
+          if (hbStep && hbStep.state === 'running') {
             hbStep.lock_expires_at = new Date(Date.now() + timeoutMs + LOCK_GRACE_MS).toISOString();
             // Also update last_activity so retry-poller sees fresh activity
             if (!hbStep.progress) hbStep.progress = {};
