@@ -178,6 +178,9 @@ function createStepWorker(deps) {
           const hbStep = hbTask?.steps?.find(s => s.step_id === envelope.step_id);
           if (hbStep && hbStep.state === 'running' && hbStep.locked_by === 'step-worker') {
             hbStep.lock_expires_at = new Date(Date.now() + timeoutMs + LOCK_GRACE_MS).toISOString();
+            // Also update last_activity so retry-poller sees fresh activity
+            if (!hbStep.progress) hbStep.progress = {};
+            hbStep.progress.last_activity = new Date().toISOString();
             helpers.writeBoard(hbBoard);
           }
         } catch {}
