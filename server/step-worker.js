@@ -182,8 +182,13 @@ function createStepWorker(deps) {
             if (!hbStep.progress) hbStep.progress = {};
             hbStep.progress.last_activity = new Date().toISOString();
             helpers.writeBoard(hbBoard);
+            console.log(`[step-worker] heartbeat: ${envelope.step_id} lock renewed to +${Math.round(timeoutMs/1000)}s`);
+          } else {
+            console.log(`[step-worker] heartbeat: ${envelope.step_id} skipped (state=${hbStep?.state} found=${!!hbStep})`);
           }
-        } catch {}
+        } catch (err) {
+          console.log(`[step-worker] heartbeat error: ${envelope.step_id}: ${err.message}`);
+        }
       };
 
       // Progress callback: write granular progress to step metadata (throttled)
@@ -295,6 +300,7 @@ function createStepWorker(deps) {
       }
       activeExecutions.delete(envelope.step_id);
       durationMs = Date.now() - startMs;
+      console.log(`[step-worker] dispatch returned for ${envelope.step_id} in ${durationMs}ms, code=${result?.code}`);
 
       // 4b. Extend lock immediately after dispatch returns — prevent retry-poller from
       //     re-dispatching while we parse results and run post-checks
@@ -305,8 +311,13 @@ function createStepWorker(deps) {
         if (extStep && extStep.state === 'running') {
           extStep.lock_expires_at = new Date(Date.now() + 120_000).toISOString(); // 2 min for post-check
           helpers.writeBoard(extBoard);
+          console.log(`[step-worker] lock extended for post-check: ${envelope.step_id}`);
+        } else {
+          console.log(`[step-worker] lock extend skipped: ${envelope.step_id} state=${extStep?.state} found=${!!extStep}`);
         }
-      } catch {}
+      } catch (err) {
+        console.log(`[step-worker] lock extend error: ${envelope.step_id}: ${err.message}`);
+      }
 
       // 5. Parse output — try STEP_RESULT from extracted reply first (critical for
       //    JSON-wrapping runtimes like claude --output-format json where STEP_RESULT
