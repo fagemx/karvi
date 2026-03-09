@@ -61,6 +61,9 @@ function dispatch(plan) {
 
     args.push('--full-auto', '--json');
 
+    // Enable network access in sandbox so agent can use gh CLI, git push, etc.
+    args.push('-c', 'sandbox_workspace_write.network_access=true');
+
     const model = plan.modelHint || process.env.CODEX_MODEL || null;
     if (model) args.push('-m', model);
 
