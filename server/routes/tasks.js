@@ -3,13 +3,13 @@
  *
  * POST /api/tasks/:id/review — manual review trigger
  * POST /api/tasks/:id/reopen — reopen completed task with session continuation
- * POST /api/tasks/:id/cancel — cancel task, stop running step, cleanup worktree
  * GET  /api/tasks — task list
  * GET  /api/spec/:file — serve spec files
  * POST /api/tasks — create task plan
  * POST /api/tasks/:id/update — update task fields
  * POST /api/tasks/:id/unblock — unblock task
  * POST /api/tasks/:id/status — manual status control
+ * POST /api/tasks/:id/cancel — cancel task and cleanup worktree
  * POST /api/tasks/:id/dispatch — per-task dispatch
  * POST /api/tasks/dispatch — bulk dispatch
  * GET/POST /api/tasks/:id/digest — L2 digest
@@ -25,7 +25,7 @@ const { json } = bb;
 const { participantById, pushMessage, getUserIdForTask } = require('./_shared');
 const routeEngine = require('../route-engine');
 const worktreeHelper = require('../worktree');
-const { resolveRepoRoot, validateRepoRoot } = require('../repo-resolver');
+const { resolveRepoRoot } = require('../repo-resolver');
 
 // --- Preflight logging: lessons injection + runtime selection ---
 function logDispatchPreflight(plan, task, deps, helpers) {
@@ -111,77 +111,6 @@ function redispatchTask(board, task, deps, helpers) {
   dispatchTask(task, board, deps, helpers, { source: 'auto-redispatch', mode: 'redispatch' });
 }
 
-/**
- * Shared task cancellation flow for both:
- * - POST /api/tasks/:id/status { status: "cancelled" }
- * - POST /api/tasks/:id/cancel
- */
-function cancelTaskFlow(task, board, deps, helpers, opts = {}) {
-  const oldStatus = opts.oldStatus || task.status;
-  const reason = String(opts.reason || 'Task cancelled').trim() || 'Task cancelled';
-  const by = opts.by || 'human';
-
-  task.status = 'cancelled';
-  task.completedAt = helpers.nowIso();
-  task.blocker = null;
-  task.history = task.history || [];
-  task.history.push({
-    ts: helpers.nowIso(),
-    status: 'cancelled',
-    from: oldStatus,
-    by,
-    ...(opts.reason ? { reason: String(opts.reason).slice(0, 240) } : {}),
-  });
-
-  let killedSteps = 0;
-  let cancelledSteps = 0;
-  for (const step of (task.steps || [])) {
-    if (step.state === 'running') {
-      try {
-        const killResult = deps.stepWorker?.killStep?.(step.step_id);
-        if (killResult?.ok) killedSteps++;
-      } catch {}
-      deps.stepSchema.transitionStep(step, 'cancelled', { error: reason });
-      cancelledSteps++;
-    } else if (step.state === 'queued' || step.state === 'failed') {
-      deps.stepSchema.transitionStep(step, 'cancelled', { error: reason });
-      cancelledSteps++;
-    }
-  }
-
-  let worktreeCleanup = { attempted: false, scheduled: false };
-  if (task.worktreeDir) {
-    const repoRoot = resolveRepoRoot(task, board) || path.resolve(__dirname, '..', '..');
-    const cleanTaskId = task.id;
-    worktreeCleanup = { attempted: true, scheduled: true };
-
-    // Clear metadata immediately so no future dispatch tries stale path.
-    task.worktreeDir = null;
-    task.worktreeBranch = null;
-
-    // Delay + retry pattern to avoid Windows file-handle races.
-    const CLEANUP_DELAY_MS = 3000;
-    setTimeout(() => {
-      try {
-        worktreeHelper.removeWorktree(repoRoot, cleanTaskId);
-        console.log(`[tasks] worktree cleaned up for ${cleanTaskId} (task cancelled)`);
-      } catch (err) {
-        console.error(`[tasks] worktree cleanup failed for ${cleanTaskId}:`, err.message);
-        setTimeout(() => {
-          try {
-            worktreeHelper.removeWorktree(repoRoot, cleanTaskId);
-            console.log(`[tasks] worktree cleaned up for ${cleanTaskId} (task cancelled, retry)`);
-          } catch (err2) {
-            console.error(`[tasks] worktree cleanup retry failed for ${cleanTaskId}:`, err2.message);
-          }
-        }, 15000);
-      }
-    }, CLEANUP_DELAY_MS);
-  }
-
-  return { killedSteps, cancelledSteps, worktreeCleanup };
-}
-
 // ---------------------------------------------------------------------------
 // dispatchTask() — unified dispatch entry point
 //
@@ -227,6 +156,8 @@ function dispatchTask(task, board, deps, helpers, opts = {}) {
     }
 
     if (!task.worktreeDir) {
+      const worktree = require('../worktree');
+      const { resolveRepoRoot, validateRepoRoot } = require('../repo-resolver');
       const repoRoot = resolveRepoRoot(task, board) || path.resolve(__dirname, '..', '..');
 
       const validation = validateRepoRoot(repoRoot, task.source?.repo);
@@ -242,7 +173,7 @@ function dispatchTask(task, board, deps, helpers, opts = {}) {
       }
 
       try {
-        const wt = worktreeHelper.createWorktree(repoRoot, taskId);
+        const wt = worktree.createWorktree(repoRoot, taskId);
         task.worktreeDir = wt.worktreePath;
         task.worktreeBranch = wt.branch;
         console.log(`[dispatchTask:${taskId}] worktree: ${wt.worktreePath}`);
@@ -585,6 +516,70 @@ function summarizeBriefAsSignal(taskId, helpers, DIR) {
     avgScore: Math.round(avgScore),
     passRate: shots.filter(s => s.status === 'pass').length / shots.length,
   };
+}
+
+function scheduleTaskWorktreeCleanup(taskId, task, board) {
+  if (!task?.worktreeDir && !task?.worktreeBranch) return false;
+  const repoRoot = resolveRepoRoot(task, board) || path.resolve(__dirname, '..', '..');
+  const cleanTaskId = taskId;
+
+  // Clear references immediately to avoid stale cwd on redispatch paths.
+  task.worktreeDir = null;
+  task.worktreeBranch = null;
+
+  const CLEANUP_DELAY_MS = 3000;
+  setTimeout(() => {
+    try {
+      worktreeHelper.removeWorktree(repoRoot, cleanTaskId);
+      console.log(`[task-cancel] worktree cleaned up for ${cleanTaskId}`);
+    } catch (err) {
+      console.error(`[task-cancel] worktree cleanup failed for ${cleanTaskId}:`, err.message);
+      setTimeout(() => {
+        try {
+          worktreeHelper.removeWorktree(repoRoot, cleanTaskId);
+          console.log(`[task-cancel] worktree cleaned up for ${cleanTaskId} (retry)`);
+        } catch (err2) {
+          console.error(`[task-cancel] worktree cleanup retry failed for ${cleanTaskId}:`, err2.message);
+        }
+      }, 15000);
+    }
+  }, CLEANUP_DELAY_MS);
+
+  return true;
+}
+
+function cancelTaskFlow(taskId, task, board, deps, helpers, reason) {
+  const cancelReason = String(reason || 'Task cancelled').slice(0, 240);
+  const cancelledSteps = [];
+  const killedSteps = [];
+
+  task.completedAt = helpers.nowIso();
+  task.blocker = null;
+
+  for (const step of (task.steps || [])) {
+    if (step.state === 'running') {
+      try {
+        const killResult = deps.stepWorker.killStep(step.step_id);
+        if (killResult?.ok) killedSteps.push(step.step_id);
+      } catch {}
+
+      try {
+        deps.stepSchema.transitionStep(step, 'cancelled', { error: cancelReason });
+        cancelledSteps.push(step.step_id);
+      } catch {}
+      continue;
+    }
+
+    if (step.state === 'queued' || step.state === 'failed') {
+      try {
+        deps.stepSchema.transitionStep(step, 'cancelled', { error: cancelReason });
+        cancelledSteps.push(step.step_id);
+      } catch {}
+    }
+  }
+
+  const worktreeCleanupScheduled = scheduleTaskWorktreeCleanup(taskId, task, board);
+  return { cancelledSteps, killedSteps, worktreeCleanupScheduled };
 }
 
 module.exports = function tasksRoutes(req, res, helpers, deps) {
@@ -1106,31 +1101,38 @@ module.exports = function tasksRoutes(req, res, helpers, deps) {
     req.on('end', () => {
       try {
         const payload = JSON.parse(body || '{}');
-        const reason = String(payload.reason || '').trim();
+        const reason = payload.reason ? String(payload.reason).slice(0, 240) : '';
         const board = helpers.readBoard();
         const task = (board.taskPlan?.tasks || []).find(t => t.id === taskId);
         if (!task) return json(res, 404, { error: `Task ${taskId} not found` });
 
         const oldStatus = task.status;
-        mgmt.ensureTaskTransition(oldStatus, 'cancelled');
-        const cancelMeta = cancelTaskFlow(task, board, deps, helpers, {
-          oldStatus,
-          reason: reason || 'Task cancelled',
+        const newStatus = 'cancelled';
+        mgmt.ensureTaskTransition(oldStatus, newStatus);
+        task.status = newStatus;
+        task.history = task.history || [];
+        task.history.push({
+          ts: helpers.nowIso(),
+          status: newStatus,
+          from: oldStatus,
           by: 'human',
+          ...(reason ? { reason } : {}),
         });
 
         const conv = board.conversations?.[0];
         if (conv) {
-          const detail = reason ? `\nreason: ${reason.slice(0, 240)}` : '';
+          const detail = reason ? `\nreason: ${reason}` : '';
           pushMessage(conv, {
             id: helpers.uid('msg'),
             ts: helpers.nowIso(),
             type: 'system',
             from: 'system',
             to: 'human',
-            text: `[Task ${taskId}] ${oldStatus} → cancelled${detail}`,
+            text: `[Task ${taskId}] ${oldStatus} → ${newStatus}${detail}`,
           });
         }
+
+        const cancelResult = cancelTaskFlow(taskId, task, board, deps, helpers, reason || 'Task cancelled');
 
         const allApproved = board.taskPlan.tasks.every(t => t.status === 'approved' || t.status === 'cancelled');
         if (allApproved) board.taskPlan.phase = 'done';
@@ -1141,50 +1143,34 @@ module.exports = function tasksRoutes(req, res, helpers, deps) {
           ts: helpers.nowIso(),
           by: 'server.js',
           type: 'status_change',
-          content: `${task.id} ${oldStatus} → cancelled`,
+          content: `${task.id} ${oldStatus} → ${newStatus}`,
           refs: [task.id],
-          data: { taskId: task.id, from: oldStatus, to: 'cancelled', assignee: task.assignee },
+          data: { taskId: task.id, from: oldStatus, to: newStatus, assignee: task.assignee },
         });
         if (board.signals.length > 500) board.signals = board.signals.slice(-500);
 
         helpers.writeBoard(board);
-        helpers.appendLog({
-          ts: helpers.nowIso(),
-          event: 'task_cancelled',
-          taskId,
-          from: oldStatus,
-          to: 'cancelled',
-          killedSteps: cancelMeta.killedSteps,
-          cancelledSteps: cancelMeta.cancelledSteps,
-          reason: reason || null,
-          worktreeCleanup: cancelMeta.worktreeCleanup,
-        });
+        helpers.appendLog({ ts: helpers.nowIso(), event: 'task_status_manual', taskId, from: oldStatus, to: newStatus });
 
         if (jiraIntegration?.isEnabled(board)) {
-          jiraIntegration.notifyJira(board, task, { type: 'status_change', newStatus: 'cancelled' })
+          jiraIntegration.notifyJira(board, task, { type: 'status_change', newStatus })
             .catch(err => console.error('[jira] notify failed:', err.message));
         }
 
-        if (push && PUSH_TOKENS_PATH) {
-          push.notifyTaskEvent(PUSH_TOKENS_PATH, task, 'task.cancelled')
-            .catch(err => console.error('[push] notify failed:', err.message));
-          if (allApproved) {
-            push.notifyTaskEvent(PUSH_TOKENS_PATH, task, 'all.approved')
-              .catch(err => console.error('[push] all-approved notify failed:', err.message));
-          }
+        push.notifyTaskEvent(PUSH_TOKENS_PATH, task, `task.${newStatus}`)
+          .catch(err => console.error('[push] notify failed:', err.message));
+
+        if (allApproved) {
+          push.notifyTaskEvent(PUSH_TOKENS_PATH, task, 'all.approved')
+            .catch(err => console.error('[push] all-approved notify failed:', err.message));
         }
 
         json(res, 200, {
           ok: true,
-          taskId,
           task,
-          cancelled: {
-            from: oldStatus,
-            reason: reason || null,
-            killedSteps: cancelMeta.killedSteps,
-            cancelledSteps: cancelMeta.cancelledSteps,
-            worktreeCleanup: cancelMeta.worktreeCleanup,
-          },
+          cancelled_steps: cancelResult.cancelledSteps,
+          killed_steps: cancelResult.killedSteps,
+          worktree_cleanup_scheduled: cancelResult.worktreeCleanupScheduled,
         });
       } catch (error) {
         json(res, 400, { error: error.message });
@@ -1214,18 +1200,9 @@ module.exports = function tasksRoutes(req, res, helpers, deps) {
 
         const oldStatus = task.status;
         mgmt.ensureTaskTransition(oldStatus, newStatus);
-        let cancelMeta = null;
-        if (newStatus === 'cancelled') {
-          cancelMeta = cancelTaskFlow(task, board, deps, helpers, {
-            oldStatus,
-            reason: payload.reason || 'Task cancelled',
-            by: 'human',
-          });
-        } else {
-          task.status = newStatus;
-          task.history = task.history || [];
-          task.history.push({ ts: helpers.nowIso(), status: newStatus, from: oldStatus, by: 'human' });
-        }
+        task.status = newStatus;
+        task.history = task.history || [];
+        task.history.push({ ts: helpers.nowIso(), status: newStatus, from: oldStatus, by: 'human' });
 
         const conv = board.conversations?.[0];
         if (conv) {
@@ -1252,6 +1229,11 @@ module.exports = function tasksRoutes(req, res, helpers, deps) {
           task.blocker = { reason: payload.reason, askedAt: helpers.nowIso() };
         }
         if (newStatus !== 'blocked') task.blocker = null;
+
+        // Cancel: stop running step(s), mark step states, and cleanup worktree.
+        if (newStatus === 'cancelled') {
+          cancelTaskFlow(taskId, task, board, deps, helpers, payload.reason || 'Task cancelled');
+        }
 
         // Strict gate: only approved can unlock dependents
         if (newStatus === 'approved') {
@@ -1286,19 +1268,6 @@ module.exports = function tasksRoutes(req, res, helpers, deps) {
 
         helpers.writeBoard(board);
         helpers.appendLog({ ts: helpers.nowIso(), event: 'task_status_manual', taskId, from: oldStatus, to: newStatus });
-        if (cancelMeta) {
-          helpers.appendLog({
-            ts: helpers.nowIso(),
-            event: 'task_cancelled',
-            taskId,
-            from: oldStatus,
-            to: 'cancelled',
-            killedSteps: cancelMeta.killedSteps,
-            cancelledSteps: cancelMeta.cancelledSteps,
-            reason: payload.reason || null,
-            worktreeCleanup: cancelMeta.worktreeCleanup,
-          });
-        }
 
         // Jira integration: fire-and-forget notification
         if (jiraIntegration?.isEnabled(board)) {

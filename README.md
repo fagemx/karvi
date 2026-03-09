@@ -180,6 +180,7 @@ Runtimes load with try/catch — if a CLI isn't installed, the runtime is silent
 | POST | `/api/tasks` | Create/replace task plan (`{ goal, phase, tasks }`) |
 | POST | `/api/tasks/:id/dispatch` | Dispatch single task to assignee agent |
 | POST | `/api/tasks/:id/status` | Update task status (`{ status, reason? }`) |
+| POST | `/api/tasks/:id/cancel` | Cancel task, stop running step, and clean up worktree (`{ reason? }`) |
 | POST | `/api/tasks/:id/update` | Update task fields (`{ status, result, blocker }`) |
 | POST | `/api/tasks/:id/unblock` | Unblock a blocked task (`{ message }`) |
 | POST | `/api/tasks/dispatch` | Bulk dispatch all ready tasks |
