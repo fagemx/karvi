@@ -502,6 +502,85 @@ async function runTests() {
     }
   }
 
+  // --- Test: POST /api/tasks/:id/cancel ---
+  console.log('\nTesting POST /api/tasks/:id/cancel...');
+  {
+    await post('/api/tasks', {
+      tasks: [{
+        id: 'T-CANCEL-TEST',
+        title: 'Cancel endpoint test',
+        assignee: 'engineer_lite',
+        status: 'pending'
+      }]
+    });
+    await post('/api/tasks/T-CANCEL-TEST/steps', { run_id: 'run-cancel-test' });
+    await patch('/api/tasks/T-CANCEL-TEST/steps/T-CANCEL-TEST:plan', { state: 'running', locked_by: 'test-cancel' });
+
+    // Seed worktree metadata so cancel flow must clear it.
+    const cancelTmpFile = path.join(tmpDataDir, 'board.json');
+    const cancelBoard = JSON.parse(fs.readFileSync(cancelTmpFile, 'utf8'));
+    const cancelTask = (cancelBoard.taskPlan?.tasks || []).find(t => t.id === 'T-CANCEL-TEST');
+    if (cancelTask) {
+      cancelTask.worktreeDir = 'C:\\fake\\worktree\\T-CANCEL-TEST';
+      cancelTask.worktreeBranch = 'agent/T-CANCEL-TEST';
+      fs.writeFileSync(cancelTmpFile, JSON.stringify(cancelBoard, null, 2));
+    }
+
+    const cancelRes = await post('/api/tasks/T-CANCEL-TEST/cancel', { reason: 'manual cancel test' });
+    if (cancelRes.ok && cancelRes.task?.status === 'cancelled' && cancelRes.cancelled?.from === 'pending') {
+      ok('POST /api/tasks/:id/cancel transitions task to cancelled');
+    } else {
+      fail('POST /api/tasks/:id/cancel', JSON.stringify(cancelRes));
+    }
+
+    const cancelStepsRes = await get('/api/tasks/T-CANCEL-TEST/steps');
+    const cancelPlanStep = (cancelStepsRes.steps || []).find(s => s.step_id === 'T-CANCEL-TEST:plan');
+    if (cancelPlanStep && cancelPlanStep.state === 'cancelled') {
+      ok('Cancel endpoint transitions running step to cancelled');
+    } else {
+      fail('Cancel step transition', JSON.stringify(cancelPlanStep));
+    }
+
+    const cancelTaskRes = await get('/api/tasks');
+    const cancelTasks = cancelTaskRes.tasks || cancelTaskRes.taskPlan?.tasks || [];
+    const cancelTaskAfter = cancelTasks.find(t => t.id === 'T-CANCEL-TEST');
+    if (cancelTaskAfter && !cancelTaskAfter.worktreeDir && !cancelTaskAfter.worktreeBranch) {
+      ok('Cancel endpoint clears worktree metadata');
+    } else {
+      fail('Cancel worktree cleanup metadata', JSON.stringify(cancelTaskAfter));
+    }
+
+    const cancelSignals = await get('/api/signals');
+    const cancelStatusSignal = (Array.isArray(cancelSignals) ? cancelSignals : [])
+      .find(s => s.type === 'status_change' && s.data?.taskId === 'T-CANCEL-TEST' && s.data?.to === 'cancelled');
+    if (cancelStatusSignal) {
+      ok('Cancel endpoint emits status_change signal');
+    } else {
+      fail('Cancel status_change signal', 'missing status_change to cancelled');
+    }
+
+    // Invalid transition: approved -> cancelled should be rejected.
+    await post('/api/tasks', {
+      tasks: [{
+        id: 'T-CANCEL-INVALID',
+        title: 'Cancel invalid transition',
+        assignee: 'engineer_lite'
+      }]
+    });
+    const cancelBoard2 = JSON.parse(fs.readFileSync(cancelTmpFile, 'utf8'));
+    const cancelInvalidTask = (cancelBoard2.taskPlan?.tasks || []).find(t => t.id === 'T-CANCEL-INVALID');
+    if (cancelInvalidTask) {
+      cancelInvalidTask.status = 'approved';
+      fs.writeFileSync(cancelTmpFile, JSON.stringify(cancelBoard2, null, 2));
+    }
+    const invalidCancelRes = await post('/api/tasks/T-CANCEL-INVALID/cancel', {});
+    if (!invalidCancelRes.ok && invalidCancelRes.error && invalidCancelRes.error.includes('Invalid task status transition')) {
+      ok('Cancel endpoint rejects invalid transition from approved');
+    } else {
+      fail('Cancel invalid transition', JSON.stringify(invalidCancelRes));
+    }
+  }
+
   // --- Test: POST /api/tasks/:id/reopen ---
   console.log('\nTesting POST /api/tasks/:id/reopen...');
   {
