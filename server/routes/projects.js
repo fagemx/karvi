@@ -172,7 +172,7 @@ module.exports = function projectsRoutes(req, res, helpers, deps) {
         }
 
         const ACTIVE_STATUSES = ['in_progress', 'dispatched'];
-        const SAFE_FIELDS = ['title', 'description', 'assignee', 'depends', 'spec', 'skill', 'estimate', 'target_repo'];
+        const SAFE_FIELDS = ['title', 'description', 'assignee', 'depends', 'spec', 'skill', 'estimate', 'target_repo', 'runtimeHint'];
         const existingIds = new Set(board.taskPlan.tasks.map(t => t.id));
         const newTasks = [];
         const taskIds = [];
@@ -211,6 +211,7 @@ module.exports = function projectsRoutes(req, res, helpers, deps) {
             if (t.type) newTask.type = t.type;
             if (t.source) newTask.source = t.source;
             if (t.scope) newTask.scope = t.scope;
+            if (t.runtimeHint) newTask.runtimeHint = t.runtimeHint;
             if (t.githubIssue) newTask.githubIssue = t.githubIssue;
             if (projectId) {
               newTask.projectId = projectId;

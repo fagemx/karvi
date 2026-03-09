@@ -1106,7 +1106,9 @@ function generateStepsForTask(task, runId, pipeline, board) {
     const opts = {};
     if (stepDef.instruction) opts.instruction = stepDef.instruction;
     if (stepDef.skill) opts.skill = stepDef.skill;
+    // Per-step runtime_hint > task-level runtimeHint > default
     if (stepDef.runtime_hint) opts.runtime_hint = stepDef.runtime_hint;
+    else if (task.runtimeHint) opts.runtime_hint = task.runtimeHint;
     if (stepDef.retry_policy) opts.retry_policy = stepDef.retry_policy;
     if (stepDef.revision_target) opts.revision_target = stepDef.revision_target;
     if (stepDef.max_revision_cycles != null) opts.max_revision_cycles = stepDef.max_revision_cycles;
