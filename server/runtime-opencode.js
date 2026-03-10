@@ -45,6 +45,7 @@ function resolveOpencodePath() {
 const OPENCODE_EXE = resolveOpencodePath();
 
 const killTree = require('./kill-tree');
+const { createIdleController } = require('./runtime-utils');
 
 /**
  * Dispatch a plan to OpenCode headless CLI.
@@ -72,9 +73,8 @@ function dispatch(plan) {
     // @end-protected
 
     const baseTimeoutMs = (plan.timeoutSec || 300) * 1000;
-    const TOOL_TIMEOUT_MS = baseTimeoutMs;
     const IDLE_TIMEOUT_MS = Math.min(baseTimeoutMs, 120_000);
-    let currentTimeoutMs = IDLE_TIMEOUT_MS;
+    const TOOL_TIMEOUT_MS = baseTimeoutMs;
     
     console.log('[opencode-rt] spawn:', OPENCODE_EXE);
     console.log('[opencode-rt] model:', model || '(default)');
@@ -133,7 +133,18 @@ function dispatch(plan) {
     let totalTokens = { input: 0, output: 0 };
     let totalCost = 0;
     let toolCallCount = 0;
-    let toolExecutionDepth = 0;
+
+    const idleController = createIdleController({
+      idleTimeoutMs: IDLE_TIMEOUT_MS,
+      toolTimeoutMs: TOOL_TIMEOUT_MS,
+      logPrefix: '[opencode-rt]',
+      onTimeout: (timeoutMs, depth) => {
+        console.log('[opencode-rt] idle for %ds (depth=%d), killing',
+          Math.round(timeoutMs / 1000), depth);
+        settle(new Error(`opencode idle for ${Math.round(timeoutMs / 1000)}s`));
+        killTree(child.pid);
+      }
+    });
 
     child.stdout.setEncoding('utf8');
     child.stderr.setEncoding('utf8');
@@ -145,7 +156,7 @@ function dispatch(plan) {
     function settle(err, result) {
       if (settled) return;
       settled = true;
-      clearTimeout(inactivityTimer);
+      idleController.dispose();
       clearInterval(heartbeatInterval);
       try {
         fs.unlinkSync(msgFile);
@@ -155,40 +166,7 @@ function dispatch(plan) {
       if (err) reject(err); else resolve(result);
     }
 
-    function enterToolExecution() {
-      toolExecutionDepth++;
-      if (toolExecutionDepth === 1) {
-        currentTimeoutMs = TOOL_TIMEOUT_MS;
-        console.log('[opencode-rt] entering tool execution (depth=%d), timeout=%ds',
-          toolExecutionDepth, Math.round(currentTimeoutMs / 1000));
-        resetInactivityTimer();
-      }
-    }
-
-    function exitToolExecution() {
-      if (toolExecutionDepth > 0) {
-        toolExecutionDepth--;
-        if (toolExecutionDepth === 0) {
-          currentTimeoutMs = IDLE_TIMEOUT_MS;
-          console.log('[opencode-rt] exited tool execution (depth=%d), timeout=%ds',
-            toolExecutionDepth, Math.round(currentTimeoutMs / 1000));
-          resetInactivityTimer();
-        }
-      }
-    }
-
-    let inactivityTimer = null;
-    function resetInactivityTimer() {
-      if (settled) return;
-      clearTimeout(inactivityTimer);
-      inactivityTimer = setTimeout(() => {
-        console.log('[opencode-rt] idle for %ds (depth=%d), killing',
-          Math.round(currentTimeoutMs / 1000), toolExecutionDepth);
-        settle(new Error(`opencode idle for ${Math.round(currentTimeoutMs / 1000)}s`));
-        killTree(child.pid);
-      }, currentTimeoutMs);
-    }
-    resetInactivityTimer();
+    idleController.touch();
 
     function buildResult(text) {
       return {
@@ -208,7 +186,7 @@ function dispatch(plan) {
     // NDJSON parsing
     child.stdout.on('data', chunk => {
       lineBuf += chunk;
-      resetInactivityTimer();
+      idleController.touch();
       heartbeat();
 
       const lines = lineBuf.split('\n');
@@ -253,10 +231,7 @@ function dispatch(plan) {
             lastFinish.reason, lastFinish.cost, lastFinish.tokens, totalCost, totalTokens);
           // step_finish means a tool call round completed — reset tool execution depth
           // (opencode emits tool_use but no tool_result, so exitToolExecution never fires)
-          if (toolExecutionDepth > 0) {
-            toolExecutionDepth = 0;
-            currentTimeoutMs = IDLE_TIMEOUT_MS;
-          }
+          idleController.forceResetDepth('step_finish');
           // Do NOT settle here. opencode's agentic loop may have more steps.
           // Settlement happens via: STEP_RESULT marker, process exit, or inactivity timeout.
         }
@@ -266,7 +241,7 @@ function dispatch(plan) {
         // opencode emits 'tool_use' (not 'tool_call') for tool execution start
         if (obj.type === 'tool_call' || obj.type === 'tool_use') {
           toolCallCount++;
-          enterToolExecution();
+          idleController.enterToolExecution();
           if (plan.onProgress) {
             try {
               plan.onProgress({
@@ -283,14 +258,14 @@ function dispatch(plan) {
 
         // Tool execution completed — return to IDLE_TIMEOUT
         if (obj.type === 'tool_result') {
-          exitToolExecution();
+          idleController.exitToolExecution();
         }
       }
     });
 
     child.stderr.on('data', chunk => {
       stderr += chunk;
-      resetInactivityTimer();
+      idleController.touch();
       heartbeat();
       if (stderr.length <= 1000) {
         console.log('[opencode-rt] stderr:', chunk.slice(0, 200));
