@@ -703,25 +703,28 @@ function buildSkillContextSection(projectRoot) {
     const skillDir = candidates.find(d => fs.existsSync(d)) || path.join(__dirname, 'skills');
 
     // Extract coding rules from engineer-playbook
-    try {
-      const ep = fs.readFileSync(path.join(skillDir, 'engineer-playbook', 'SKILL.md'), 'utf8');
+    const epPath = path.join(skillDir, 'engineer-playbook', 'SKILL.md');
+    if (fs.existsSync(epPath)) {
+      const ep = fs.readFileSync(epPath, 'utf8');
       const match = ep.match(/## (?:Step 4|Code Style|代碼規範|coding|執行任務)[\s\S]*?(?=\n## |\n---)/i);
       if (match) excerpts.push(match[0].trim().slice(0, 600));
-    } catch {}
+    }
 
     // Extract constraints from blackboard-basics
-    try {
-      const bb = fs.readFileSync(path.join(skillDir, 'blackboard-basics', 'SKILL.md'), 'utf8');
+    const bbPath = path.join(skillDir, 'blackboard-basics', 'SKILL.md');
+    if (fs.existsSync(bbPath)) {
+      const bb = fs.readFileSync(bbPath, 'utf8');
       const match = bb.match(/## (?:設計約束|Design Constraints|6 大約束)[\s\S]*?(?=\n## |\n---)/i);
       if (match) excerpts.push(match[0].trim().slice(0, 400));
-    } catch {}
+    }
 
     // Extract from project-principles skill (common across projects)
-    try {
-      const pp = fs.readFileSync(path.join(skillDir, 'project-principles', 'SKILL.md'), 'utf8');
+    const ppPath = path.join(skillDir, 'project-principles', 'SKILL.md');
+    if (fs.existsSync(ppPath)) {
+      const pp = fs.readFileSync(ppPath, 'utf8');
       const match = pp.match(/## (?:Core Principles|核心原則|Architecture)[\s\S]*?(?=\n## |\n---)/i);
       if (match) excerpts.push(match[0].trim().slice(0, 400));
-    } catch {}
+    }
 
     if (excerpts.length === 0) {
       if (!projectRoot) {

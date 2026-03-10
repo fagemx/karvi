@@ -261,7 +261,11 @@ async function destroyInstance(instanceId, { graceful = true } = {}) {
   // Force kill if still alive
   const child = childProcesses.get(instanceId);
   if (child) {
-    try { child.kill(); } catch {}
+    try {
+      child.kill();
+    } catch (err) {
+      console.error(`[instance-manager] child.kill failed for ${instanceId}:`, err.message);
+    }
     childProcesses.delete(instanceId);
   }
 
@@ -391,7 +395,9 @@ async function destroyAll() {
   const ids = Object.keys(registry.instances).filter(
     id => registry.instances[id].status === 'running' || registry.instances[id].status === 'starting'
   );
-  await Promise.all(ids.map(id => destroyInstance(id).catch(() => {})));
+  await Promise.all(ids.map(id => destroyInstance(id).catch(err => {
+    console.error(`[instance-manager] destroyAll failed for ${id}:`, err.message);
+  })));
 }
 
 module.exports = {

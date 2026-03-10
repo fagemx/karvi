@@ -46,13 +46,17 @@ function ReviewCard({ task, theme: t }: { task: Task; theme: Theme }) {
   const handleApprove = async () => {
     try {
       await updateTaskStatus(task.id, 'approved');
-    } catch {}
+    } catch (err: any) {
+      console.warn(`[reviews] approve failed for ${task.id}:`, err?.message || err);
+    }
   };
 
   const handleReject = async () => {
     try {
       await updateTaskStatus(task.id, 'needs_revision');
-    } catch {}
+    } catch (err: any) {
+      console.warn(`[reviews] reject failed for ${task.id}:`, err?.message || err);
+    }
   };
 
   return (

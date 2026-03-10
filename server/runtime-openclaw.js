@@ -83,7 +83,11 @@ function runOpenclawTurn({ agentId, sessionId, message, timeoutSec = 180, onActi
       const now = Date.now();
       if (now - lastHeartbeat < HEARTBEAT_INTERVAL_MS) return;
       lastHeartbeat = now;
-      try { onActivity(); } catch {}
+      try {
+        onActivity();
+      } catch (err) {
+        console.error('[openclaw-rt] onActivity callback failed:', err.message);
+      }
     }
 
     child.stdout.setEncoding('utf8');

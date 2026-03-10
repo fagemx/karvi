@@ -21,7 +21,9 @@ function resolveClaudePath() {
       const p = execSync('where claude', { encoding: 'utf8', timeout: 5000 })
         .trim().split('\n')[0].trim();
       if (p && fs.existsSync(p)) return p;
-    } catch {}
+    } catch (err) {
+      console.warn('[claude-rt] unable to resolve claude via "where":', err.message);
+    }
     // Fallback: common install location
     const local = path.join(process.env.USERPROFILE || '', '.local/bin/claude.exe');
     if (fs.existsSync(local)) return local;
@@ -127,7 +129,11 @@ function dispatch(plan) {
       const now = Date.now();
       if (now - lastHeartbeat < HEARTBEAT_INTERVAL_MS) return;
       lastHeartbeat = now;
-      try { plan.onActivity(); } catch {}
+      try {
+        plan.onActivity();
+      } catch (err) {
+        console.error('[claude-rt] onActivity callback failed:', err.message);
+      }
     }
 
     // --- Inactivity timeout: resets on every stream event ---

@@ -191,7 +191,9 @@ test('buildEnvelope respects retry_policy timeout over controls', () => {
 // Cleanup
 try {
   fs.rmSync(path.join(artifactStore.ARTIFACT_DIR, testRunId), { recursive: true, force: true });
-} catch {}
+} catch (err) {
+  console.warn('[test-context-compiler] cleanup skipped:', err.message);
+}
 
 console.log(`\n${'─'.repeat(40)}`);
 console.log(`Results: ${passed} passed, ${failed} failed`);

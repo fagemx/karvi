@@ -140,7 +140,9 @@ function cancelTaskFlow(task, board, deps, helpers, opts = {}) {
       try {
         const killResult = deps.stepWorker?.killStep?.(step.step_id);
         if (killResult?.ok) killedSteps++;
-      } catch {}
+      } catch (err) {
+        console.error(`[tasks] cancel killStep failed for ${task.id}/${step.step_id}:`, err.message);
+      }
       deps.stepSchema.transitionStep(step, 'cancelled', { error: reason });
       cancelledSteps++;
     } else if (step.state === 'queued' || step.state === 'failed') {

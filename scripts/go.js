@@ -244,7 +244,9 @@ function runLocalPreflight() {
       lines.push(`  ✓ Runtime CLI found: ${name}`);
       runtimeFound = true;
       break;
-    } catch {}
+    } catch (err) {
+      lines.push(`  - Runtime CLI not available: ${name} (${err.message})`);
+    }
   }
   
   if (!runtimeFound) {

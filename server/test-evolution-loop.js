@@ -102,7 +102,11 @@ function cleanState() {
   // Clean temp data dir — server's ensureBoardExists() creates a fresh default.
   // Uses TEST_DATA_DIR (temp) instead of __dirname to avoid clobbering production board.json.
   for (const f of ['board.json', 'board.json.bak', 'task-log.jsonl']) {
-    try { fs.unlinkSync(path.join(TEST_DATA_DIR, f)); } catch {}
+    try {
+      fs.unlinkSync(path.join(TEST_DATA_DIR, f));
+    } catch (err) {
+      console.warn(`[test-evolution-loop] cleanup skipped for ${f}:`, err.message);
+    }
   }
 }
 

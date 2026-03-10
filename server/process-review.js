@@ -56,6 +56,14 @@ function uid(prefix) {
   return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 }
 
+function safeJsonParse(raw) {
+  try {
+    return JSON.parse(raw);
+  } catch (err) {
+    return null;
+  }
+}
+
 function appendLog(entry) {
   storageBackend.appendLog(LOG_PATH, entry);
 }
@@ -85,11 +93,12 @@ function inferTargetDir(board, task) {
   let targetDir = '';
 
   if (specPath) {
-    try {
-      const specContent = fs.readFileSync(path.join(DIR, specPath), 'utf8');
+    const resolvedSpecPath = path.join(DIR, specPath);
+    if (fs.existsSync(resolvedSpecPath)) {
+      const specContent = fs.readFileSync(resolvedSpecPath, 'utf8');
       const m = specContent.match(/^project\/([a-z0-9-]+)\/$/m);
       if (m) targetDir = path.join(WORKSPACE, 'project', m[1]);
-    } catch {}
+    }
   }
 
   if (!targetDir && task.description) {
@@ -109,7 +118,9 @@ function inferTargetDir(board, task) {
           }
         }
       }
-    } catch {}
+    } catch (err) {
+      console.error('[process-review] inferTargetDir project scan failed:', err.message);
+    }
   }
 
   return targetDir;
@@ -166,7 +177,9 @@ function runDeterministicChecks(targetDir) {
         ? lines.slice(0, 40).join('\n') + `\n... (${lines.length - 80} lines omitted) ...\n` + lines.slice(-40).join('\n')
         : content;
       excerpts.push({ name: f, excerpt: excerpt.slice(0, MAX_CHARS) });
-    } catch {}
+    } catch (err) {
+      console.error(`[process-review] deterministic check failed for ${f}:`, err.message);
+    }
   }
 
   return { issues, files, excerpts };
@@ -235,8 +248,8 @@ Score guide:
   if (result.status !== 0) throw new Error(result.stderr || result.stdout || `exit code ${result.status}`);
 
   let replyText = '';
-  try {
-    const parsed = JSON.parse(result.stdout.trim());
+  const parsed = safeJsonParse(result.stdout.trim());
+  if (parsed) {
     const payloads = parsed?.result?.payloads;
     if (Array.isArray(payloads) && payloads.length > 0) {
       replyText = payloads.map(p => p?.text).filter(Boolean).join('\n\n').trim();
@@ -244,7 +257,7 @@ Score guide:
     if (!replyText) {
       replyText = parsed?.reply || parsed?.text || parsed?.result?.reply || parsed?.result?.text || '';
     }
-  } catch {}
+  }
 
   if (!replyText) replyText = result.stdout.trim();
 
@@ -262,7 +275,11 @@ function parseReviewResult(text) {
   for (let i = lines.length - 1; i >= 0; i--) {
     const m = lines[i].trim().match(/^REVIEW_RESULT:\s*(\{.*\})$/);
     if (m) {
-      try { result = JSON.parse(m[1]); source = 'line'; } catch {}
+      const parsed = safeJsonParse(m[1]);
+      if (parsed) {
+        result = parsed;
+        source = 'line';
+      }
       break;
     }
   }
@@ -270,24 +287,37 @@ function parseReviewResult(text) {
   // Strategy 2: inline
   if (!result) {
     const m = text.match(/REVIEW_RESULT:\s*(\{[^\n]*\})/);
-    if (m) try { result = JSON.parse(m[1]); source = 'inline'; } catch {}
+    if (m) {
+      const parsed = safeJsonParse(m[1]);
+      if (parsed) {
+        result = parsed;
+        source = 'inline';
+      }
+    }
   }
 
   // Strategy 3: JSON code block
   if (!result) {
     const m = text.match(/```(?:json)?\s*\n(\{[\s\S]*?\})\s*\n```/);
     if (m) {
-      try {
-        const p = JSON.parse(m[1]);
-        if (typeof p.score === 'number' || typeof p.pass === 'boolean') { result = p; source = 'code_block'; }
-      } catch {}
+      const parsed = safeJsonParse(m[1]);
+      if (parsed && (typeof parsed.score === 'number' || typeof parsed.pass === 'boolean')) {
+        result = parsed;
+        source = 'code_block';
+      }
     }
   }
 
   // Strategy 4: bare JSON with score or pass
   if (!result) {
     const m = text.match(/\{[^{}]*"(?:score|pass)"\s*:[^{}]*\}/);
-    if (m) try { result = JSON.parse(m[0]); source = 'bare_json'; } catch {}
+    if (m) {
+      const parsed = safeJsonParse(m[0]);
+      if (parsed) {
+        result = parsed;
+        source = 'bare_json';
+      }
+    }
   }
 
   // Strategy 5: keyword inference
@@ -360,7 +390,11 @@ function main() {
 
   // Backup
   if (!args.dryRun) {
-    try { fs.copyFileSync(boardPath, boardPath + '.bak'); } catch {}
+    try {
+      fs.copyFileSync(boardPath, boardPath + '.bak');
+    } catch (err) {
+      console.error('[process-review] board backup failed:', err.message);
+    }
   }
 
   const conv = board.conversations?.[0];
