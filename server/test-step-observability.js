@@ -241,14 +241,17 @@ async function testActivityAwareLockRenewal() {
   console.log('\n📋 Test 4: Activity-Aware Lock Renewal (code verification)');
   // Verify activity-aware logic in server.js retry-poller
   const server = fs.readFileSync(path.join(__dirname, 'server.js'), 'utf8');
-  const hasLockRenewal = server.includes('lastActivity && totalElapsed < maxTotalMs') &&
-                         server.includes('silentMs < graceMs') &&
-                         server.includes('step.lock_expires_at = new Date(Date.now() + timeout + 30_000)');
-  if (!hasLockRenewal) {
-    fail('Lock renewal code', 'Activity-aware lock renewal not found in server.js');
+  const normalized = server.replace(/\r\n/g, '\n');
+  const hasLockRenewal = normalized.includes('lastActivity && totalElapsed < maxTotalMs') &&
+                         normalized.includes('silentMs < graceMs') &&
+                         normalized.includes('step.lock_expires_at = new Date(Date.now() + timeout + 30_000)');
+  const renewalUsesContinue = /step\.lock_expires_at = new Date\(Date\.now\(\) \+ timeout \+ 30_000\)\.toISOString\(\);\n\s*writeBoard\(board\);\n\s*continue;/.test(normalized);
+  const renewalUsesReturn = /step\.lock_expires_at = new Date\(Date\.now\(\) \+ timeout \+ 30_000\)\.toISOString\(\);\n\s*writeBoard\(board\);\n\s*return;/.test(normalized);
+  if (!hasLockRenewal || !renewalUsesContinue || renewalUsesReturn) {
+    fail('Lock renewal code', 'Activity-aware lock renewal control flow (continue vs return) not correct in server.js');
     return;
   }
-  ok('Activity-aware lock renewal in server.js:269-285');
+  ok('Activity-aware lock renewal control flow in server.js:269-285');
 }
 
 async function testDeadLetterDiagnostic() {

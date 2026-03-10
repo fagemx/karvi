@@ -280,7 +280,7 @@ const retryPoller = setInterval(() => {
               console.log(`[retry-poller] ${step.step_id} lock expired but active ${Math.round(silentMs/1000)}s ago, renewing (total: ${Math.round(totalElapsed/1000)}s/${Math.round(maxTotalMs/1000)}s)`);
               step.lock_expires_at = new Date(Date.now() + timeout + 30_000).toISOString();
               writeBoard(board);
-              return;
+              continue;
             }
           }
           const actualError = step.progress?.dispatched_at
