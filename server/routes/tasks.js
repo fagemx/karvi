@@ -2033,3 +2033,6 @@ module.exports.init = function(deps, helpers) {
   deps.redispatchTask = (board, task) => redispatchTask(board, task, deps, helpers);
   deps.dispatchTask = (task, board2, opts) => dispatchTask(task, board2, deps, helpers, opts);
 };
+
+module.exports.countRunningStepsByType = countRunningStepsByType;
+module.exports.canDispatchStepType = canDispatchStepType;
