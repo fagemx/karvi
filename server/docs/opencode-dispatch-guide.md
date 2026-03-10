@@ -1,6 +1,6 @@
 # Opencode Dispatch 操作指南
 
-> 交接文件 — 2026-03-09（updated）
+> 交接文件 — 2026-03-10（updated）
 
 ## 架構總覽
 
@@ -8,6 +8,8 @@
 Karvi Server (port 3461)
   ├── POST /api/projects      ← 建立 task（auto_dispatch 自動接手）
   ├── POST /api/tasks/:id/dispatch  ← 手動 dispatch 單一 task
+  ├── DELETE /api/tasks/:id         ← 刪除單一 task
+  ├── POST /api/tasks/cleanup       ← 批次清理 task
   │
   ├── tryAutoDispatch()        ← 自動流程
   │     ├── worktree.createWorktree()   → .claude/worktrees/GH-XXX/
@@ -21,6 +23,7 @@ Karvi Server (port 3461)
   │     ├── Completion Criteria（5 點 checklist）
   │     ├── Preflight Lessons（歷史經驗）
   │     ├── Protected Decisions（edda 決策）
+  │     ├── Protected Code — DO NOT MODIFY（@protected 標記）
   │     └── STEP_RESULT 格式指令（含 prUrl）
   │
   └── kernel.js                ← 自動推進 + PR metadata 提取
@@ -234,6 +237,56 @@ curl -X POST http://localhost:3461/api/tasks/GH-XXX/steps/GH-XXX:implement/kill
 
 **注意**：不要直接寫 `server/board.json` — server 會用記憶體中的版本覆蓋你的修改。所有操作透過 API。
 
+### 8. 刪除 / 清理 Task
+
+```bash
+# 刪除單一 task（從 board 完全移除）
+curl -X DELETE http://localhost:3461/api/tasks/GH-XXX
+
+# 批次清理 — 移除所有 cancelled + blocked 的 task
+curl -X POST http://localhost:3461/api/tasks/cleanup \
+  -H "Content-Type: application/json" \
+  -d '{"statuses": ["cancelled", "blocked"]}'
+
+# 只清理超過 24 小時的
+curl -X POST http://localhost:3461/api/tasks/cleanup \
+  -H "Content-Type: application/json" \
+  -d '{"statuses": ["cancelled", "blocked"], "older_than_hours": 24}'
+```
+
+**TTL 自動清理**（server 背景執行，每 60 秒檢查）：
+
+| 狀態 | TTL | 行為 |
+|------|-----|------|
+| `cancelled` | 1 小時 | 自動移除 |
+| `blocked`（所有 step dead） | 6 小時 | 自動移除 |
+| `approved` | 7 天 | 歸檔到 `task-log.jsonl` 後移除 |
+
+### 9. 多 Runtime 派發
+
+Karvi 支援同時使用多個 runtime，透過 `model_map` controls 設定每個 runtime 使用的模型：
+
+```bash
+# 設定 model_map — 每個 runtime 可以指定不同模型
+curl -X POST http://localhost:3461/api/controls \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model_map": {
+      "opencode": { "default": "zai-coding-plan/glm-5" },
+      "codex": { "default": "gpt-5.3-codex" }
+    }
+  }'
+
+# 派發時指定 runtime
+npm run go -- 123 --runtime codex
+npm run go -- 124 --runtime opencode
+```
+
+**Runtime 選擇優先順序**：
+1. Task 的 `runtimeHint`（dispatch 時指定）
+2. `controls.preferred_runtime`
+3. 預設 `openclaw`
+
 ## Opencode 設定
 
 **Config 路徑**: `~/.config/opencode/opencode.json`
@@ -313,6 +366,48 @@ curl -X POST http://localhost:3461/api/controls \
 
 **失敗重試**：每個 step 最多 3 次嘗試，backoff 5s → 10s → 20s。3 次都失敗 → step 標記 `dead` → task 標記 `blocked`。
 
+### Protected Code Guard（@protected 防護）
+
+Agent 執行時有三層防護，防止改到標記為 `@protected` 的關鍵代碼：
+
+```
+Layer 1: Pre-warning（事前）
+  buildStepMessage() 掃描 server/*.js 的 @protected 標記
+  → 注入 "## Protected Code — DO NOT MODIFY" 到 prompt
+
+Layer 2: Post-check（事後偵測）
+  validateProtectedDiff() 比對 git diff 和 @protected 範圍
+  → 偵測違規 → PROTECTED_CODE_VIOLATION
+
+Layer 3: Partial Revert + Enriched Retry（修復）
+  只 revert 違規的檔案（不是整個 commit）
+  → retry 時注入所有 @protected 位置到 remediation_hint
+```
+
+**標記格式**：
+```javascript
+// @protected decision:key.name — 不能改的原因
+const criticalCode = true;  // 這行受保護
+
+// 多行保護
+// @protected decision:block.name — 原因
+const a = 1;
+const b = 2;
+// @end-protected
+```
+
+**最多重試 2 次**（`PROTECTED_CODE_VIOLATION: 2`），超過 → step dead → task blocked。
+
+### Idle Detection（共用）
+
+`runtime-utils.js` 的 `createIdleController()` 統一管理 opencode 和 codex 的 idle timeout：
+
+| 狀態 | Timeout | 說明 |
+|------|---------|------|
+| Idle（無 tool 執行） | 120s (opencode) / 300s (codex) | Agent 沒有輸出 → 殺掉 |
+| Tool 執行中 | base timeout（300s 預設） | 工具跑得久不算 idle |
+| Safety guard | 10 分鐘 | depth 卡住自動 reset |
+
 ## 已知問題與限制
 
 | 問題 | 狀態 | 說明 |
@@ -323,6 +418,11 @@ curl -X POST http://localhost:3461/api/controls \
 | Step instruction 太簡陋 | **已修** | 改為 Role + Required Actions + Deliverable 結構 |
 | Implement 沒有 contract | **已修** | `STEP_DEFAULT_CONTRACTS: { implement: { deliverable: 'pr' } }` |
 | Opencode idle timeout | **已修** | opencode 發 `tool_use` 事件（非 `tool_call`），runtime 現已正確處理，tool 執行期 timeout 提升至 base timeout |
+| Idle detection 重複代碼 | **已修** | `runtime-utils.js` 的 `createIdleController()` 統一管理（GH-318） |
+| Protected 全 commit revert | **已修** | 改為 partial revert — 只還原違規檔案，保留有效工作（GH-319） |
+| Agent 不知道 @protected | **已修** | implement prompt 注入 "Protected Code — DO NOT MODIFY" 區段（GH-319） |
+| 失敗 task 堆積 | **已修** | TTL 自動清理 + `DELETE` + `POST /api/tasks/cleanup` 批次清理（GH-321） |
+| codex model_map 解析錯誤 | **已修** | `step-worker` 沒傳 `runtimeHint` 到 `buildDispatchPlan`，導致 codex 用到 opencode 的模型 |
 | Server 重啟後 board 覆蓋 | 已知 | Server 記憶體版本覆蓋 disk 版本，不要直接改 board.json |
 | full pipeline test flaky | 已知 | `test-bridge.js` 的 full pipeline test 偶爾 timeout |
 
@@ -342,3 +442,6 @@ curl -X POST http://localhost:3461/api/controls \
 | 跨專案 worktree 建錯地方 | `target_repo` 沒正確傳遞 | 已修（GH-250），用 `/api/projects` + `target_repo` |
 | 發新 task 覆蓋整個 board | 舊 `/api/project` 用 `=` 覆寫 taskPlan | 已修（GH-250），改為 merge 模式 |
 | `/api/project` vs `/api/projects` | 兩個只差一個 s 的 endpoint | 已合併（GH-251），用 `/api/projects` |
+| Agent 改到 @protected 行 | 全 commit revert 丟掉所有工作 | 已改為 partial revert，只還原違規檔案（GH-319） |
+| codex 用錯模型 | `runtimeHint` 沒傳遞，fallback 到 opencode 的 model_map | 已修，`step-worker` 傳 `runtimeHint` 到 `buildDispatchPlan` |
+| 失敗 task 無法刪除 | `DELETE /api/tasks/:id` 不存在 | 已加（GH-321），另有批次清理 + TTL 自動清理 |
