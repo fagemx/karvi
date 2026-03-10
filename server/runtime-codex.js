@@ -134,11 +134,23 @@ function dispatch(plan) {
       }
     }
 
-    // Windows: .cmd shims must be invoked via cmd.exe
-    const spawnCmd = process.platform === 'win32' ? 'cmd.exe' : CODEX_EXE;
-    const spawnArgs = process.platform === 'win32'
-      ? ['/d', '/s', '/c', CODEX_EXE, ...args]
-      : args;
+    // Resolve spawn command: prefer direct node invocation to avoid cmd.exe ENOENT in Git Bash
+    let spawnCmd, spawnArgs;
+    if (process.platform === 'win32' && CODEX_EXE.endsWith('.cmd')) {
+      // .cmd shim wraps: node <prefix>/node_modules/@openai/codex/bin/codex.js
+      const prefix = path.dirname(CODEX_EXE);
+      const jsEntry = path.join(prefix, 'node_modules', '@openai', 'codex', 'bin', 'codex.js');
+      if (fs.existsSync(jsEntry)) {
+        spawnCmd = process.execPath; // node
+        spawnArgs = [jsEntry, ...args];
+      } else {
+        spawnCmd = 'cmd.exe';
+        spawnArgs = ['/d', '/s', '/c', CODEX_EXE, ...args];
+      }
+    } else {
+      spawnCmd = CODEX_EXE;
+      spawnArgs = args;
+    }
 
     const child = spawn(spawnCmd, spawnArgs, {
       cwd: workDir,
