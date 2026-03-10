@@ -54,6 +54,23 @@ module.exports = function controlsRoutes(req, res, helpers, deps) {
                 }
               }
             }
+            else if (key === 'model_map' && (val === null || typeof val === 'object')) {
+              if (!val) {
+                board.controls[key] = {};
+              } else {
+                const clean = {};
+                for (const [rt, mapping] of Object.entries(val)) {
+                  if (mapping && typeof mapping === 'object') {
+                    const rtClean = {};
+                    for (const [k, v] of Object.entries(mapping)) {
+                      if (typeof v === 'string' && v.trim()) rtClean[k] = v.trim();
+                    }
+                    if (Object.keys(rtClean).length > 0) clean[rt] = rtClean;
+                  }
+                }
+                board.controls[key] = { ...(board.controls[key] || {}), ...clean };
+              }
+            }
             else if (key === 'max_concurrent_by_type') {
               if (val === null || typeof val !== 'object') {
                 board.controls[key] = null;

@@ -113,11 +113,14 @@ function createStepWorker(deps) {
     const plan = mgmt.buildDispatchPlan(board, task, {
       mode: 'dispatch',
       timeoutSec,
+      stepType: envelope.step_type,
       steps: task.steps,
       workingDir: task.worktreeDir || null,
     });
     // Enforce: runtime timeout must match lock timeout (prevent misalignment)
     plan.timeoutSec = timeoutSec;
+    // Envelope-level model_hint (from model_map) overrides plan default
+    if (envelope.model_hint) plan.modelHint = envelope.model_hint;
     const stepMessage = buildStepMessage(envelope, plan.artifacts, board, task);
     plan.message = stepMessage;
     plan.stepId = envelope.step_id;

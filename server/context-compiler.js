@@ -19,6 +19,14 @@ const STEP_DEFAULT_CONTRACTS = {
   implement: { deliverable: 'pr' },
 };
 
+function resolveEnvelopeModel(runtimeHint, stepType, controls) {
+  const map = controls?.model_map;
+  if (!map || typeof map !== 'object') return null;
+  const runtimeMap = map[runtimeHint];
+  if (!runtimeMap || typeof runtimeMap !== 'object') return null;
+  return (stepType && runtimeMap[stepType]) || runtimeMap.default || null;
+}
+
 function buildEnvelope(decision, runState, deps) {
   const { task, steps } = runState;
   if (!task || !steps) return null;
@@ -93,7 +101,7 @@ function buildEnvelope(decision, runState, deps) {
       const timeoutSec = stepTimeouts[stepType] || stepTimeouts.default || 300;
       return timeoutSec * 1000;
     })(),
-    model_hint: null,
+    model_hint: resolveEnvelopeModel(targetStep.runtime_hint, stepType, runState.controls),
     contract: task.contract || STEP_DEFAULT_CONTRACTS[stepType] || null,
     scope_config: task.scope || null,
   };

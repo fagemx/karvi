@@ -30,6 +30,7 @@ const DEFAULT_CONTROLS = {
   target_repo: null,             // absolute path to target repo (null = karvi itself / dogfood mode)
   repo_map: {},                  // GitHub slug → local absolute path, e.g. { "owner/repo": "C:/path/to/repo" }
   auto_merge_on_approve: false,  // when true, auto squash-merge PR after review LGTM
+  model_map: {},                  // { "opencode": { "plan": "anthropic/claude-opus-4", "default": "anthropic/claude-sonnet-4" }, "codex": { ... } }
   step_timeout_sec: {
     plan: 300,
     implement: 600,
@@ -325,6 +326,24 @@ function preferredModelFor(agentId) {
   return AGENT_MODEL_MAP[String(agentId || '').trim()] || null;
 }
 
+/**
+ * Resolve model hint for a dispatch plan.
+ * Priority: model_map[runtime][stepType] > model_map[runtime].default > (openclaw) AGENT_MODEL_MAP > null
+ * CLI runtimes (opencode, codex, claude) only get a model if model_map is configured.
+ */
+function resolveModelHint(runtimeHint, stepType, controls, task) {
+  const map = controls.model_map;
+  if (map && typeof map === 'object') {
+    const runtimeMap = map[runtimeHint];
+    if (runtimeMap && typeof runtimeMap === 'object') {
+      const model = (stepType && runtimeMap[stepType]) || runtimeMap.default || null;
+      if (model) return model;
+    }
+  }
+  // CLI runtimes don't understand AGENT_MODEL_MAP IDs — return null unless model_map configured
+  if (runtimeHint === 'claude' || runtimeHint === 'opencode' || runtimeHint === 'codex') return null;
+  return preferredModelFor(task.assignee);
+}
 
 function getControls(board) {
   return { ...DEFAULT_CONTROLS, ...(board.controls || {}) };
@@ -1020,8 +1039,8 @@ function buildDispatchPlan(board, task, options = {}) {
     runtimeHint,
     userId,
     agentId: task.assignee,
-    // @protected decision:dispatch.modelHint — AGENT_MODEL_MAP has OpenClaw IDs that CLI runtimes don't recognize; passing them causes silent failure
-    modelHint: (runtimeHint === 'claude' || runtimeHint === 'opencode' || runtimeHint === 'codex') ? null : preferredModelFor(task.assignee),
+    // Model selection: model_map[runtime][stepType] > model_map[runtime].default > (openclaw only) AGENT_MODEL_MAP > null
+    modelHint: resolveModelHint(runtimeHint, options.stepType || null, controls, task),
     timeoutSec: options.timeoutSec || 300,
     sessionId: task.childSessionKey || null,
     message,
