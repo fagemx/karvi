@@ -15,6 +15,14 @@ const mgmt = require('./management');
 const { resolveRepoRoot } = require('./repo-resolver');
 const LOCK_GRACE_MS = 30_000; // 30s grace on top of step timeout
 
+// Strip <think>...</think> blocks from model output (some providers leak reasoning tokens)
+const THINK_TAG_RE = /<think>[\s\S]*?<\/think>/g;
+function stripThinkTags(text) {
+  if (!text) return text;
+  const cleaned = text.replace(THINK_TAG_RE, '').trim();
+  return cleaned || text; // fallback to original if stripping removes everything
+}
+
 const TEMPLATES_DIR = path.join(__dirname, 'templates');
 
 function renderTemplate(template, vars) {
@@ -331,16 +339,17 @@ function createStepWorker(deps) {
       // 5. Parse output — try STEP_RESULT from extracted reply first (critical for
       //    JSON-wrapping runtimes like claude --output-format json where STEP_RESULT
       //    is inside parsed.result, not in raw stdout)
-      const replyText = rt.extractReplyText(result.parsed, result.stdout);
+      const rawReplyText = rt.extractReplyText(result.parsed, result.stdout);
+      const replyText = stripThinkTags(rawReplyText);
       usage = rt.extractUsage?.(result.parsed, result.stdout) || null;
       sessionId = rt.extractSessionId?.(result.parsed) || null;
-      stepResult = parseStepResult(replyText) || parseStepResult(result.stdout);
+      stepResult = parseStepResult(replyText) || parseStepResult(rawReplyText) || parseStepResult(result.stdout);
 
       if (stepResult) {
         // Structured output from agent
         const validStatuses = ['succeeded', 'needs_revision'];
         status = validStatuses.includes(stepResult.status) ? stepResult.status : 'failed';
-        summary = stepResult.summary || replyText?.slice(0, 500) || null;
+        summary = stripThinkTags(stepResult.summary) || replyText?.slice(0, 500) || null;
         failure = status === 'failed' ? {
           failure_signature: stepResult.error || replyText?.slice(0, 200),
           failure_mode: stepResult.failure_mode || null,

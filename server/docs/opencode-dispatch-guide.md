@@ -103,6 +103,53 @@ curl -X POST http://localhost:3461/api/projects \
 
 Karvi 可以對任何 Git 專案派發任務，只需在 task 裡加 `target_repo` 欄位。
 
+#### target_repo 接受的格式
+
+| 格式 | 範例 | 說明 |
+|------|------|------|
+| **絕對路徑**（推薦） | `"C:\\ai_agent\\edda"` | 直接使用，最可靠 |
+| **GitHub slug** + repo_map | `"fagemx/edda"` | 透過 `controls.repo_map` 查表轉成絕對路徑 |
+| ❌ 相對路徑 | `"../edda"` | **被拒絕**（回傳 null，走 fallback） |
+| ❌ 無分隔符字串 | `"ai_agentedda"` | **被拒絕**（#326） |
+
+> **⚠️ Windows backslash 陷阱**：在 JS 字串裡 `"C:\ai_agent\edda"` 會被解析為 `"C:ai_agentedda"`（`\a` 和 `\e` 是 escape sequence）。**必須用雙反斜線** `"C:\\ai_agent\\edda"` 或正斜線 `"C:/ai_agent/edda"`。JSON payload 同理。
+
+#### 方式 1：CLI（最簡單）
+
+```bash
+# --repo 直接接路徑（shell 會正確傳遞，不需要手動 escape）
+npm run go -- 138 --repo C:\ai_agent\edda
+```
+
+#### 方式 2：slug + repo_map（推薦跨專案常態使用）
+
+先設定 repo_map：
+
+```bash
+curl -X POST http://localhost:3461/api/controls \
+  -H "Content-Type: application/json" \
+  -d '{"repo_map": {"fagemx/edda": "C:/ai_agent/edda"}}'
+```
+
+然後 task 的 `target_repo` 用 slug：
+
+```bash
+curl -X POST http://localhost:3461/api/projects \
+  -H "Content-Type: application/json" \
+  -d '{
+    "title":"EDDA-138: scope derivation",
+    "tasks":[{
+      "id":"EDDA-138",
+      "title":"feat: smarter auto-claim scope derivation",
+      "assignee":"engineer_lite",
+      "target_repo":"fagemx/edda",
+      "description":"Implement GitHub issue fagemx/edda#138. See https://github.com/fagemx/edda/issues/138"
+    }]
+  }'
+```
+
+#### 方式 3：絕對路徑（curl）
+
 ```bash
 curl -X POST http://localhost:3461/api/projects \
   -H "Content-Type: application/json" \
@@ -139,7 +186,7 @@ curl -X POST http://localhost:3461/api/projects \
 
 ```jsonc
 // 格式 1：id-based（推薦，支援任意 ID）
-{ "id": "EDDA-138", "title": "...", "target_repo": "C:\\ai_agent\\edda" }
+{ "id": "EDDA-138", "title": "...", "target_repo": "fagemx/edda" }
 
 // 格式 2：issue-based（legacy，自動加 GH- 前綴）
 { "issue": 138, "title": "...", "target_repo": "C:\\ai_agent\\edda" }
@@ -334,9 +381,13 @@ curl -X POST http://localhost:3461/api/projects \
 
 ### Provider 配置（opencode.json）
 
-opencode 用專案根目錄的 `opencode.json` 定義自訂供應商。**Karvi dispatch 時 opencode 會讀這個檔案。**
+opencode 用專案根目錄的 `opencode.json` 定義自訂供應商。
 
-**檔案位置**：`<project-root>/opencode.json`
+> **⚠️ 跨專案 dispatch 關鍵**：opencode 讀的 `opencode.json` 是 **agent cwd 下的**（即 target repo 的 worktree），不是 karvi 目錄下的。如果你對 edda 專案 dispatch 任務並使用 T8Star model，**edda 專案也必須有 `opencode.json`**，否則 opencode 找不到 provider。
+>
+> 簡單做法：把 karvi 的 `opencode.json` 複製到每個 target repo 根目錄。
+
+**檔案位置**：`<project-root>/opencode.json`（每個要用自訂 provider 的 repo 都要有）
 
 ```jsonc
 {
@@ -547,6 +598,9 @@ const b = 2;
 | spawn ENOENT 誤報 timeout | worktree 目錄不存在，spawn 瞬間失敗但等 300s 才發現 | 已修，dispatch 前驗 cwd + ENOENT 歸類 CONFIG（不重試） |
 | worktree 消失後 dispatch 失敗 | cancel 刪 worktree 但 redispatch 不重建 | 已修，step-worker 自動重建缺失 worktree |
 | 跨專案 worktree 建錯地方 | `target_repo` 沒正確傳遞 | 已修（GH-250），用 `/api/projects` + `target_repo` |
+| `target_repo` 路徑拼錯 | Windows backslash 未轉義：`"C:\ai_agent\edda"` → `"C:ai_agentedda"` | 用雙反斜線 `"C:\\ai_agent\\edda"` 或正斜線 `"C:/ai_agent/edda"`，或用 slug + repo_map（GH-326） |
+| step 失敗 worktree 被清 | agent 寫好的代碼隨 worktree 一起被自動刪除 | 待修（GH-325）：失敗時保留 worktree |
+| 跨專案 dispatch opencode 找不到 provider | `opencode.json` 只在 karvi 目錄，target repo 沒有 | 把 `opencode.json` 複製到每個 target repo 根目錄 |
 | 發新 task 覆蓋整個 board | 舊 `/api/project` 用 `=` 覆寫 taskPlan | 已修（GH-250），改為 merge 模式 |
 | `/api/project` vs `/api/projects` | 兩個只差一個 s 的 endpoint | 已合併（GH-251），用 `/api/projects` |
 | Agent 改到 @protected 行 | 全 commit revert 丟掉所有工作 | 已改為 partial revert，只還原違規檔案（GH-319） |

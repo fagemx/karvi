@@ -34,7 +34,10 @@ function resolveValue(val, repoMap) {
     const mapped = repoMap[val];
     return mapped ? path.resolve(mapped) : null;
   }
-  return path.resolve(val);
+  // Reject ambiguous values (not absolute, not slug).
+  // Common cause: unescaped Windows backslashes → "C:\ai_agent\edda" becomes "C:ai_agentedda"
+  console.warn('[repo-resolver] rejecting ambiguous target_repo: %s (use absolute path or owner/repo slug)', val);
+  return null;
 }
 
 /**

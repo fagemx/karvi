@@ -71,9 +71,9 @@ test('returns null for unmapped slug', () => {
   assert.strictEqual(resolveValue('fagemx/edda', {}), null);
 });
 
-test('resolves relative non-slug path (legacy)', () => {
+test('rejects ambiguous relative non-slug path', () => {
   const result = resolveValue('some-dir', {});
-  assert.strictEqual(result, path.resolve('some-dir'));
+  assert.strictEqual(result, null);
 });
 
 // --- resolveRepoRoot ---
