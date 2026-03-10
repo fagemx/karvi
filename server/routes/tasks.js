@@ -12,6 +12,8 @@
  * POST /api/tasks/:id/status — manual status control
  * POST /api/tasks/:id/dispatch — per-task dispatch
  * POST /api/tasks/dispatch — bulk dispatch
+ * DELETE /api/tasks/:id — remove task from board
+ * POST /api/tasks/cleanup — batch remove tasks by status/age
  * GET/POST /api/tasks/:id/digest — L2 digest
  * POST /api/dispatch-next — S6 atomic dispatch-next
  * POST /api/retro — trigger retro
@@ -182,6 +184,45 @@ function cancelTaskFlow(task, board, deps, helpers, opts = {}) {
   }
 
   return { killedSteps, cancelledSteps, worktreeCleanup };
+}
+
+/**
+ * Remove a task from board entirely.
+ * Cancels running steps, cleans worktree, archives to task-log, splices from array.
+ */
+function removeTask(board, taskId, deps, helpers) {
+  const tasks = board.taskPlan?.tasks || [];
+  const idx = tasks.findIndex(t => t.id === taskId);
+  if (idx === -1) return null;
+  const task = tasks[idx];
+
+  // Cancel running steps first (if not already terminal)
+  if (task.status !== 'cancelled' && task.status !== 'approved') {
+    cancelTaskFlow(task, board, deps, helpers, { reason: 'Task removed' });
+  }
+
+  // Worktree cleanup (if cancelTaskFlow didn't already handle it)
+  if (task.worktreeDir) {
+    const repoRoot = resolveRepoRoot(task, board) || path.resolve(__dirname, '..', '..');
+    task.worktreeDir = null;
+    task.worktreeBranch = null;
+    setTimeout(() => {
+      try { worktreeHelper.removeWorktree(repoRoot, taskId); }
+      catch (e) { console.error(`[tasks] removeTask worktree cleanup failed: ${e.message}`); }
+    }, 3000);
+  }
+
+  // Archive to task-log before removal
+  helpers.appendLog({
+    ts: helpers.nowIso(),
+    event: 'task_removed',
+    taskId: task.id,
+    finalStatus: task.status,
+    title: task.title,
+  });
+
+  tasks.splice(idx, 1);
+  return task;
 }
 
 // ---------------------------------------------------------------------------
@@ -2021,6 +2062,62 @@ module.exports = function tasksRoutes(req, res, helpers, deps) {
     if (board.signals.length > 500) board.signals = board.signals.slice(-500);
     helpers.writeBoard(board);
     json(res, 200, { ok: true, name, deleted: true });
+    return;
+  }
+
+  // --- DELETE /api/tasks/:id — remove task from board ---
+  const deleteTaskMatch = req.url.match(/^\/api\/tasks\/([^/]+)$/);
+  if (req.method === 'DELETE' && deleteTaskMatch) {
+    const taskId = decodeURIComponent(deleteTaskMatch[1]);
+    const board = helpers.readBoard();
+    const removed = removeTask(board, taskId, deps, helpers);
+    if (!removed) return json(res, 404, { error: `Task ${taskId} not found` });
+    helpers.writeBoard(board);
+    helpers.broadcastSSE('board', board);
+    return json(res, 200, { removed: taskId, finalStatus: removed.status });
+  }
+
+  // --- POST /api/tasks/cleanup — batch remove tasks by status/age ---
+  if (req.method === 'POST' && req.url === '/api/tasks/cleanup') {
+    let body = '';
+    req.on('data', c => (body += c));
+    req.on('end', () => {
+      try {
+        const payload = JSON.parse(body || '{}');
+        const statuses = payload.statuses || ['cancelled', 'blocked'];
+        const olderThanHours = payload.older_than_hours || 0;
+        const board = helpers.readBoard();
+        const now = Date.now();
+        const cutoff = olderThanHours > 0 ? now - (olderThanHours * 3600_000) : now;
+
+        const toRemove = (board.taskPlan?.tasks || []).filter(t => {
+          if (!statuses.includes(t.status)) return false;
+          // For blocked: only remove if ALL steps are dead/cancelled (no active steps)
+          if (t.status === 'blocked') {
+            const hasActive = (t.steps || []).some(s => s.state === 'queued' || s.state === 'running');
+            if (hasActive) return false;
+          }
+          if (olderThanHours <= 0) return true;
+          const ts = t.completedAt || t.startedAt || t.createdAt;
+          if (!ts) return true;
+          return new Date(ts).getTime() <= cutoff;
+        });
+
+        const removedIds = [];
+        for (const t of toRemove) {
+          removeTask(board, t.id, deps, helpers);
+          removedIds.push(t.id);
+        }
+
+        if (removedIds.length > 0) {
+          helpers.writeBoard(board);
+          helpers.broadcastSSE('board', board);
+        }
+        json(res, 200, { removed: removedIds, count: removedIds.length });
+      } catch (err) {
+        json(res, 500, { error: err.message });
+      }
+    });
     return;
   }
 
