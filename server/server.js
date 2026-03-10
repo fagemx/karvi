@@ -331,7 +331,7 @@ const retryPoller = setInterval(() => {
 const CLEANUP_POLL_MS = 60_000;
 const TTL_CANCELLED_MS = 1 * 3600_000;       // 1 hour
 const TTL_BLOCKED_DEAD_MS = 6 * 3600_000;    // 6 hours
-const TTL_APPROVED_MS = 7 * 24 * 3600_000;   // 7 days
+const TTL_APPROVED_MS = 24 * 3600_000;        // 24 hours
 const cleanupPoller = setInterval(() => {
   try {
     const board = readBoard();
@@ -349,8 +349,8 @@ const cleanupPoller = setInterval(() => {
       if (t.status === 'cancelled' && age > TTL_CANCELLED_MS) {
         shouldRemove = true;
       } else if (t.status === 'blocked' && age > TTL_BLOCKED_DEAD_MS) {
-        const hasActive = (t.steps || []).some(s => s.state === 'queued' || s.state === 'running');
-        if (!hasActive) shouldRemove = true;
+        const hasRunning = (t.steps || []).some(s => s.state === 'running');
+        if (!hasRunning) shouldRemove = true;
       } else if (t.status === 'approved' && age > TTL_APPROVED_MS) {
         shouldRemove = true;
       }

@@ -2094,8 +2094,8 @@ module.exports = function tasksRoutes(req, res, helpers, deps) {
           if (!statuses.includes(t.status)) return false;
           // For blocked: only remove if ALL steps are dead/cancelled (no active steps)
           if (t.status === 'blocked') {
-            const hasActive = (t.steps || []).some(s => s.state === 'queued' || s.state === 'running');
-            if (hasActive) return false;
+            const hasRunning = (t.steps || []).some(s => s.state === 'running');
+            if (hasRunning) return false;
           }
           if (olderThanHours <= 0) return true;
           const ts = t.completedAt || t.startedAt || t.createdAt;
