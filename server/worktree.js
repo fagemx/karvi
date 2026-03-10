@@ -63,6 +63,23 @@ function copyEssentialFiles(repoRoot, worktreePath) {
   if (fs.existsSync(srcAgentsMd)) {
     fs.copyFileSync(srcAgentsMd, destAgentsMd);
   }
+
+  // opencode.json — custom provider config (e.g., T8Star)
+  // If the target repo doesn't have one, copy from karvi root so cross-project
+  // dispatch can find custom providers. (GH-328)
+  const destOpencode = path.join(worktreePath, 'opencode.json');
+  if (!fs.existsSync(destOpencode)) {
+    // Try target repo root first, then karvi package root
+    const srcFromRepo = path.join(repoRoot, 'opencode.json');
+    const karviRoot = path.resolve(__dirname, '..');
+    const srcFromKarvi = path.join(karviRoot, 'opencode.json');
+    const src = fs.existsSync(srcFromRepo) ? srcFromRepo
+              : fs.existsSync(srcFromKarvi) ? srcFromKarvi
+              : null;
+    if (src) {
+      fs.copyFileSync(src, destOpencode);
+    }
+  }
 }
 
 /**
