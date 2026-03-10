@@ -62,6 +62,12 @@ npm run go -- 279 -y
 # 指定 skill
 npm run go -- 279 --skill pr
 
+# 指定 runtime
+npm run go -- 279 --runtime opencode
+
+# 指定 model（per-task，覆蓋 model_map）
+npm run go -- 279 --runtime opencode --model custom-ai-t8star-cn/gpt-5.3-codex-high
+
 # 指定 repo 路徑
 npm run go -- 138 --repo C:\ai_agent\edda
 ```
@@ -84,6 +90,8 @@ curl -X POST http://localhost:3461/api/projects \
       "id":"GH-XXX",
       "title":"feat(scope): 具體標題",
       "assignee":"engineer_lite",
+      "runtimeHint":"opencode",
+      "modelHint":"custom-ai-t8star-cn/gpt-5.3-codex-high",
       "description":"Implement GitHub issue #XXX. 詳細描述。See https://github.com/fagemx/karvi/issues/XXX"
     }]
   }'
@@ -262,12 +270,11 @@ curl -X POST http://localhost:3461/api/tasks/cleanup \
 | `blocked`（所有 step dead） | 6 小時 | 自動移除 |
 | `approved` | 7 天 | 歸檔到 `task-log.jsonl` 後移除 |
 
-### 9. 多 Runtime 派發
+### 9. 多 Runtime + 多 Model 派發
 
-Karvi 支援同時使用多個 runtime，透過 `model_map` controls 設定每個 runtime 使用的模型：
+#### 全域 model_map（所有同 runtime task 共用）
 
 ```bash
-# 設定 model_map — 每個 runtime 可以指定不同模型
 curl -X POST http://localhost:3461/api/controls \
   -H "Content-Type: application/json" \
   -d '{
@@ -276,14 +283,50 @@ curl -X POST http://localhost:3461/api/controls \
       "codex": { "default": "gpt-5.3-codex" }
     }
   }'
-
-# 派發時指定 runtime
-npm run go -- 123 --runtime codex
-npm run go -- 124 --runtime opencode
 ```
 
-**Runtime 選擇優先順序**：
-1. Task 的 `runtimeHint`（dispatch 時指定）
+#### Per-task model（每個 task 各用不同 model）
+
+```bash
+# Task A: T8Star
+npm run go -- 100 --runtime opencode --model custom-ai-t8star-cn/gpt-5.3-codex-high
+
+# Task B: z.ai
+npm run go -- 101 --runtime opencode --model zai-coding-plan/glm-5
+
+# Task C: Anthropic via T8Star
+npm run go -- 102 --runtime opencode --model custom-ai-t8star-cn/claude-sonnet-4-6
+
+# Task D: 不帶 --model，走 model_map 或 opencode 預設
+npm run go -- 103 --runtime opencode
+```
+
+curl 方式（task payload 帶 `modelHint`）：
+
+```bash
+curl -X POST http://localhost:3461/api/projects \
+  -H "Content-Type: application/json" \
+  -d '{
+    "title":"Multi-model dispatch",
+    "tasks":[
+      {"id":"T-A","title":"task A","assignee":"engineer_lite","runtimeHint":"opencode","modelHint":"custom-ai-t8star-cn/gpt-5.3-codex-high"},
+      {"id":"T-B","title":"task B","assignee":"engineer_lite","runtimeHint":"opencode","modelHint":"zai-coding-plan/glm-5"}
+    ]
+  }'
+```
+
+#### Model 選擇優先順序
+
+```
+1. task.modelHint          ← per-task 覆蓋（--model flag 或 payload）
+2. model_map[runtime][stepType]  ← 全域，per step type
+3. model_map[runtime].default    ← 全域 fallback
+4. null                          ← opencode 用自己的 opencode.json 預設
+```
+
+#### Runtime 選擇優先順序
+
+1. Task 的 `runtimeHint`（`--runtime` flag）
 2. `controls.preferred_runtime`
 3. 預設 `openclaw`
 
