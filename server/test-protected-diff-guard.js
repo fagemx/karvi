@@ -289,6 +289,43 @@ test('passes when only non-protected lines are modified', () => {
   }
 });
 
+// --- scanProtectedAnnotations ---
+console.log('\n--- scanProtectedAnnotations ---');
+
+const { scanProtectedAnnotations } = require('./protected-diff-guard');
+
+test('scans directory for @protected annotations', () => {
+  const tmpDir = path.join(os.tmpdir(), `scan-test-${Date.now()}`);
+  fs.mkdirSync(tmpDir, { recursive: true });
+  try {
+    fs.writeFileSync(path.join(tmpDir, 'a.js'), '// @protected decision:a.key \u2014 reason A\ncode();\n');
+    fs.writeFileSync(path.join(tmpDir, 'b.js'), 'no annotations here\n');
+    fs.mkdirSync(path.join(tmpDir, 'sub'));
+    fs.writeFileSync(path.join(tmpDir, 'sub', 'c.js'), '// @protected decision:c.key \u2014 reason C\ndeep();\n');
+    // .hidden dir should be skipped
+    fs.mkdirSync(path.join(tmpDir, '.hidden'));
+    fs.writeFileSync(path.join(tmpDir, '.hidden', 'd.js'), '// @protected decision:d.key \u2014 skip\nx();\n');
+
+    const results = scanProtectedAnnotations(tmpDir);
+    assert.ok(results.length >= 2, `expected >= 2 annotations, got ${results.length}`);
+    assert.ok(results.some(r => r.file === 'a.js' && r.key === 'a.key'));
+    assert.ok(results.some(r => r.file === 'sub/c.js' && r.key === 'c.key'));
+    assert.ok(!results.some(r => r.key === 'd.key'), 'should skip .hidden dir');
+  } finally {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  }
+});
+
+test('returns empty for nonexistent directory', () => {
+  const results = scanProtectedAnnotations('/nonexistent/path');
+  assert.deepStrictEqual(results, []);
+});
+
+test('returns empty for null input', () => {
+  const results = scanProtectedAnnotations(null);
+  assert.deepStrictEqual(results, []);
+});
+
 // --- Summary ---
 console.log(`\n${'='.repeat(40)}`);
 console.log(`${passed} passed, ${failed} failed`);

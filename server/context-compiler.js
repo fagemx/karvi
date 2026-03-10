@@ -72,6 +72,16 @@ function buildEnvelope(decision, runState, deps) {
       failure_mode: failedOutput?.failure?.failure_mode || null,
       remediation_hint: decision.retry?.reason || null,
     };
+    // For PROTECTED violations, inject all protected annotations so agent knows every line to avoid
+    if (retryContext.failure_mode === 'PROTECTED_CODE_VIOLATION') {
+      const { scanProtectedAnnotations } = require('./protected-diff-guard');
+      const annotations = scanProtectedAnnotations(path.resolve(__dirname));
+      if (annotations.length > 0) {
+        retryContext.remediation_hint =
+          `Do NOT modify these @protected lines: ${annotations.map(a => a.file + ':' + a.line).join(', ')}. ` +
+          `Work around them — extract/refactor other code while leaving protected lines untouched.`;
+      }
+    }
   }
 
   const envelope = {

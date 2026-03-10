@@ -412,16 +412,43 @@ function createStepWorker(deps) {
             retryable: true,
           };
           summary = `Agent modified protected code. Violations: ${violationSummary}`.slice(0, 500);
-          // Attempt revert if auto-finalize already committed
+          // Partial revert — only revert files with violations, keep valid work
           try {
+            const workDir = plan.workingDir || plan.cwd;
+            const violatedFiles = [...new Set(guardResult.violations.map(v => v.file))];
             if (!postCheckResult?.hasUncommittedChanges) {
-              execSync('git revert --no-edit HEAD', {
-                cwd: plan.workingDir || plan.cwd,
-                encoding: 'utf8',
-                timeout: 10000,
+              // Already committed — restore violated files from parent commit
+              for (const file of violatedFiles) {
+                try {
+                  execSync(`git checkout HEAD~1 -- "${file}"`, {
+                    cwd: workDir, encoding: 'utf8', timeout: 5000,
+                  });
+                } catch { /* file may be new — delete instead */
+                  const fullPath = path.join(workDir, file);
+                  if (fs.existsSync(fullPath)) fs.unlinkSync(fullPath);
+                }
+              }
+              // Amend commit to exclude violated files
+              execSync('git add -A && git commit --amend --no-edit', {
+                cwd: workDir, encoding: 'utf8', timeout: 10000,
               });
+              console.log(`[step-worker] partial revert: ${violatedFiles.length} file(s) reverted, rest preserved`);
+            } else {
+              // Uncommitted — restore violated files from HEAD
+              for (const file of violatedFiles) {
+                try {
+                  execFileSync('git', ['checkout', '--', file], {
+                    cwd: workDir, encoding: 'utf8', timeout: 5000,
+                  });
+                } catch {
+                  const fullPath = path.join(workDir, file);
+                  if (fs.existsSync(fullPath)) fs.unlinkSync(fullPath);
+                }
+              }
             }
-          } catch { /* revert failed — violation report triggers retry anyway */ }
+          } catch (revertErr) {
+            console.error('[step-worker] partial revert failed:', revertErr.message);
+          }
         }
       }
 
@@ -1164,6 +1191,25 @@ function buildStepMessage(envelope, upstreamArtifacts, board, task) {
     const protectedLines = mgmt.buildProtectedDecisionsSection();
     if (protectedLines.length > 0) {
       lines.push(...protectedLines);
+    }
+  }
+
+  // @protected source annotations — warn agent about immutable code regions
+  if (shouldInjectSection(envelope.step_type, 'protected_decisions')) {
+    const { scanProtectedAnnotations } = require('./protected-diff-guard');
+    const annotations = scanProtectedAnnotations(path.resolve(__dirname));
+    if (annotations.length > 0) {
+      lines.push('', '## Protected Code — DO NOT MODIFY');
+      lines.push('The following lines have @protected annotations. Do NOT modify, delete, or move these lines:');
+      const cap = 20;
+      const shown = annotations.slice(0, cap);
+      for (const a of shown) {
+        lines.push(`- \`${a.file}:${a.line}\` — ${a.reason}`);
+      }
+      if (annotations.length > cap) {
+        lines.push(`- ... and ${annotations.length - cap} more`);
+      }
+      lines.push('If your task requires changing these lines, report it as a blocker instead of modifying them.');
     }
   }
 
