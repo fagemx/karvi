@@ -272,7 +272,7 @@ curl -X POST http://localhost:3461/api/controls \
   -H "Content-Type: application/json" \
   -d '{
     "model_map": {
-      "opencode": { "default": "zai-coding-plan/glm-5" },
+      "opencode": { "default": "custom-ai-t8star-cn/gpt-5.3-codex-high" },
       "codex": { "default": "gpt-5.3-codex" }
     }
   }'
@@ -289,19 +289,83 @@ npm run go -- 124 --runtime opencode
 
 ## Opencode 設定
 
-**Config 路徑**: `~/.config/opencode/opencode.json`
+### Provider 配置（opencode.json）
+
+opencode 用專案根目錄的 `opencode.json` 定義自訂供應商。**Karvi dispatch 時 opencode 會讀這個檔案。**
+
+**檔案位置**：`<project-root>/opencode.json`
 
 ```jsonc
 {
   "$schema": "https://opencode.ai/config.json",
-  "model": "zai-coding-plan/glm-5",          // 目前使用的模型
-  "small_model": "zai-coding-plan/glm-4.5-air",
-  "provider": { ... },
-  "mcp": { ... }
+  "provider": {
+    "custom-ai-t8star-cn": {           // provider ID — model_map 用這個名字
+      "name": "T8Star AI",
+      "npm": "@ai-sdk/openai-compatible",
+      "env": ["T8STAR_API_KEY"],        // 從環境變數讀 API key
+      "models": {
+        "gpt-5.3-codex-high": {         // model ID — T8Star 後台的 model 名
+          "name": "GPT 5.3 Codex High",
+          "tool_call": true,
+          "limit": { "context": 200000, "output": 16384 }
+        }
+      },
+      "options": {
+        "baseURL": "https://ai.t8star.cn/v1"   // T8Star OpenAI 相容 API
+      }
+    }
+  }
 }
 ```
 
-**換模型**：直接改 `"model"` 欄位，重啟 server 不需要（每次 dispatch 是新 session）。
+### model_map 格式
+
+model_map 的值格式是 `<provider-id>/<model-id>`，對應 opencode.json 裡的定義：
+
+```
+custom-ai-t8star-cn/gpt-5.3-codex-high
+├── provider ID ──┘              │
+└── model ID ────────────────────┘
+```
+
+**不帶 model_map 時**：opencode 用 opencode.json 裡的預設 provider + model。
+**帶 model_map 時**：Karvi 傳 `--model <provider/model>` 給 opencode，覆蓋預設。
+
+### 環境變數
+
+T8Star API key 必須在 `.env` 裡設定：
+
+```bash
+# .env
+T8STAR_API_KEY=sk-your-key-here
+```
+
+opencode 啟動時從 `process.env.T8STAR_API_KEY` 讀取。Karvi server 透過 `load-env.js` 載入 `.env`，spawn opencode 時繼承 env。
+
+### 踩過的坑
+
+| 症狀 | 根因 | 解法 |
+|------|------|------|
+| T8Star 後台無調用記錄 | model_map 指向錯誤的 provider（如 `zai-coding-plan/glm-5`）| model_map 改成 `custom-ai-t8star-cn/gpt-5.3-codex-high` |
+| T8Star 回 401 未提供令牌 | `T8STAR_API_KEY` 在 shell 是空字串，`.env` 的值沒覆蓋 | 確保 `.env` 有值，load-env 用 `!process.env[key]` 判斷 |
+| opencode idle 120s 被殺 | API key 為空，opencode 無法呼叫 API 但不 crash | 同上，確保 key 正確 |
+| opencode 跑成功但用錯 provider | model_map 的 provider ID 不是 opencode.json 裡定義的 | 確保 `<provider-id>` 對應 opencode.json 的 key |
+
+### 驗證 T8Star 連線
+
+```bash
+# 1. 確認 key 有效
+curl -s https://ai.t8star.cn/v1/models \
+  -H "Authorization: Bearer $(grep T8STAR_API_KEY .env | cut -d= -f2)" \
+  | node -e "const d=JSON.parse(require('fs').readFileSync(0,'utf8')); console.log(d.data?.length, 'models available')"
+
+# 2. 確認 opencode 能呼叫 T8Star
+opencode run --model "custom-ai-t8star-cn/gpt-5.3-codex-high" --format json -- "say hello"
+
+# 3. 確認 model_map 正確
+curl -s http://localhost:3461/api/controls | node -e "const d=JSON.parse(require('fs').readFileSync(0,'utf8')); console.log('opencode model:', d.model_map?.opencode?.default)"
+# 應該輸出: custom-ai-t8star-cn/gpt-5.3-codex-high
+```
 
 ## Step Pipeline 流程
 

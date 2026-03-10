@@ -332,6 +332,8 @@ function preferredModelFor(agentId) {
  * CLI runtimes (opencode, codex, claude) only get a model if model_map is configured.
  */
 function resolveModelHint(runtimeHint, stepType, controls, task) {
+  // Per-task model override takes highest priority
+  if (task.modelHint) return task.modelHint;
   const map = controls.model_map;
   if (map && typeof map === 'object') {
     const runtimeMap = map[runtimeHint];

@@ -104,7 +104,6 @@ function dispatch(plan) {
     }
 
     const env = { ...process.env };
-    console.log('[opencode-rt] T8STAR_API_KEY:', env.T8STAR_API_KEY ? 'set(len:'+env.T8STAR_API_KEY.length+')' : 'EMPTY/MISSING');
 
     // Windows: .cmd shims must be invoked via cmd.exe
     const spawnCmd = process.platform === 'win32' ? 'cmd.exe' : OPENCODE_EXE;

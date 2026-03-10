@@ -64,6 +64,7 @@ function normalizeTask(entry, repo) {
     };
     if (entry.scope) t.scope = entry.scope;
     if (entry.runtimeHint) t.runtimeHint = entry.runtimeHint;
+    if (entry.modelHint) t.modelHint = entry.modelHint;
     return t;
   }
   if (entry.id && typeof entry.id === 'string') {
@@ -80,6 +81,7 @@ function normalizeTask(entry, repo) {
     };
     if (entry.scope) t.scope = entry.scope;
     if (entry.runtimeHint) t.runtimeHint = entry.runtimeHint;
+    if (entry.modelHint) t.modelHint = entry.modelHint;
     return t;
   }
   throw new Error(`task must have either 'issue' (number) or 'id' (string): ${JSON.stringify(entry)}`);
@@ -174,7 +176,7 @@ module.exports = function projectsRoutes(req, res, helpers, deps) {
         }
 
         const ACTIVE_STATUSES = ['in_progress', 'dispatched'];
-        const SAFE_FIELDS = ['title', 'description', 'assignee', 'depends', 'spec', 'skill', 'estimate', 'target_repo', 'runtimeHint'];
+        const SAFE_FIELDS = ['title', 'description', 'assignee', 'depends', 'spec', 'skill', 'estimate', 'target_repo', 'runtimeHint', 'modelHint'];
         const existingIds = new Set(board.taskPlan.tasks.map(t => t.id));
         const newTasks = [];
         const taskIds = [];
@@ -214,6 +216,7 @@ module.exports = function projectsRoutes(req, res, helpers, deps) {
             if (t.source) newTask.source = t.source;
             if (t.scope) newTask.scope = t.scope;
             if (t.runtimeHint) newTask.runtimeHint = t.runtimeHint;
+            if (t.modelHint) newTask.modelHint = t.modelHint;
             if (t.githubIssue) newTask.githubIssue = t.githubIssue;
             if (projectId) {
               newTask.projectId = projectId;
