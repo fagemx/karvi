@@ -43,6 +43,7 @@ function resolveCodexPath() {
 const CODEX_EXE = resolveCodexPath();
 
 const killTree = require('./kill-tree');
+const { createIdleController } = require('./runtime-utils');
 
 /**
  * Dispatch a plan to Codex headless CLI.
@@ -90,10 +91,9 @@ function dispatch(plan) {
     fs.writeFileSync(msgFile, plan.message, 'utf8');
 
     const baseTimeoutMs = (plan.timeoutSec || 300) * 1000;
-    const TOOL_TIMEOUT_MS = baseTimeoutMs;
     // Codex does extended reasoning before emitting events — 120s too aggressive
     const IDLE_TIMEOUT_MS = Math.min(baseTimeoutMs, 300_000);
-    let currentTimeoutMs = IDLE_TIMEOUT_MS;
+    const TOOL_TIMEOUT_MS = baseTimeoutMs;
     
     console.log('[codex-rt] spawn:', CODEX_EXE);
     console.log('[codex-rt] model:', model || '(default)');
@@ -177,7 +177,18 @@ function dispatch(plan) {
     let totalTokens = { input: 0, output: 0 };
     let totalCost = 0;
     let toolCallCount = 0;
-    let toolExecutionDepth = 0;
+
+    const idleController = createIdleController({
+      idleTimeoutMs: IDLE_TIMEOUT_MS,
+      toolTimeoutMs: TOOL_TIMEOUT_MS,
+      logPrefix: '[codex-rt]',
+      onTimeout: (timeoutMs, depth) => {
+        console.log('[codex-rt] idle for %ds (depth=%d), killing',
+          Math.round(timeoutMs / 1000), depth);
+        settle(new Error(`codex idle for ${Math.round(timeoutMs / 1000)}s`));
+        killTree(child.pid);
+      }
+    });
 
     child.stdout.setEncoding('utf8');
     child.stderr.setEncoding('utf8');
@@ -187,7 +198,7 @@ function dispatch(plan) {
     function settle(err, result) {
       if (settled) return;
       settled = true;
-      clearTimeout(inactivityTimer);
+      idleController.dispose();
       clearInterval(heartbeatInterval);
       try {
         fs.unlinkSync(msgFile);
@@ -197,40 +208,7 @@ function dispatch(plan) {
       if (err) reject(err); else resolve(result);
     }
 
-    function enterToolExecution() {
-      toolExecutionDepth++;
-      if (toolExecutionDepth === 1) {
-        currentTimeoutMs = TOOL_TIMEOUT_MS;
-        console.log('[codex-rt] entering tool execution (depth=%d), timeout=%ds',
-          toolExecutionDepth, Math.round(currentTimeoutMs / 1000));
-        resetInactivityTimer();
-      }
-    }
-
-    function exitToolExecution() {
-      if (toolExecutionDepth > 0) {
-        toolExecutionDepth--;
-        if (toolExecutionDepth === 0) {
-          currentTimeoutMs = IDLE_TIMEOUT_MS;
-          console.log('[codex-rt] exited tool execution (depth=%d), timeout=%ds',
-            toolExecutionDepth, Math.round(currentTimeoutMs / 1000));
-          resetInactivityTimer();
-        }
-      }
-    }
-
-    let inactivityTimer = null;
-    function resetInactivityTimer() {
-      if (settled) return;
-      clearTimeout(inactivityTimer);
-      inactivityTimer = setTimeout(() => {
-        console.log('[codex-rt] idle for %ds (depth=%d), killing',
-          Math.round(currentTimeoutMs / 1000), toolExecutionDepth);
-        settle(new Error(`codex idle for ${Math.round(currentTimeoutMs / 1000)}s`));
-        killTree(child.pid);
-      }, currentTimeoutMs);
-    }
-    resetInactivityTimer();
+    idleController.touch();
 
     function buildResult(text) {
       return {
@@ -252,7 +230,7 @@ function dispatch(plan) {
     // item.started, item.completed, error
     child.stdout.on('data', chunk => {
       lineBuf += chunk;
-      resetInactivityTimer();
+      idleController.touch();
       heartbeat();
 
       const lines = lineBuf.split('\n');
@@ -287,7 +265,7 @@ function dispatch(plan) {
         // item.started — track tool/command usage for progress
         if (obj.type === 'item.started' && obj.item) {
           if (obj.item.type !== 'agent_message') {
-            enterToolExecution();
+            idleController.enterToolExecution();
           }
           toolCallCount++;
           if (plan.onProgress) {
@@ -306,7 +284,7 @@ function dispatch(plan) {
 
         // item.completed — tool execution finished (only for non-agent_message items)
         if (obj.type === 'item.completed' && obj.item?.type !== 'agent_message') {
-          exitToolExecution();
+          idleController.exitToolExecution();
         }
 
         // turn.completed — accumulate tokens/cost + reset tool execution depth
@@ -319,10 +297,7 @@ function dispatch(plan) {
             usage, totalTokens);
           // turn.completed means all items in this turn are done — reset depth
           // (prevents stale depth from missed item.completed events)
-          if (toolExecutionDepth > 0) {
-            toolExecutionDepth = 0;
-            currentTimeoutMs = IDLE_TIMEOUT_MS;
-          }
+          idleController.forceResetDepth('turn.completed');
         }
 
         // turn.failed — log but don't settle (codex may have more turns)
@@ -345,7 +320,7 @@ function dispatch(plan) {
 
     child.stderr.on('data', chunk => {
       stderr += chunk;
-      resetInactivityTimer();
+      idleController.touch();
       heartbeat();
       if (stderr.length <= 1000) {
         console.log('[codex-rt] stderr:', chunk.slice(0, 200));
