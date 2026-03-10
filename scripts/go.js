@@ -26,12 +26,14 @@ if (args.length === 0 || args.includes('--help') || args.includes('-h')) {
     npm run go -- 123              dispatch issue #123
     npm run go -- 123 124 125      dispatch multiple issues
     npm run go -- 123 --skill pr   use specific skill
+    npm run go -- 123 --runtime codex  use specific runtime
     npm run go -- 123 --repo /path override repo path
     npm run go -- 123 -y           skip confirmation
 
   Options:
-    --skill <name>   Skill to use for the task
-    --repo <path>    Working directory (default: auto-detect from git)
+    --skill <name>     Skill to use for the task
+    --runtime <name>   Runtime to use (openclaw, codex, claude, opencode)
+    --repo <path>      Working directory (default: auto-detect from git)
     -y, --yes        Skip confirmation prompt
     -h, --help       Show this help
 `);
@@ -41,12 +43,14 @@ if (args.length === 0 || args.includes('--help') || args.includes('-h')) {
 const issues = [];
 let skill = null;
 let repoOverride = null;
+let runtimeHint = null;
 let skipConfirm = false;
 
 for (let i = 0; i < args.length; i++) {
   const arg = args[i];
   if (arg === '--skill' && args[i + 1]) { skill = args[++i]; continue; }
   if (arg === '--repo' && args[i + 1]) { repoOverride = args[++i]; continue; }
+  if (arg === '--runtime' && args[i + 1]) { runtimeHint = args[++i]; continue; }
   if (arg === '-y' || arg === '--yes') { skipConfirm = true; continue; }
   if (/^\d+$/.test(arg)) { issues.push(Number(arg)); continue; }
   // Support OWNER/REPO#123 or ORG-123 style
@@ -340,6 +344,7 @@ async function main() {
   }
   console.log(`  ├─ Repo:    ${repo || '(not detected)'}`);
   if (skill) console.log(`  ├─ Skill:   ${skill}`);
+  if (runtimeHint) console.log(`  ├─ Runtime: ${runtimeHint}`);
   console.log(`  └─ Server:  localhost:${PORT}`);
   console.log('');
 
@@ -354,6 +359,7 @@ async function main() {
   const tasks = issueData.map(({ num, title }) => {
     const t = { issue: num, title, assignee: 'engineer_lite' };
     if (skill) t.skill = skill;
+    if (runtimeHint) t.runtimeHint = runtimeHint;
     return t;
   });
 
