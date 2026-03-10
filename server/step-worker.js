@@ -110,12 +110,14 @@ function createStepWorker(deps) {
     // 1. Build dispatch plan — compute timeout once, share between lock and runtime
     const timeoutMs = envelope.timeout_ms || 300_000;
     const timeoutSec = Math.ceil(timeoutMs / 1000);
+    const stepRuntimeHint = envelope.runtime_hint || task.runtimeHint || null;
     const plan = mgmt.buildDispatchPlan(board, task, {
       mode: 'dispatch',
       timeoutSec,
       stepType: envelope.step_type,
       steps: task.steps,
       workingDir: task.worktreeDir || null,
+      runtimeHint: stepRuntimeHint,
     });
     // Enforce: runtime timeout must match lock timeout (prevent misalignment)
     plan.timeoutSec = timeoutSec;
