@@ -3,30 +3,10 @@
  */
 
 const assert = require('assert');
-
-// Helper functions copied from tasks.js for testing
-function countRunningStepsByType(stepType, board) {
-  let count = 0;
-  const tasks = board?.taskPlan?.tasks || [];
-  for (let i = 0; i < tasks.length; i++) {
-    const steps = tasks[i].steps;
-    if (!steps) continue;
-    for (let j = 0; j < steps.length; j++) {
-      if (steps[j].type === stepType && steps[j].state === 'running') {
-        count++;
-      }
-    }
-  }
-  return count;
-}
-
-function canDispatchStepType(stepType, board, mgmt) {
-  const ctrl = mgmt.getControls(board);
-  const limit = ctrl.max_concurrent_by_type?.[stepType];
-  if (!limit) return true;
-  const running = countRunningStepsByType(stepType, board);
-  return running < limit;
-}
+const {
+  countRunningStepsByType,
+  canDispatchStepType,
+} = require('./routes/tasks');
 
 // Mock mgmt for testing
 const mockMgmt = {
