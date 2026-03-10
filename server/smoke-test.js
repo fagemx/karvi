@@ -877,6 +877,58 @@ async function runSuite(target) {
     } catch (e) { fail('Static file without token → 200', e.message); }
   }
 
+  // --- Task cleanup API ---
+  {
+    // Create a dummy task, then DELETE it
+    const dummyId = `SMOKE-CLEANUP-${Date.now()}`;
+    try {
+      const createR = await post(port, '/api/tasks', {
+        tasks: [{ id: dummyId, title: 'Smoke cleanup test', description: 'temp', assignee: 'engineer_lite' }],
+      });
+      if (createR.status !== 200) throw new Error(`create failed: ${createR.status}`);
+
+      // Cancel it first so it's terminal
+      const cancelR = await post(port, `/api/tasks/${dummyId}/status`, { status: 'cancelled' });
+      if (cancelR.status !== 200) throw new Error(`cancel failed: ${cancelR.status}`);
+
+      // DELETE it
+      const delR = await del(port, `/api/tasks/${dummyId}`, {});
+      if (delR.status === 200) {
+        const body = JSON.parse(delR.body);
+        if (body.removed === dummyId) {
+          ok('DELETE /api/tasks/:id → removes task');
+        } else {
+          fail('DELETE /api/tasks/:id → removes task', `unexpected body: ${delR.body}`);
+        }
+      } else {
+        fail('DELETE /api/tasks/:id → removes task', `status ${delR.status}`);
+      }
+
+      // Verify 404 on re-delete
+      const reDelR = await del(port, `/api/tasks/${dummyId}`, {});
+      if (reDelR.status === 404) {
+        ok('DELETE /api/tasks/:id → 404 on missing');
+      } else {
+        fail('DELETE /api/tasks/:id → 404 on missing', `status ${reDelR.status}`);
+      }
+    } catch (e) { fail('DELETE /api/tasks/:id', e.message); }
+
+    // POST /api/tasks/cleanup
+    try {
+      const cleanR = await post(port, '/api/tasks/cleanup', { statuses: ['cancelled'], older_than_hours: 0 });
+      if (cleanR.status === 200) {
+        const body = JSON.parse(cleanR.body);
+        if (typeof body.count === 'number' && Array.isArray(body.removed)) {
+          ok('POST /api/tasks/cleanup → batch remove');
+        } else {
+          fail('POST /api/tasks/cleanup → batch remove', `unexpected body: ${cleanR.body}`);
+        }
+      } else {
+        fail('POST /api/tasks/cleanup → batch remove', `status ${cleanR.status}`);
+      }
+    } catch (e) { fail('POST /api/tasks/cleanup', e.message); }
+  }
+
   console.log(`  ── ${passed} passed, ${failed} failed ──`);
   return { passed, failed };
 }
