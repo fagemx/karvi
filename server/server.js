@@ -152,6 +152,7 @@ const projectsRoutes = require('./routes/projects');
 const tasksRoutes = require('./routes/tasks');
 const statusRoutes = require('./routes/status');
 const discoveryRoutes = require('./routes/discovery');
+const versionRoutes = require('./routes/version');
 
 // --- Route chain ---
 const routes = [
@@ -168,6 +169,7 @@ const routes = [
   projectsRoutes,
   tasksRoutes,
   statusRoutes,
+  versionRoutes,
   discoveryRoutes,
 ];
 
