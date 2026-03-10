@@ -89,8 +89,13 @@ function detectRepo() {
 // --- Fetch issue info from GitHub ---
 function fetchIssue(num) {
   try {
+    // If --repo points to a different directory, resolve its GitHub slug for gh -R
+    const repoFlag = repoOverride ? (() => {
+      const slug = repoSlugFromDir(repoOverride);
+      return slug ? `-R ${slug}` : '';
+    })() : '';
     const raw = execSync(
-      `gh issue view ${num} --json title,state,url`,
+      `gh issue view ${num} ${repoFlag} --json title,state,url`,
       { encoding: 'utf8', timeout: 10000, stdio: ['pipe', 'pipe', 'pipe'] }
     );
     return JSON.parse(raw);
@@ -309,7 +314,9 @@ function dispatch(payload) {
 
 // --- Main ---
 async function main() {
+  const path = require('path');
   const repo = detectRepo();
+  const targetRepo = repoOverride ? path.resolve(repoOverride) : null;
 
   // Preflight check
   const preflight = await runPreflight();
@@ -345,6 +352,7 @@ async function main() {
     console.log(`  ├─ #${num} — ${title}`);
   }
   console.log(`  ├─ Repo:    ${repo || '(not detected)'}`);
+  if (targetRepo) console.log(`  ├─ Target:  ${targetRepo}`);
   if (skill) console.log(`  ├─ Skill:   ${skill}`);
   if (runtimeHint) console.log(`  ├─ Runtime: ${runtimeHint}`);
   console.log(`  └─ Server:  localhost:${PORT}`);
@@ -362,6 +370,7 @@ async function main() {
     const t = { issue: num, title, assignee: 'engineer_lite' };
     if (skill) t.skill = skill;
     if (runtimeHint) t.runtimeHint = runtimeHint;
+    if (targetRepo) t.target_repo = targetRepo;
     return t;
   });
 
