@@ -355,7 +355,22 @@ const cleanupPoller = setInterval(() => {
 
       if (shouldRemove) {
         if (t.status === 'approved') {
-          appendLog({ ts: new Date().toISOString(), event: 'task_archived', taskId: t.id, title: t.title, status: t.status });
+          const stepSummary = (t.steps || []).map(s => ({ id: s.step_id, state: s.state }));
+          appendLog({
+            ts: new Date().toISOString(), event: 'task_archived', taskId: t.id,
+            title: t.title, status: t.status, branch: t.worktreeBranch || null,
+            steps: stepSummary, createdAt: t.createdAt, completedAt: t.completedAt,
+          });
+        }
+        // Worktree cleanup
+        if (t.worktreeDir) {
+          const repoRoot = path.resolve(__dirname);
+          const worktreeHelper = require('./worktree');
+          const cleanId = t.id;
+          setTimeout(() => {
+            try { worktreeHelper.removeWorktree(repoRoot, cleanId); }
+            catch (e) { console.error(`[cleanup] worktree cleanup failed for ${cleanId}: ${e.message}`); }
+          }, 3000);
         }
         appendLog({ ts: new Date().toISOString(), event: 'task_removed', taskId: t.id, finalStatus: t.status });
         tasks.splice(i, 1);
@@ -416,6 +431,7 @@ try {
 function gracefulShutdown() {
   console.log('[server] shutting down...');
   clearInterval(retryPoller);
+  clearInterval(cleanupPoller);
   villageScheduler?.stop();
   telemetryHandle?.stop();
   usageHandle?.stop();
