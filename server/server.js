@@ -364,8 +364,9 @@ const cleanupPoller = setInterval(() => {
             steps: stepSummary, createdAt: t.createdAt, completedAt: t.completedAt,
           });
         }
-        // Worktree cleanup
+        // Worktree cleanup — log path before removal so user can salvage code
         if (t.worktreeDir) {
+          console.log(`[cleanup] removing worktree for ${t.id}: ${t.worktreeDir} (status: ${t.status})`);
           const repoRoot = path.resolve(__dirname);
           const worktreeHelper = require('./worktree');
           const cleanId = t.id;
@@ -374,7 +375,7 @@ const cleanupPoller = setInterval(() => {
             catch (e) { console.error(`[cleanup] worktree cleanup failed for ${cleanId}: ${e.message}`); }
           }, 3000);
         }
-        appendLog({ ts: new Date().toISOString(), event: 'task_removed', taskId: t.id, finalStatus: t.status });
+        appendLog({ ts: new Date().toISOString(), event: 'task_removed', taskId: t.id, finalStatus: t.status, worktreeDir: t.worktreeDir || null });
         tasks.splice(i, 1);
         removed++;
       }

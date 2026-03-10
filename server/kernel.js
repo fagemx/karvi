@@ -276,7 +276,9 @@ function createKernel(deps) {
         if (latestTask) {
           latestTask.status = 'blocked';
           latestTask.blocker = { reason: `Dead letter: ${decision.rule}`, askedAt: helpers.nowIso() };
-          cleanupWorktree(latestTask, taskId, latestBoard);
+          // Preserve worktree on failure — agent may have written code that hasn't been
+          // committed yet. Deleting it permanently loses work. Worktree will be cleaned
+          // up when the task is manually cancelled/deleted or re-dispatched. (GH-325)
         }
         latestBoard.signals.push({
           id: helpers.uid('sig'), ts: helpers.nowIso(), by: 'kernel',
