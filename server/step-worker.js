@@ -1186,16 +1186,14 @@ function buildStepMessage(envelope, upstreamArtifacts, board, task) {
     lines.push('', 'Fix the issues listed above. Do NOT re-implement from scratch — only address the review findings.');
   }
 
-  // Protected edda decisions — prevent agents from reverting critical fixes
+  // Protected edda decisions + @protected source annotations
   if (shouldInjectSection(envelope.step_type, 'protected_decisions')) {
     const protectedLines = mgmt.buildProtectedDecisionsSection();
     if (protectedLines.length > 0) {
       lines.push(...protectedLines);
     }
-  }
 
-  // @protected source annotations — warn agent about immutable code regions
-  if (shouldInjectSection(envelope.step_type, 'protected_decisions')) {
+    // @protected source annotations — warn agent about immutable code regions
     const { scanProtectedAnnotations } = require('./protected-diff-guard');
     const annotations = scanProtectedAnnotations(path.resolve(__dirname));
     if (annotations.length > 0) {

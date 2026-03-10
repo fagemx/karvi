@@ -5,6 +5,7 @@
  * input envelope with objective, constraints, retry context, and budget.
  * No dependency on conversation history — purely artifact-driven.
  */
+const path = require('path');
 const { BUDGET_DEFAULTS } = require('./route-engine');
 
 const STEP_OBJECTIVES = {
