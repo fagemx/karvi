@@ -979,7 +979,9 @@
           el('ctrl-timeout').value = ctrl.review_timeout_sec || 180;
           el('ctrl-agent').value = ctrl.review_agent || 'engineer_lite';
         }
-      } catch {}
+      } catch (err) {
+        console.warn('[ui] failed to load controls:', err.message);
+      }
     }
 
     function renderControls() {
@@ -1196,7 +1198,10 @@
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
       });
-      const data = await res.json().catch(() => ({}));
+      const data = await res.json().catch((err) => {
+        console.warn('[ui] failed to parse POST response JSON:', err.message);
+        return {};
+      });
       if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
       return data;
     }

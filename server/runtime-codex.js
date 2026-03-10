@@ -32,7 +32,9 @@ function resolveCodexPath() {
       if (cmd && fs.existsSync(cmd.trim())) return cmd.trim();
       const first = lines[0]?.trim();
       if (first && fs.existsSync(first)) return first;
-    } catch {}
+    } catch (err) {
+      console.warn('[codex-rt] unable to resolve codex via "where":', err.message);
+    }
   }
 
   return 'codex';
@@ -107,7 +109,11 @@ function dispatch(plan) {
       const now = Date.now();
       if (now - lastHeartbeat < HEARTBEAT_INTERVAL_MS) return;
       lastHeartbeat = now;
-      try { plan.onActivity(); } catch {}
+      try {
+        plan.onActivity();
+      } catch (err) {
+        console.error('[codex-rt] onActivity callback failed:', err.message);
+      }
     }
 
     // Validate cwd exists before spawn (fail immediately, not after 300s timeout)
@@ -123,7 +129,9 @@ function dispatch(plan) {
       try {
         const token = execSync('gh auth token', { encoding: 'utf8', timeout: 5000 }).trim();
         if (token) env.GH_TOKEN = token;
-      } catch {}
+      } catch (err) {
+        console.warn('[codex-rt] unable to read gh auth token:', err.message);
+      }
     }
 
     // Windows: .cmd shims must be invoked via cmd.exe
@@ -169,7 +177,11 @@ function dispatch(plan) {
       settled = true;
       clearTimeout(inactivityTimer);
       clearInterval(heartbeatInterval);
-      try { fs.unlinkSync(msgFile); } catch {}
+      try {
+        fs.unlinkSync(msgFile);
+      } catch (err) {
+        console.warn('[codex-rt] temp message cleanup failed:', err.message);
+      }
       if (err) reject(err); else resolve(result);
     }
 
@@ -274,7 +286,9 @@ function dispatch(plan) {
                 tool_calls: toolCallCount,
                 tokens: { ...totalTokens },
               });
-            } catch {}
+            } catch (err) {
+              console.error('[codex-rt] onProgress callback failed:', err.message);
+            }
           }
         }
 

@@ -10,7 +10,9 @@ function killTree(pid) {
     } else {
       process.kill(-pid, 'SIGKILL');
     }
-  } catch {}
+  } catch (err) {
+    console.error(`[kill-tree] failed to kill process tree for pid=${pid}:`, err.message);
+  }
 }
 
 module.exports = killTree;

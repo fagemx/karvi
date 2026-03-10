@@ -243,7 +243,11 @@ function test_cache_rebuild() {
   assertEqual(result.tokens.output, 2000, 'rebuilt tokens.output should be 2000');
   assertEqual(result.events, 5, 'rebuilt events should be 5');
 
-  try { fs.rmSync(freshDir, { recursive: true, force: true }); } catch {}
+  try {
+    fs.rmSync(freshDir, { recursive: true, force: true });
+  } catch (err) {
+    console.warn('[test-usage] cleanup skipped:', err.message);
+  }
 }
 
 // --- Test 10: SSE connect event tracking ---

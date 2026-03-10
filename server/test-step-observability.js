@@ -282,10 +282,14 @@ async function cleanup() {
       if (task.worktreeDir && fs.existsSync(task.worktreeDir)) {
         try {
           fs.rmSync(task.worktreeDir, { recursive: true, force: true });
-        } catch {}
+        } catch (err) {
+          console.warn(`[test-step-observability] worktree cleanup skipped for ${task.id}:`, err.message);
+        }
       }
     }
-  } catch {}
+  } catch (err) {
+    console.warn('[test-step-observability] global cleanup skipped:', err.message);
+  }
 }
 
 async function main() {

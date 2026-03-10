@@ -65,7 +65,9 @@ export function useSSE() {
       fetch(`${serverUrl}/api/board`, { headers })
         .then((r) => r.json())
         .then((b) => setBoard(b))
-        .catch(() => {});
+        .catch((err) => {
+          console.warn('[useSSE] initial board fetch failed:', err?.message || err);
+        });
     });
 
     es.addEventListener('board', (e) => {

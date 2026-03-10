@@ -216,7 +216,9 @@ function createStepWorker(deps) {
             elapsed_ms: now - startMs,
           };
           helpers.writeBoard(pgBoard);
-        } catch {}
+        } catch (err) {
+          console.error(`[step-worker] onProgress write failed for ${envelope.step_id}:`, err.message);
+        }
       };
       // Write initial progress before spawn (so progress is never undefined)
       try {
@@ -236,7 +238,9 @@ function createStepWorker(deps) {
           };
           helpers.writeBoard(initBoard);
         }
-      } catch {}
+      } catch (err) {
+        console.error(`[step-worker] initial progress write failed for ${envelope.step_id}:`, err.message);
+      }
 
       let result;
       const ac = new AbortController();

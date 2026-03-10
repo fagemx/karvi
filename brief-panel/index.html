@@ -624,9 +624,13 @@ function startPoll() {
                 try {
                     const { taskId, data } = JSON.parse(e.data);
                     if (taskId === TASK_ID && data) { brief = data; render(); }
-                } catch {}
+                } catch (err) {
+                    console.warn('[brief-panel] invalid SSE payload:', err.message);
+                }
             });
-        } catch {}
+        } catch (err) {
+            console.warn('[brief-panel] SSE initialization failed:', err.message);
+        }
     }
 }
 

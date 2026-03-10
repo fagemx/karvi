@@ -42,7 +42,7 @@ function boardExists(boardPath) {
 
 function ensureLogFile(logPath) {
   if (!fs.existsSync(logPath)) {
-    try { fs.writeFileSync(logPath, '', 'utf8'); } catch {}
+    fs.writeFileSync(logPath, '', 'utf8');
   }
 }
 

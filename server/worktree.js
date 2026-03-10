@@ -87,7 +87,11 @@ function createWorktree(repoRoot, taskId) {
     }
     // Broken worktree — remove empty dir and recreate
     console.log(`[worktree] broken worktree detected for ${taskId} (no .git marker), recreating`);
-    try { fs.rmSync(worktreePath, { recursive: true, force: true }); } catch {}
+    try {
+      fs.rmSync(worktreePath, { recursive: true, force: true });
+    } catch (err) {
+      console.error(`[worktree] failed to remove broken worktree dir for ${taskId}:`, err.message);
+    }
   }
 
   // Ensure parent dir exists
@@ -100,15 +104,17 @@ function createWorktree(repoRoot, taskId) {
   try {
     execFileSync('git', ['branch', '-D', branch], { cwd: repoRoot, stdio: 'pipe', timeout: 5000 });
     console.log(`[worktree] cleaned up ghost branch ${branch}`);
-  } catch {
+  } catch (err) {
     // Branch doesn't exist — expected for first run
+    console.log(`[worktree] ghost branch cleanup skipped for ${branch}:`, err.message);
   }
 
   // Prune stale worktree references that point to deleted directories
   try {
     execFileSync('git', ['worktree', 'prune'], { cwd: repoRoot, stdio: 'pipe', timeout: 5000 });
-  } catch {
+  } catch (err) {
     // Non-fatal
+    console.warn('[worktree] prune before add failed:', err.message);
   }
 
   execFileSync('git', ['worktree', 'add', worktreePath, '-b', branch], {
@@ -134,7 +140,9 @@ function removeWorktree(repoRoot, taskId) {
   // Prune stale worktree references first
   try {
     execFileSync('git', ['worktree', 'prune'], { cwd: repoRoot, stdio: 'pipe', timeout: 5000 });
-  } catch {}
+  } catch (err) {
+    console.warn('[worktree] prune before remove failed:', err.message);
+  }
 
   // Remove worktree directory if it exists
   if (fs.existsSync(worktreePath)) {
@@ -147,13 +155,19 @@ function removeWorktree(repoRoot, taskId) {
     } catch (err) {
       console.error(`[worktree] git worktree remove failed for ${taskId}:`, err.message);
       // Fallback: force-delete the directory so no broken empty dir remains
-      try { fs.rmSync(worktreePath, { recursive: true, force: true }); } catch {}
+      try {
+        fs.rmSync(worktreePath, { recursive: true, force: true });
+      } catch (cleanupErr) {
+        console.error(`[worktree] fallback directory cleanup failed for ${taskId}:`, cleanupErr.message);
+      }
     }
   } else {
     // Directory doesn't exist but git might still have a stale worktree ref
     try {
       execFileSync('git', ['worktree', 'prune'], { cwd: repoRoot, stdio: 'pipe', timeout: 5000 });
-    } catch {}
+    } catch (err) {
+      console.warn('[worktree] prune for missing worktree failed:', err.message);
+    }
   }
 
   // Always try to delete branch (even if worktree remove failed/skipped)
@@ -163,8 +177,9 @@ function removeWorktree(repoRoot, taskId) {
       stdio: 'pipe',
       timeout: 5000,
     });
-  } catch {
+  } catch (err) {
     // Branch may not exist or already deleted
+    console.log(`[worktree] branch delete skipped for ${branch}:`, err.message);
   }
 }
 

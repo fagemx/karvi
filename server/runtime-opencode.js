@@ -34,7 +34,9 @@ function resolveOpencodePath() {
       // Fallback to first result
       const first = lines[0]?.trim();
       if (first && fs.existsSync(first)) return first;
-    } catch {}
+    } catch (err) {
+      console.warn('[opencode-rt] unable to resolve opencode via "where":', err.message);
+    }
   }
 
   return 'opencode';
@@ -89,7 +91,11 @@ function dispatch(plan) {
       const now = Date.now();
       if (now - lastHeartbeat < HEARTBEAT_INTERVAL_MS) return;
       lastHeartbeat = now;
-      try { plan.onActivity(); } catch {}
+      try {
+        plan.onActivity();
+      } catch (err) {
+        console.error('[opencode-rt] onActivity callback failed:', err.message);
+      }
     }
 
     // Validate cwd exists before spawn (fail immediately, not after 300s timeout)
@@ -141,7 +147,11 @@ function dispatch(plan) {
       settled = true;
       clearTimeout(inactivityTimer);
       clearInterval(heartbeatInterval);
-      try { fs.unlinkSync(msgFile); } catch {}
+      try {
+        fs.unlinkSync(msgFile);
+      } catch (err) {
+        console.warn('[opencode-rt] temp message cleanup failed:', err.message);
+      }
       if (err) reject(err); else resolve(result);
     }
 
@@ -265,7 +275,9 @@ function dispatch(plan) {
                 tool_calls: toolCallCount,
                 tokens: { ...totalTokens },
               });
-            } catch {}
+            } catch (err) {
+              console.error('[opencode-rt] onProgress callback failed:', err.message);
+            }
           }
         }
 

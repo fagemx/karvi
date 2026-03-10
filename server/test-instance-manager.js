@@ -43,7 +43,11 @@ function httpGet(url, timeoutMs = 5000) {
 function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
 
 function cleanTestData() {
-  try { fs.rmSync(TEST_DATA_ROOT, { recursive: true, force: true }); } catch {}
+  try {
+    fs.rmSync(TEST_DATA_ROOT, { recursive: true, force: true });
+  } catch (err) {
+    console.warn('[test-instance-manager] cleanup skipped:', err.message);
+  }
 }
 
 async function main() {

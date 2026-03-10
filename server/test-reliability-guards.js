@@ -63,7 +63,9 @@ describe('worktree idempotent cleanup (F8)', () => {
       execFileSync('git', ['worktree', 'remove', result.worktreePath, '--force'], {
         cwd: repoRoot, stdio: 'pipe', timeout: 10000,
       });
-    } catch {}
+    } catch (err) {
+      console.warn('[test-reliability-guards] worktree remove skipped:', err.message);
+    }
 
     // Create just the branch (simulates ghost branch left behind)
     try {
@@ -77,7 +79,9 @@ describe('worktree idempotent cleanup (F8)', () => {
     try {
       execFileSync('git', ['rev-parse', '--verify', branch], { cwd: repoRoot, stdio: 'pipe', timeout: 5000 });
       branchExists = true;
-    } catch {}
+    } catch (err) {
+      console.warn('[test-reliability-guards] pre-check branch missing:', err.message);
+    }
 
     // removeWorktree should clean up the ghost branch
     worktree.removeWorktree(repoRoot, taskId);
@@ -87,7 +91,9 @@ describe('worktree idempotent cleanup (F8)', () => {
     try {
       execFileSync('git', ['rev-parse', '--verify', branch], { cwd: repoRoot, stdio: 'pipe', timeout: 5000 });
       branchStillExists = true;
-    } catch {}
+    } catch (err) {
+      console.warn('[test-reliability-guards] post-check branch missing:', err.message);
+    }
 
     assert.equal(branchStillExists, false, 'ghost branch should be cleaned up');
   });

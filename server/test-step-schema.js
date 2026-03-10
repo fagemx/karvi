@@ -477,7 +477,9 @@ test('buildDispatchPlan workingDir defaults to null', () => {
 // Clean up test artifacts
 try {
   fs.rmSync(path.join(artifactStore.ARTIFACT_DIR, testRunId), { recursive: true, force: true });
-} catch {}
+} catch (err) {
+  console.warn('[test-step-schema] cleanup skipped:', err.message);
+}
 
 console.log(`\n${'─'.repeat(40)}`);
 console.log(`Results: ${passed} passed, ${failed} failed`);

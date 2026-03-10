@@ -24,6 +24,14 @@ function isEnabled(board) {
   return !!(cfg?.enabled && process.env.JIRA_API_TOKEN && process.env.JIRA_EMAIL);
 }
 
+function safeJsonParse(raw) {
+  try {
+    return JSON.parse(raw);
+  } catch (err) {
+    return null;
+  }
+}
+
 // ---------------------------------------------------------------------------
 // HTTPS client (zero-dep)
 // ---------------------------------------------------------------------------
@@ -55,8 +63,7 @@ function jiraRequest(method, apiPath, body) {
       let d = '';
       res.on('data', c => (d += c));
       res.on('end', () => {
-        let parsed = null;
-        try { parsed = JSON.parse(d); } catch {}
+        const parsed = safeJsonParse(d);
         resolve({ status: res.statusCode, body: parsed, raw: d });
       });
     });
