@@ -83,6 +83,25 @@ function dispatch(plan) {
       args.push('-C', workDir);
     }
 
+    // Git worktrees store index/refs under <main-repo>/.git/worktrees/<name>/.
+    // The worktree's .git file points there, but it's outside the workspace-write
+    // sandbox boundary. Without --add-dir, codex cannot create index.lock → git
+    // commit/push fail with "Permission denied". (GH-329)
+    try {
+      const gitFile = path.join(workDir, '.git');
+      if (fs.existsSync(gitFile) && fs.statSync(gitFile).isFile()) {
+        const content = fs.readFileSync(gitFile, 'utf8').trim();
+        const m = content.match(/^gitdir:\s*(.+)/);
+        if (m) {
+          const gitWorktreeDir = path.resolve(workDir, m[1]);
+          args.push('--add-dir', gitWorktreeDir);
+          console.log('[codex-rt] added writable dir for worktree git:', gitWorktreeDir);
+        }
+      }
+    } catch (err) {
+      console.warn('[codex-rt] failed to resolve worktree gitdir:', err.message);
+    }
+
     // '-' tells codex to read the prompt from stdin (avoids cmd.exe multi-line truncation)
     args.push('-');
 
