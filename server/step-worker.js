@@ -402,6 +402,9 @@ function createStepWorker(deps) {
             summary = `Agent reported success but left uncommitted changes. Auto-finalize failed.`;
           } else {
             summary = (summary || '') + ` [auto-finalized: ${finalized.commitHash}]`;
+            if (finalized.prUrl) {
+              summary += ` PR: ${finalized.prUrl}`;
+            }
           }
         }
       }
@@ -642,13 +645,45 @@ function autoFinalize(workDir, envelope) {
     const hash = execSync('git log -1 --format=%h', opts).trim();
 
     // Try to push if on a branch
+    let pushed = false;
     try {
       execSync('git push', opts);
+      pushed = true;
     } catch {
-      // Push failed — still consider commit as success
+      // Push failed — try setting upstream
+      try {
+        const branch = execSync('git branch --show-current', opts).trim();
+        if (branch) {
+          execSync(`git push -u origin ${branch}`, opts);
+          pushed = true;
+        }
+      } catch {
+        // Push truly failed — still consider commit as success
+      }
     }
 
-    return { ok: true, commitHash: hash };
+    // If push succeeded and this is an implement step, try to create PR (GH-329)
+    let prUrl = null;
+    if (pushed && envelope.step_type === 'implement') {
+      try {
+        const branch = execSync('git branch --show-current', opts).trim();
+        // Check if PR already exists
+        const existing = execSync(`gh pr list --head "${branch}" --json url --limit 1`, opts).trim();
+        const prs = JSON.parse(existing || '[]');
+        if (prs.length > 0) {
+          prUrl = prs[0].url;
+        } else {
+          const title = `${envelope.task_id}: auto-finalized implementation`;
+          const body = `Auto-created PR for ${envelope.task_id}.\\n\\nAgent wrote code but did not complete git workflow. Auto-finalized by Karvi step-worker.`;
+          const out = execSync(`gh pr create --title "${title}" --body "${body}" --head "${branch}"`, opts).trim();
+          prUrl = out; // gh pr create outputs the PR URL
+        }
+      } catch (prErr) {
+        console.warn(`[step-worker] auto-finalize PR creation failed for ${envelope.task_id}:`, prErr.message?.slice(0, 200));
+      }
+    }
+
+    return { ok: true, commitHash: hash, prUrl };
   } catch (err) {
     return { ok: false, error: err.message?.slice(0, 200) || 'unknown' };
   }
