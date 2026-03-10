@@ -241,10 +241,38 @@ function validateProtectedDiff(workDir) {
   }
 }
 
+/**
+ * Scan a directory for @protected annotations in all .js files.
+ * Returns annotations with relative file paths for prompt injection.
+ * @param {string} dir - Directory to scan
+ * @returns {Array<{ file: string, line: number, key: string, reason: string }>}
+ */
+function scanProtectedAnnotations(dir) {
+  const results = [];
+  if (!dir || !fs.existsSync(dir)) return results;
+
+  function walk(d) {
+    for (const entry of fs.readdirSync(d, { withFileTypes: true })) {
+      if (entry.name === 'node_modules' || entry.name.startsWith('.')) continue;
+      const full = path.join(d, entry.name);
+      if (entry.isDirectory()) { walk(full); continue; }
+      if (!entry.name.endsWith('.js')) continue;
+      const annotations = parseProtectedAnnotations(full);
+      const rel = path.relative(dir, full).replace(/\\/g, '/');
+      for (const ann of annotations) {
+        results.push({ file: rel, line: ann.startLine, key: ann.key, reason: ann.reason });
+      }
+    }
+  }
+  walk(dir);
+  return results;
+}
+
 module.exports = {
   parseProtectedAnnotations,
   parseProtectedAnnotationsFromContent,
   parseModifiedOriginalLines,
   extractDiffSnippet,
   validateProtectedDiff,
+  scanProtectedAnnotations,
 };
