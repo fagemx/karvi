@@ -235,6 +235,7 @@ bb.ensureBoardExists(ctx, {
 // --- Evolution Layer: Ensure board has evolution fields on startup ---
 const readBoard = () => bb.readBoard(ctx);
 const writeBoard = (b) => bb.writeBoard(ctx, b);
+const appendLog = (e) => bb.appendLog(ctx, e);
 const broadcastSSE = (ev, d) => bb.broadcastSSE(ctx, ev, d);
 
 const initBoard = readBoard();
@@ -324,6 +325,69 @@ const retryPoller = setInterval(() => {
   }
 }, RETRY_POLL_MS);
 
+// --- TTL cleanup: auto-remove stale terminal tasks ---
+const CLEANUP_POLL_MS = 60_000;
+const TTL_CANCELLED_MS = 1 * 3600_000;       // 1 hour
+const TTL_BLOCKED_DEAD_MS = 6 * 3600_000;    // 6 hours
+const TTL_APPROVED_MS = 7 * 24 * 3600_000;   // 7 days
+const cleanupPoller = setInterval(() => {
+  try {
+    const board = readBoard();
+    const tasks = board.taskPlan?.tasks || [];
+    const now = Date.now();
+    let removed = 0;
+
+    for (let i = tasks.length - 1; i >= 0; i--) {
+      const t = tasks[i];
+      const ts = t.completedAt || t.startedAt || t.createdAt;
+      if (!ts) continue;
+      const age = now - new Date(ts).getTime();
+
+      let shouldRemove = false;
+      if (t.status === 'cancelled' && age > TTL_CANCELLED_MS) {
+        shouldRemove = true;
+      } else if (t.status === 'blocked' && age > TTL_BLOCKED_DEAD_MS) {
+        const hasActive = (t.steps || []).some(s => s.state === 'queued' || s.state === 'running');
+        if (!hasActive) shouldRemove = true;
+      } else if (t.status === 'approved' && age > TTL_APPROVED_MS) {
+        shouldRemove = true;
+      }
+
+      if (shouldRemove) {
+        if (t.status === 'approved') {
+          const stepSummary = (t.steps || []).map(s => ({ id: s.step_id, state: s.state }));
+          appendLog({
+            ts: new Date().toISOString(), event: 'task_archived', taskId: t.id,
+            title: t.title, status: t.status, branch: t.worktreeBranch || null,
+            steps: stepSummary, createdAt: t.createdAt, completedAt: t.completedAt,
+          });
+        }
+        // Worktree cleanup
+        if (t.worktreeDir) {
+          const repoRoot = path.resolve(__dirname);
+          const worktreeHelper = require('./worktree');
+          const cleanId = t.id;
+          setTimeout(() => {
+            try { worktreeHelper.removeWorktree(repoRoot, cleanId); }
+            catch (e) { console.error(`[cleanup] worktree cleanup failed for ${cleanId}: ${e.message}`); }
+          }, 3000);
+        }
+        appendLog({ ts: new Date().toISOString(), event: 'task_removed', taskId: t.id, finalStatus: t.status });
+        tasks.splice(i, 1);
+        removed++;
+      }
+    }
+
+    if (removed > 0) {
+      writeBoard(board);
+      broadcastSSE('board', board);
+      console.log(`[cleanup] removed ${removed} stale task(s)`);
+    }
+  } catch (err) {
+    console.error('[cleanup] error:', err.message);
+  }
+}, CLEANUP_POLL_MS);
+
 // --- Telemetry init ---
 let telemetryHandle;
 try {
@@ -367,6 +431,7 @@ try {
 function gracefulShutdown() {
   console.log('[server] shutting down...');
   clearInterval(retryPoller);
+  clearInterval(cleanupPoller);
   villageScheduler?.stop();
   telemetryHandle?.stop();
   usageHandle?.stop();
