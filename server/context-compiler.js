@@ -20,7 +20,27 @@ const STEP_DEFAULT_CONTRACTS = {
   implement: { deliverable: 'pr' },
 };
 
-function resolveEnvelopeModel(runtimeHint, stepType, controls) {
+function resolveEnvelopeModel(runtimeHint, stepType, controls, taskBudget) {
+  // Cost routing tiers override global model_map when budget is low
+  const costRouting = controls?.cost_routing;
+  if (costRouting?.tiers?.length && taskBudget) {
+    const limits = { ...BUDGET_DEFAULTS, ...taskBudget.limits };
+    const used = taskBudget.used || {};
+    const pctRemaining = limits.max_tokens > 0
+      ? Math.max(0, Math.min(100, ((limits.max_tokens - (used.tokens || 0)) / limits.max_tokens) * 100))
+      : 100;
+    const sortedTiers = [...costRouting.tiers].sort((a, b) => a.budget_pct_remaining - b.budget_pct_remaining);
+    for (const tier of sortedTiers) {
+      if (pctRemaining <= tier.budget_pct_remaining && tier.model_map) {
+        const tierMap = tier.model_map[runtimeHint];
+        if (tierMap && typeof tierMap === 'object') {
+          const model = (stepType && tierMap[stepType]) || tierMap.default || null;
+          if (model) return model;
+        }
+      }
+    }
+  }
+  // Fall through to global model_map
   const map = controls?.model_map;
   if (!map || typeof map !== 'object') return null;
   const runtimeMap = map[runtimeHint];
@@ -136,7 +156,7 @@ function buildEnvelope(decision, runState, deps) {
       const timeoutSec = stepTimeouts[stepType] || stepTimeouts.default || 300;
       return timeoutSec * 1000;
     })(),
-    model_hint: resolveEnvelopeModel(targetStep.runtime_hint, stepType, runState.controls),
+    model_hint: resolveEnvelopeModel(targetStep.runtime_hint, stepType, runState.controls, task.budget),
     contract: task.contract || STEP_DEFAULT_CONTRACTS[stepType] || null,
     scope_config: task.scope || planScope || null,
   };

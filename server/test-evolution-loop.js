@@ -314,6 +314,98 @@ async function main() {
   else if (!errProvider?.error?.message) { fail('error provider missing error.message', JSON.stringify(errProvider)); }
   else { ok(`Error classified: type=${errProvider.error.type}, message="${errProvider.error.message}"`); }
 
+  // ============================================
+  console.log('\n=== Part D: Cost-Based Model Routing Test ===\n');
+  // ============================================
+
+  // Step 16: Set cost_routing via controls API
+  console.log('Step 16: Setting cost_routing tiers...');
+  const costRoutingPatch = {
+    model_map: { opencode: { default: 'anthropic/claude-opus-4' } },
+    cost_routing: {
+      tiers: [
+        { budget_pct_remaining: 50, model_map: { opencode: { default: 'anthropic/claude-sonnet-4' } } },
+        { budget_pct_remaining: 20, model_map: { opencode: { default: 'anthropic/claude-haiku-3' } } },
+      ],
+    },
+  };
+  const crResult = await post('/api/controls', costRoutingPatch);
+  if (!crResult.ok) { fail('cost_routing update', JSON.stringify(crResult)); }
+  else { ok('cost_routing tiers set'); }
+
+  // Step 17: Verify cost_routing in controls
+  console.log('\nStep 17: Reading back cost_routing...');
+  const crControls = await get('/api/controls');
+  if (!crControls.cost_routing?.tiers?.length) { fail('cost_routing not persisted', JSON.stringify(crControls.cost_routing)); }
+  else if (crControls.cost_routing.tiers.length !== 2) { fail('expected 2 tiers', crControls.cost_routing.tiers.length); }
+  else { ok(`cost_routing has ${crControls.cost_routing.tiers.length} tiers`); }
+
+  // Step 18: Verify resolveModelHint picks tier model when budget is low
+  console.log('\nStep 18: Testing cost routing model resolution...');
+  const mgmt = require('./management');
+  const testControls = mgmt.getControls({
+    controls: {
+      model_map: { opencode: { default: 'anthropic/claude-opus-4' } },
+      cost_routing: {
+        tiers: [
+          { budget_pct_remaining: 50, model_map: { opencode: { default: 'anthropic/claude-sonnet-4' } } },
+          { budget_pct_remaining: 20, model_map: { opencode: { default: 'anthropic/claude-haiku-3' } } },
+        ],
+      },
+    },
+  });
+
+  // 18a: No budget → should use global model_map (opus)
+  const noBudgetTask = { id: 'T-test', assignee: 'engineer' };
+  const noBudgetModel = mgmt.resolveCostRoutingModel('opencode', 'implement', testControls, undefined);
+  if (noBudgetModel !== null) { fail('no budget should return null', noBudgetModel); }
+  else { ok('No budget → null (falls through to global model_map)'); }
+
+  // 18b: 80% remaining → no tier matches → null
+  const budget80 = { limits: { max_tokens: 1000 }, used: { tokens: 200 } };
+  const model80 = mgmt.resolveCostRoutingModel('opencode', 'implement', testControls, budget80);
+  if (model80 !== null) { fail('80% remaining should return null', model80); }
+  else { ok('80% remaining → null (no tier matches)'); }
+
+  // 18c: 40% remaining → first tier (50%) matches → sonnet
+  const budget40 = { limits: { max_tokens: 1000 }, used: { tokens: 600 } };
+  const model40 = mgmt.resolveCostRoutingModel('opencode', 'implement', testControls, budget40);
+  if (model40 !== 'anthropic/claude-sonnet-4') { fail('40% remaining should pick sonnet', model40); }
+  else { ok('40% remaining → anthropic/claude-sonnet-4 (tier 50%)'); }
+
+  // 18d: 10% remaining → second tier (20%) matches → haiku
+  const budget10 = { limits: { max_tokens: 1000 }, used: { tokens: 900 } };
+  const model10 = mgmt.resolveCostRoutingModel('opencode', 'implement', testControls, budget10);
+  if (model10 !== 'anthropic/claude-haiku-3') { fail('10% remaining should pick haiku', model10); }
+  else { ok('10% remaining → anthropic/claude-haiku-3 (tier 20%)'); }
+
+  // Step 19: Verify budgetPctRemaining calculation
+  console.log('\nStep 19: Testing budgetPctRemaining...');
+  const pct1 = mgmt.budgetPctRemaining(null);
+  if (pct1 !== 100) { fail('null budget should be 100%', pct1); }
+  else { ok('null budget → 100%'); }
+
+  const pct2 = mgmt.budgetPctRemaining({ limits: { max_tokens: 1000 }, used: { tokens: 750 } });
+  if (pct2 !== 25) { fail('750/1000 used should be 25% remaining', pct2); }
+  else { ok('750/1000 used → 25% remaining'); }
+
+  // Step 20: Validate cost_routing rejects bad input
+  console.log('\nStep 20: Testing cost_routing validation...');
+  const badCR1 = await post('/api/controls', { cost_routing: { tiers: [{ budget_pct_remaining: 150 }] } });
+  if (!badCR1.error) { fail('should reject pct > 99', JSON.stringify(badCR1)); }
+  else { ok('Rejects budget_pct_remaining > 99'); }
+
+  const badCR2 = await post('/api/controls', { cost_routing: { tiers: [{ budget_pct_remaining: 50 }] } });
+  if (!badCR2.error) { fail('should reject missing model_map', JSON.stringify(badCR2)); }
+  else { ok('Rejects tier without model_map'); }
+
+  const badCR3 = await post('/api/controls', { cost_routing: 'invalid' });
+  if (!badCR3.error) { fail('should reject non-object', JSON.stringify(badCR3)); }
+  else { ok('Rejects non-object cost_routing'); }
+
+  // Clean up: reset cost_routing
+  await post('/api/controls', { cost_routing: null });
+
   console.log('\n=== Done ===');
   stopServer();
 }

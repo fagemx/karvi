@@ -6,6 +6,7 @@ const { nowIso, uid } = bb;
 const stepSchema = require('./step-schema');
 const { resolveRepoRoot } = require('./repo-resolver');
 const storage = require('./storage');
+const { BUDGET_DEFAULTS } = require('./route-engine');
 
 const DIR = __dirname;
 const SKILLS_DIR = path.join(DIR, 'skills');
@@ -34,6 +35,7 @@ const DEFAULT_CONTROLS = {
   auto_merge_on_approve: false,  // when true, auto squash-merge PR after review LGTM
   event_webhook_url: null,       // POST step events to this URL (null = disabled)
   model_map: {},                  // { "opencode": { "plan": "anthropic/claude-opus-4", "default": "anthropic/claude-sonnet-4" }, "codex": { ... } }
+  cost_routing: null,             // { tiers: [{ budget_pct_remaining: 50, model_map: { opencode: { default: "provider/model" } } }] }
   step_timeout_sec: {
     plan: 300,
     implement: 600,
@@ -381,6 +383,45 @@ function validateModelHint(hint) {
   return { valid: true, normalized: trimmed, warning };
 }
 
+/**
+ * 計算 task 預算剩餘百分比（以 token 為主，最能反映成本）。
+ * 無預算時回傳 100（不觸發降級）。
+ */
+function budgetPctRemaining(budget) {
+  if (!budget) return 100;
+  const limits = { ...BUDGET_DEFAULTS, ...budget.limits };
+  const used = budget.used || {};
+  const tokenPct = limits.max_tokens > 0
+    ? ((limits.max_tokens - (used.tokens || 0)) / limits.max_tokens) * 100
+    : 100;
+  return Math.max(0, Math.min(100, tokenPct));
+}
+
+/**
+ * 從 cost_routing tiers 中找到匹配的 model（預算低時自動降級）。
+ * 回傳 model hint string 或 null。
+ */
+function resolveCostRoutingModel(runtimeHint, stepType, controls, budget) {
+  const costRouting = controls.cost_routing;
+  if (!costRouting?.tiers?.length || !budget) return null;
+  const pctRemaining = budgetPctRemaining(budget);
+  // 依 budget_pct_remaining 由低到高排序，最嚴格的 tier（最低閾值）優先匹配
+  const sortedTiers = [...costRouting.tiers].sort((a, b) => a.budget_pct_remaining - b.budget_pct_remaining);
+  for (const tier of sortedTiers) {
+    if (pctRemaining <= tier.budget_pct_remaining && tier.model_map) {
+      const tierMap = tier.model_map[runtimeHint];
+      if (tierMap && typeof tierMap === 'object') {
+        const model = (stepType && tierMap[stepType]) || tierMap.default || null;
+        if (model) {
+          console.log(`[cost-routing] budget ${Math.round(pctRemaining)}% remaining, using tier model: ${model}`);
+          return model;
+        }
+      }
+    }
+  }
+  return null;
+}
+
 function resolveModelHint(runtimeHint, stepType, controls, task) {
   // Per-task model override takes highest priority — validate format first
   if (task.modelHint) {
@@ -391,6 +432,10 @@ function resolveModelHint(runtimeHint, stepType, controls, task) {
       return v.normalized;
     }
   }
+  // Cost-based tier override — budget low → use cheaper model
+  const costModel = resolveCostRoutingModel(runtimeHint, stepType, controls, task.budget);
+  if (costModel) return costModel;
+
   const map = controls.model_map;
   if (map && typeof map === 'object') {
     const runtimeMap = map[runtimeHint];
@@ -1291,4 +1336,6 @@ module.exports = {
   generateStepsForTask,
   DEFAULT_STEP_PIPELINE,
   trimSignals,
+  budgetPctRemaining,
+  resolveCostRoutingModel,
 };

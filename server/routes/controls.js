@@ -96,6 +96,30 @@ module.exports = function controlsRoutes(req, res, helpers, deps) {
                 board.controls[key] = val.trim();
               }
             }
+            else if (key === 'cost_routing') {
+              if (val === null) {
+                board.controls[key] = null;
+              } else if (typeof val === 'object' && Array.isArray(val.tiers)) {
+                for (const tier of val.tiers) {
+                  if (typeof tier.budget_pct_remaining !== 'number' || tier.budget_pct_remaining < 1 || tier.budget_pct_remaining > 99) {
+                    return json(res, 400, { error: 'each cost_routing tier needs budget_pct_remaining (1-99)' });
+                  }
+                  if (!tier.model_map || typeof tier.model_map !== 'object') {
+                    return json(res, 400, { error: 'each cost_routing tier needs a model_map object' });
+                  }
+                  for (const [rt, rtMap] of Object.entries(tier.model_map)) {
+                    if (typeof rtMap !== 'object' || !rtMap) continue;
+                    for (const [k, mv] of Object.entries(rtMap)) {
+                      const v = mgmt.validateModelHint(mv);
+                      if (!v.valid) return json(res, 400, { error: `invalid model in cost_routing tier: ${v.reason}` });
+                    }
+                  }
+                }
+                board.controls[key] = val;
+              } else {
+                return json(res, 400, { error: 'cost_routing must be null or { tiers: [...] }' });
+              }
+            }
             else if (key === 'active_wave') {
               if (val === null) {
                 board.controls[key] = null;
