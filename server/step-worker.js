@@ -993,6 +993,7 @@ function buildStepMessage(envelope, upstreamArtifacts, board, task) {
   const STEP_CONTEXT_SECTIONS = {
     plan:      ['requirements', 'upstream_artifacts', 'preflight_lessons'],
     implement: ['requirements', 'upstream_artifacts', 'coding_standards', 'completion_criteria', 'protected_decisions', 'preflight_lessons'],
+    execute:   ['requirements', 'upstream_artifacts', 'coding_standards', 'completion_criteria', 'protected_decisions', 'preflight_lessons'],
     test:      ['coding_standards'],
     review:    ['requirements'],
   };
