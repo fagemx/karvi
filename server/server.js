@@ -155,6 +155,7 @@ const discoveryRoutes = require('./routes/discovery');
 const versionRoutes = require('./routes/version');
 const artifactsRoutes = require('./routes/artifacts');
 const logsRoutes = require('./routes/logs');
+const eddaRoutes = require('./routes/edda');
 
 // --- Route chain ---
 const routes = [
@@ -175,6 +176,7 @@ const routes = [
   discoveryRoutes,
   artifactsRoutes,
   logsRoutes,
+  eddaRoutes,
 ];
 
 const { json } = bb;
