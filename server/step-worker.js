@@ -186,9 +186,21 @@ function createStepWorker(deps) {
     emitWebhookEvent(board, 'step_started', { taskId: envelope.task_id, stepId: envelope.step_id, stepType: envelope.step_type });
 
     // 3. Per-step runtime selection (envelope.runtime_hint takes precedence)
+    //    With fallback chain: on PROVIDER errors, try next runtime in chain
     const step = task.steps?.find(s => s.step_id === envelope.step_id);
     const runtimeHint = envelope.runtime_hint || step?.runtime_hint || plan.runtimeHint;
-    const rt = deps.getRuntime(runtimeHint);
+
+    // 建立 fallback 候選列表：主 runtime + fallback chain 中尚未嘗試的 runtime
+    const controls = mgmt.getControls(board);
+    const fallbackChain = controls.runtime_fallback_chain;
+    const runtimeCandidates = [runtimeHint];
+    if (Array.isArray(fallbackChain)) {
+      for (const name of fallbackChain) {
+        if (!runtimeCandidates.includes(name)) runtimeCandidates.push(name);
+      }
+    }
+    let activeRuntimeHint = runtimeHint;
+    let rt = deps.getRuntime(activeRuntimeHint);
 
     // Inject STEP_RESULT instruction as system prompt — more reliable than
     // putting it in the user message, because system prompts persist across
@@ -295,9 +307,40 @@ function createStepWorker(deps) {
       const ac = new AbortController();
       activeExecutions.set(envelope.step_id, { abort: () => ac.abort(), startedAt: Date.now() });
       plan.signal = ac.signal;
-      try {
-        result = await rt.dispatch(plan);
-      } catch (dispatchErr) {
+
+      // Fallback loop: 嘗試主 runtime，PROVIDER 錯誤時依序嘗試 fallback chain 中的下一個
+      let dispatchErr = null;
+      let candidateIdx = 0;
+      while (candidateIdx < runtimeCandidates.length) {
+        try {
+          result = await rt.dispatch(plan);
+          dispatchErr = null;
+          break; // 成功，跳出迴圈
+        } catch (err) {
+          dispatchErr = err;
+          const errorKind = classifyError(err, null);
+          const nextIdx = candidateIdx + 1;
+
+          // 只在 PROVIDER 錯誤且還有候選 runtime 時嘗試 fallback
+          if (errorKind === 'PROVIDER' && nextIdx < runtimeCandidates.length) {
+            const nextCandidate = runtimeCandidates[nextIdx];
+            console.log(`[step-worker] runtime fallback: ${activeRuntimeHint} failed (${errorKind}), trying ${nextCandidate}`);
+            helpers.appendLog({
+              ts: helpers.nowIso(), event: 'runtime_fallback',
+              taskId: envelope.task_id, stepId: envelope.step_id,
+              from_runtime: activeRuntimeHint, to_runtime: nextCandidate,
+              error: err.message,
+            });
+            activeRuntimeHint = nextCandidate;
+            rt = deps.getRuntime(activeRuntimeHint);
+            candidateIdx = nextIdx;
+            continue;
+          }
+          break; // 非 PROVIDER 錯誤或已用完所有候選
+        }
+      }
+
+      if (dispatchErr) {
         const execInfo = activeExecutions.get(envelope.step_id);
         const wasCancelling = execInfo?.cancelling;
         if (execInfo?.guardTimer) clearTimeout(execInfo.guardTimer);
@@ -383,13 +426,13 @@ function createStepWorker(deps) {
             console.log(`[step-worker]   error: ${failStep.error}`);
             console.log(`[step-worker]   errorKind: ${errorKind}`);
             console.log(`[step-worker]   cwd: ${plan.workingDir || plan.cwd || 'none'}`);
-            console.log(`[step-worker]   runtime: ${runtimeHint || 'default'}`);
+            console.log(`[step-worker]   runtime: ${activeRuntimeHint || 'default'}`);
             console.log(`[step-worker]   duration_ms: ${dispatchDurationMs}`);
             helpers.appendLog({
               ts: helpers.nowIso(), event: 'step_dead_diagnostic',
               taskId: envelope.task_id, stepId: envelope.step_id,
               attempt: failStep.attempt, error: failStep.error, errorKind,
-              cwd: plan.workingDir || plan.cwd || null, runtime: runtimeHint,
+              cwd: plan.workingDir || plan.cwd || null, runtime: activeRuntimeHint,
               duration_ms: dispatchDurationMs,
             });
           }
@@ -610,7 +653,7 @@ function createStepWorker(deps) {
       tokens_used: (usage?.inputTokens || 0) + (usage?.outputTokens || 0),
       duration_ms: durationMs,
       model_used: plan.modelHint,
-      runtime: runtimeHint,
+      runtime: activeRuntimeHint,
       cost: usage?.totalCost || null,
       post_check: postCheckResult,
       payload,

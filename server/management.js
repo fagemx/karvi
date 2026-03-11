@@ -34,6 +34,7 @@ const DEFAULT_CONTROLS = {
   repo_map: {},                  // GitHub slug → local absolute path, e.g. { "owner/repo": "C:/path/to/repo" }
   auto_merge_on_approve: false,  // when true, auto squash-merge PR after review LGTM
   event_webhook_url: null,       // POST step events to this URL (null = disabled)
+  runtime_fallback_chain: null,  // ordered runtime list for fallback on PROVIDER errors, e.g. ["opencode", "codex", "claude"]
   model_map: {},                  // { "opencode": { "plan": "anthropic/claude-opus-4", "default": "anthropic/claude-sonnet-4" }, "codex": { ... } }
   cost_routing: null,             // { tiers: [{ budget_pct_remaining: 50, model_map: { opencode: { default: "provider/model" } } }] }
   step_timeout_sec: {
