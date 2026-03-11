@@ -54,6 +54,196 @@ const ERROR_KINDS = {
   UNKNOWN:           { retryable: true,  backoff: 'exponential' },
 };
 
+// --- Step Input/Output Contracts (GH-346) ---
+
+const STEP_OUTPUT_SCHEMAS = {
+  plan: {
+    required: ['status', 'summary'],
+    optional: ['payload'],
+    payloadSchema: {
+      optional: ['scope', 'proposal', 'plan'],
+      scopeSchema: {
+        optional: ['allow', 'deny'],
+      },
+    },
+  },
+  implement: {
+    required: ['status', 'summary'],
+    optional: ['payload', 'tokens_used', 'duration_ms'],
+    payloadSchema: {
+      optional: ['pr_url', 'commit_hash', 'files_changed'],
+    },
+  },
+  test: {
+    required: ['status', 'summary'],
+    optional: ['payload', 'tokens_used', 'duration_ms'],
+    payloadSchema: {
+      optional: ['passed', 'failed', 'skipped', 'coverage'],
+    },
+  },
+  review: {
+    required: ['status', 'summary'],
+    optional: ['payload', 'tokens_used', 'duration_ms'],
+    payloadSchema: {
+      optional: ['verdict', 'score', 'issues', 'suggestions'],
+    },
+  },
+  execute: {
+    required: ['status', 'summary'],
+    optional: ['payload', 'tokens_used', 'duration_ms'],
+    payloadSchema: {
+      optional: ['pr_url', 'commit_hash', 'files_changed'],
+    },
+  },
+};
+
+const STEP_INPUT_EXPECTATIONS = {
+  plan: {
+    required: [],
+    optional: ['task_description', 'issue_context'],
+    description: 'First step — no upstream requirements',
+  },
+  implement: {
+    required: [],
+    optional: ['scope', 'plan'],
+    description: 'Consumes scope from plan step',
+  },
+  test: {
+    required: [],
+    optional: ['files_changed', 'commit_hash'],
+    description: 'Consumes implementation artifacts',
+  },
+  review: {
+    required: [],
+    optional: ['pr_url', 'commit_hash'],
+    description: 'Consumes PR/commit from implement step',
+  },
+  execute: {
+    required: [],
+    optional: ['task_description', 'issue_context'],
+    description: 'Standalone execution — no upstream requirements',
+  },
+};
+
+const STEP_PIPELINE_ORDER = ['plan', 'implement', 'test', 'review'];
+
+function validateStepOutputSchema(stepType, output) {
+  const errors = [];
+  const schema = STEP_OUTPUT_SCHEMAS[stepType];
+  
+  if (!schema) {
+    return { valid: true, warnings: [`No schema defined for step type "${stepType}"`] };
+  }
+  
+  if (!output || typeof output !== 'object') {
+    return { valid: false, errors: ['Output must be a non-null object'] };
+  }
+  
+  for (const field of schema.required) {
+    if (!(field in output) || output[field] === undefined) {
+      errors.push(`Missing required field: ${field}`);
+    }
+  }
+  
+  if (output.status && !['succeeded', 'failed', 'needs_revision'].includes(output.status)) {
+    errors.push(`Invalid status "${output.status}" — must be succeeded, failed, or needs_revision`);
+  }
+  
+  if (schema.payloadSchema && output.payload && typeof output.payload === 'object') {
+    const payloadErrors = validatePayloadFields(stepType, output.payload, schema.payloadSchema);
+    errors.push(...payloadErrors);
+  }
+  
+  return errors.length === 0 ? { valid: true } : { valid: false, errors };
+}
+
+function validatePayloadFields(stepType, payload, payloadSchema) {
+  const errors = [];
+  
+  if (payloadSchema.scopeSchema && payload.scope) {
+    if (typeof payload.scope !== 'object') {
+      errors.push('payload.scope must be an object');
+    } else {
+      if (payload.scope.allow && !Array.isArray(payload.scope.allow)) {
+        errors.push('payload.scope.allow must be an array');
+      }
+      if (payload.scope.deny && !Array.isArray(payload.scope.deny)) {
+        errors.push('payload.scope.deny must be an array');
+      }
+    }
+  }
+  
+  if (payload.pr_url && typeof payload.pr_url !== 'string') {
+    errors.push('payload.pr_url must be a string');
+  }
+  
+  if (payload.verdict && !['lgtm', 'needs_revision', 'blocked'].includes(payload.verdict)) {
+    errors.push(`Invalid payload.verdict "${payload.verdict}"`);
+  }
+  
+  if (payload.score !== undefined && typeof payload.score !== 'number') {
+    errors.push('payload.score must be a number');
+  }
+  
+  if (payload.issues && !Array.isArray(payload.issues)) {
+    errors.push('payload.issues must be an array');
+  }
+  
+  return errors;
+}
+
+function validateStepContract(currentStepType, output, nextStepType) {
+  const errors = [];
+  const warnings = [];
+  
+  const outputResult = validateStepOutputSchema(currentStepType, output);
+  if (!outputResult.valid) {
+    return { valid: false, errors: outputResult.errors, warnings: [] };
+  }
+  if (outputResult.warnings) {
+    warnings.push(...outputResult.warnings);
+  }
+  
+  if (output.status !== 'succeeded') {
+    return { valid: true, warnings: ['Step did not succeed — skipping contract validation'] };
+  }
+  
+  const expectations = STEP_INPUT_EXPECTATIONS[nextStepType];
+  if (!expectations) {
+    return { valid: true, warnings: [`No input expectations defined for step type "${nextStepType}"`] };
+  }
+  
+  const payload = output.payload || {};
+  
+  for (const field of expectations.required) {
+    if (!(field in payload) || payload[field] === undefined || payload[field] === null) {
+      errors.push(`Next step "${nextStepType}" requires "${field}" but current step output does not provide it`);
+    }
+  }
+  
+  if (nextStepType === 'implement' && currentStepType === 'plan') {
+    if (!payload.scope || typeof payload.scope !== 'object') {
+      warnings.push('Plan step should provide payload.scope for implement step (file allow/deny patterns)');
+    }
+  }
+  
+  if (nextStepType === 'review' && currentStepType === 'implement') {
+    if (!payload.pr_url && !output.summary?.match(/github\.com\/[^/]+\/[^/]+\/pull\/\d+/i)) {
+      warnings.push('Implement step should provide payload.pr_url or include PR URL in summary for review step');
+    }
+  }
+  
+  return errors.length === 0 ? { valid: true, warnings } : { valid: false, errors, warnings };
+}
+
+function getStepOutputSchema(stepType) {
+  return STEP_OUTPUT_SCHEMAS[stepType] || null;
+}
+
+function getStepInputExpectations(stepType) {
+  return STEP_INPUT_EXPECTATIONS[stepType] || null;
+}
+
 // --- Functions ---
 
 function computeBackoff(kindConfig, step) {
@@ -185,6 +375,9 @@ module.exports = {
   ALLOWED_STEP_TRANSITIONS,
   DEFAULT_RETRY_POLICY,
   ERROR_KINDS,
+  STEP_OUTPUT_SCHEMAS,
+  STEP_INPUT_EXPECTATIONS,
+  STEP_PIPELINE_ORDER,
   createStep,
   canTransitionStep,
   ensureStepTransition,
@@ -192,4 +385,8 @@ module.exports = {
   computeBackoff,
   computeIdempotencyKey,
   isStepIdempotent,
+  validateStepOutputSchema,
+  validateStepContract,
+  getStepOutputSchema,
+  getStepInputExpectations,
 };

@@ -567,6 +567,238 @@ test('buildDispatchPlan normalizes whitespace in modelHint', () => {
 });
 
 // ─────────────────────────────────────
+// Step Input/Output Contract Validation (GH-346)
+// ─────────────────────────────────────
+
+console.log('\n=== Step Contract Validation ===\n');
+
+test('STEP_OUTPUT_SCHEMAS defines schemas for all step types', () => {
+  for (const type of stepSchema.STEP_TYPES) {
+    assert.ok(stepSchema.STEP_OUTPUT_SCHEMAS[type], `Should have schema for ${type}`);
+    assert.ok(Array.isArray(stepSchema.STEP_OUTPUT_SCHEMAS[type].required), `${type} should have required fields`);
+  }
+});
+
+test('STEP_INPUT_EXPECTATIONS defines expectations for all step types', () => {
+  for (const type of stepSchema.STEP_TYPES) {
+    assert.ok(stepSchema.STEP_INPUT_EXPECTATIONS[type], `Should have input expectations for ${type}`);
+  }
+});
+
+test('validateStepOutputSchema accepts valid plan output', () => {
+  const output = { status: 'succeeded', summary: 'Plan created' };
+  const result = stepSchema.validateStepOutputSchema('plan', output);
+  assert.strictEqual(result.valid, true);
+});
+
+test('validateStepOutputSchema accepts valid plan output with scope', () => {
+  const output = {
+    status: 'succeeded',
+    summary: 'Plan created',
+    payload: { scope: { allow: ['server/*.js'], deny: ['.claude/**'] } },
+  };
+  const result = stepSchema.validateStepOutputSchema('plan', output);
+  assert.strictEqual(result.valid, true);
+});
+
+test('validateStepOutputSchema rejects output missing required fields', () => {
+  const output = { summary: 'Missing status' };
+  const result = stepSchema.validateStepOutputSchema('plan', output);
+  assert.strictEqual(result.valid, false);
+  assert.ok(result.errors.some(e => e.includes('status')));
+});
+
+test('validateStepOutputSchema rejects null output', () => {
+  const result = stepSchema.validateStepOutputSchema('plan', null);
+  assert.strictEqual(result.valid, false);
+});
+
+test('validateStepOutputSchema rejects invalid status value', () => {
+  const output = { status: 'invalid', summary: 'test' };
+  const result = stepSchema.validateStepOutputSchema('plan', output);
+  assert.strictEqual(result.valid, false);
+  assert.ok(result.errors.some(e => e.includes('status')));
+});
+
+test('validateStepOutputSchema validates scope.allow is array', () => {
+  const output = {
+    status: 'succeeded',
+    summary: 'Plan',
+    payload: { scope: { allow: 'not-an-array' } },
+  };
+  const result = stepSchema.validateStepOutputSchema('plan', output);
+  assert.strictEqual(result.valid, false);
+  assert.ok(result.errors.some(e => e.includes('scope.allow')));
+});
+
+test('validateStepOutputSchema validates scope.deny is array', () => {
+  const output = {
+    status: 'succeeded',
+    summary: 'Plan',
+    payload: { scope: { deny: 'not-an-array' } },
+  };
+  const result = stepSchema.validateStepOutputSchema('plan', output);
+  assert.strictEqual(result.valid, false);
+  assert.ok(result.errors.some(e => e.includes('scope.deny')));
+});
+
+test('validateStepOutputSchema accepts valid implement output', () => {
+  const output = {
+    status: 'succeeded',
+    summary: 'Implemented',
+    payload: { pr_url: 'https://github.com/owner/repo/pull/1' },
+  };
+  const result = stepSchema.validateStepOutputSchema('implement', output);
+  assert.strictEqual(result.valid, true);
+});
+
+test('validateStepOutputSchema validates pr_url is string', () => {
+  const output = {
+    status: 'succeeded',
+    summary: 'Implemented',
+    payload: { pr_url: 123 },
+  };
+  const result = stepSchema.validateStepOutputSchema('implement', output);
+  assert.strictEqual(result.valid, false);
+  assert.ok(result.errors.some(e => e.includes('pr_url')));
+});
+
+test('validateStepOutputSchema accepts valid review output with verdict', () => {
+  const output = {
+    status: 'succeeded',
+    summary: 'Reviewed',
+    payload: { verdict: 'lgtm', score: 85, issues: [] },
+  };
+  const result = stepSchema.validateStepOutputSchema('review', output);
+  assert.strictEqual(result.valid, true);
+});
+
+test('validateStepOutputSchema rejects invalid verdict', () => {
+  const output = {
+    status: 'succeeded',
+    summary: 'Reviewed',
+    payload: { verdict: 'invalid-verdict' },
+  };
+  const result = stepSchema.validateStepOutputSchema('review', output);
+  assert.strictEqual(result.valid, false);
+  assert.ok(result.errors.some(e => e.includes('verdict')));
+});
+
+test('validateStepOutputSchema validates score is number', () => {
+  const output = {
+    status: 'succeeded',
+    summary: 'Reviewed',
+    payload: { score: 'not-a-number' },
+  };
+  const result = stepSchema.validateStepOutputSchema('review', output);
+  assert.strictEqual(result.valid, false);
+  assert.ok(result.errors.some(e => e.includes('score')));
+});
+
+test('validateStepOutputSchema validates issues is array', () => {
+  const output = {
+    status: 'succeeded',
+    summary: 'Reviewed',
+    payload: { issues: 'not-an-array' },
+  };
+  const result = stepSchema.validateStepOutputSchema('review', output);
+  assert.strictEqual(result.valid, false);
+  assert.ok(result.errors.some(e => e.includes('issues')));
+});
+
+test('validateStepOutputSchema returns warning for unknown step type', () => {
+  const result = stepSchema.validateStepOutputSchema('unknown-type', { status: 'succeeded' });
+  assert.strictEqual(result.valid, true);
+  assert.ok(result.warnings && result.warnings.length > 0);
+});
+
+test('validateStepContract passes for plan -> implement with scope', () => {
+  const output = {
+    status: 'succeeded',
+    summary: 'Plan done',
+    payload: { scope: { allow: ['server/*.js'], deny: [] } },
+  };
+  const result = stepSchema.validateStepContract('plan', output, 'implement');
+  assert.strictEqual(result.valid, true);
+});
+
+test('validateStepContract warns for plan -> implement without scope', () => {
+  const output = { status: 'succeeded', summary: 'Plan done' };
+  const result = stepSchema.validateStepContract('plan', output, 'implement');
+  assert.strictEqual(result.valid, true);
+  assert.ok(result.warnings.some(w => w.includes('scope')));
+});
+
+test('validateStepContract passes for implement -> review with pr_url', () => {
+  const output = {
+    status: 'succeeded',
+    summary: 'Implemented',
+    payload: { pr_url: 'https://github.com/owner/repo/pull/1' },
+  };
+  const result = stepSchema.validateStepContract('implement', output, 'review');
+  assert.strictEqual(result.valid, true);
+});
+
+test('validateStepContract warns for implement -> review without pr_url', () => {
+  const output = { status: 'succeeded', summary: 'Implemented without PR URL' };
+  const result = stepSchema.validateStepContract('implement', output, 'review');
+  assert.strictEqual(result.valid, true);
+  assert.ok(result.warnings.some(w => w.includes('pr_url')));
+});
+
+test('validateStepContract skips validation for failed step', () => {
+  const output = { status: 'failed', summary: 'Step failed' };
+  const result = stepSchema.validateStepContract('plan', output, 'implement');
+  assert.strictEqual(result.valid, true);
+  assert.ok(result.warnings.some(w => w.includes('did not succeed')));
+});
+
+test('validateStepContract fails if output schema is invalid', () => {
+  const output = { summary: 'Missing status' };
+  const result = stepSchema.validateStepContract('plan', output, 'implement');
+  assert.strictEqual(result.valid, false);
+  assert.ok(result.errors.length > 0);
+});
+
+test('getStepOutputSchema returns schema for known type', () => {
+  const schema = stepSchema.getStepOutputSchema('plan');
+  assert.ok(schema);
+  assert.ok(Array.isArray(schema.required));
+});
+
+test('getStepOutputSchema returns null for unknown type', () => {
+  const schema = stepSchema.getStepOutputSchema('nonexistent');
+  assert.strictEqual(schema, null);
+});
+
+test('getStepInputExpectations returns expectations for known type', () => {
+  const expectations = stepSchema.getStepInputExpectations('implement');
+  assert.ok(expectations);
+  assert.ok(expectations.description);
+});
+
+test('getStepInputExpectations returns null for unknown type', () => {
+  const expectations = stepSchema.getStepInputExpectations('nonexistent');
+  assert.strictEqual(expectations, null);
+});
+
+test('validateStepContract handles execute step type', () => {
+  const output = { status: 'succeeded', summary: 'Executed' };
+  const result = stepSchema.validateStepOutputSchema('execute', output);
+  assert.strictEqual(result.valid, true);
+});
+
+test('validateStepContract handles test step type', () => {
+  const output = {
+    status: 'succeeded',
+    summary: 'Tests passed',
+    payload: { passed: 10, failed: 0 },
+  };
+  const result = stepSchema.validateStepOutputSchema('test', output);
+  assert.strictEqual(result.valid, true);
+});
+
+// ─────────────────────────────────────
 // Cleanup & Summary
 // ─────────────────────────────────────
 
