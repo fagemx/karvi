@@ -8,6 +8,7 @@
  */
 const bb = require('../blackboard-server');
 const { json } = bb;
+const { requireRole } = require('./_shared');
 
 const VALID_VAULT_ID = /^[a-zA-Z0-9_-]+$/;
 
@@ -23,6 +24,7 @@ module.exports = function vaultRoutes(req, res, helpers, deps) {
   }
 
   if (req.method === 'POST' && req.url === '/api/vault/store') {
+    if (requireRole(req, res, 'admin')) return;
     helpers.parseBody(req).then(payload => {
       const { userId, keyName, value } = payload;
       if (!userId || !VALID_VAULT_ID.test(userId)) return json(res, 400, { error: 'Invalid userId' });
@@ -36,6 +38,7 @@ module.exports = function vaultRoutes(req, res, helpers, deps) {
 
   const vaultKeysMatch = req.url.match(/^\/api\/vault\/keys\/([a-zA-Z0-9_-]+)$/);
   if (req.method === 'GET' && vaultKeysMatch) {
+    if (requireRole(req, res, 'operator')) return;
     const userId = vaultKeysMatch[1];
     const result = vault.list(userId);
     json(res, result.ok ? 200 : 400, result);
@@ -44,6 +47,7 @@ module.exports = function vaultRoutes(req, res, helpers, deps) {
 
   const vaultDeleteMatch = req.url.match(/^\/api\/vault\/delete\/([a-zA-Z0-9_-]+)\/([a-zA-Z0-9_-]+)$/);
   if (req.method === 'DELETE' && vaultDeleteMatch) {
+    if (requireRole(req, res, 'admin')) return;
     const [, userId, keyName] = vaultDeleteMatch;
     const result = vault.delete(userId, keyName);
     json(res, result.ok ? 200 : 400, result);

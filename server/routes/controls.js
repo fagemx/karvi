@@ -6,6 +6,7 @@
  */
 const bb = require('../blackboard-server');
 const { json } = bb;
+const { requireRole } = require('./_shared');
 
 module.exports = function controlsRoutes(req, res, helpers, deps) {
   const { mgmt } = deps;
@@ -20,6 +21,7 @@ module.exports = function controlsRoutes(req, res, helpers, deps) {
   }
 
   if (req.method === 'POST' && req.url === '/api/controls') {
+    if (requireRole(req, res, 'admin')) return;
     let body = '';
     req.on('data', c => (body += c));
     req.on('end', () => {

@@ -407,6 +407,7 @@ async function main() {
   await post('/api/controls', { cost_routing: null });
 
   console.log('\n=== Done ===');
+  // RBAC tests are in server/test-rbac.js (dedicated test)
   stopServer();
 }
 

@@ -5,8 +5,9 @@
  * No side effects, no external dependencies.
  */
 const bb = require('../blackboard-server');
+const { hasRole } = require('../rbac');
 
-const { nowIso, uid } = bb;
+const { nowIso, uid, json } = bb;
 
 function conversationById(board, id) {
   return (board.conversations || []).find(c => c.id === id);
@@ -104,6 +105,24 @@ function deepMerge(target, source) {
   return out;
 }
 
+/**
+ * requireRole — 檢查 request 的角色是否滿足最低要求。
+ * RBAC 未啟用（req.karviRole === null）時所有操作都放行。
+ * @param {object} req
+ * @param {object} res
+ * @param {string} minRole — 'admin' | 'operator' | 'viewer'
+ * @returns {boolean} true = 已攔截（已回 403），呼叫端應 return；false = 放行
+ */
+function requireRole(req, res, minRole) {
+  // RBAC 未啟用 → 放行
+  if (req.karviRole === null || req.karviRole === undefined) return false;
+  if (hasRole(req.karviRole, minRole)) return false;
+  // 權限不足
+  console.log(`[rbac] 403 ${req.karviRole} tried ${req.method} ${req.url}`);
+  json(res, 403, { error: 'forbidden', requiredRole: minRole, currentRole: req.karviRole });
+  return true;
+}
+
 module.exports = {
   conversationById,
   participantById,
@@ -115,4 +134,5 @@ module.exports = {
   getUserId,
   getUserIdForTask,
   deepMerge,
+  requireRole,
 };

@@ -35,6 +35,7 @@ const path = require('path');
 const crypto = require('crypto');
 const storage = require('./storage');
 const { createLimiter } = require('./rate-limiter');
+const rbac = require('./rbac');
 
 const MIME = {
   '.html': 'text/html; charset=utf-8',
@@ -82,6 +83,7 @@ function createContext(opts = {}) {
   const port = Number(opts.port) || 3400;
   const boardType = opts.boardType || null;
   const apiToken = opts.apiToken || process.env.KARVI_API_TOKEN || null;
+  const roleTokens = opts.roleTokens || rbac.parseRoleTokens();
   const corsOrigins = opts.corsOrigins || process.env.KARVI_CORS_ORIGINS || null;
 
   // Rate limiting config
@@ -98,7 +100,11 @@ function createContext(opts = {}) {
     ? createLimiter({ capacity: rateLimitPerMin, refillRate: rateLimitPerMin / 60 })
     : null;
 
-  if (apiToken) {
+  if (roleTokens.active) {
+    const roleCount = roleTokens.tokenMap.size;
+    const roles = [...new Set(roleTokens.tokenMap.values())];
+    console.log(`[bb] RBAC enabled: ${roleCount} token(s) → roles: ${roles.join(', ')}`);
+  } else if (apiToken) {
     console.log('[bb] API token auth enabled');
   }
   if (corsOrigins) {
@@ -124,6 +130,7 @@ function createContext(opts = {}) {
     host: opts.host || undefined,
     boardType,
     apiToken,
+    roleTokens,
     corsOrigins,
     sseClients: new Set(),
     taskSseClients: new Map(),  // taskId → Set<res>
@@ -143,24 +150,42 @@ function tokenMatch(expected, provided) {
   return crypto.timingSafeEqual(a, b);
 }
 
+/**
+ * checkAuth — 驗證 request 的 token 並解析角色。
+ * @returns {{ allowed: boolean, role: string|null }}
+ *   role = 'admin'|'operator'|'viewer'|null
+ *   null role with allowed=true → local dev mode (no auth configured)
+ */
 function checkAuth(ctx, req) {
-  if (!ctx.apiToken) return true;
-  if (req.method === 'OPTIONS') return true;
+  const noAuth = !ctx.apiToken && !ctx.roleTokens?.active;
+  if (noAuth) return { allowed: true, role: null };
+  if (req.method === 'OPTIONS') return { allowed: true, role: null };
 
   const url = new URL(req.url, 'http://localhost');
 
-  if (!url.pathname.startsWith('/api/')) return true;
-  if (url.pathname.startsWith('/api/webhooks/')) return true;
+  if (!url.pathname.startsWith('/api/')) return { allowed: true, role: null };
+  if (url.pathname.startsWith('/api/webhooks/')) return { allowed: true, role: null };
 
+  // Extract token from query (SSE) or header (normal)
+  let provided = '';
   if (url.pathname === '/api/events' || url.pathname.match(/^\/api\/tasks\/[^/]+\/stream$/)) {
-    const qtoken = url.searchParams.get('token') || '';
-    return tokenMatch(ctx.apiToken, qtoken);
+    provided = url.searchParams.get('token') || '';
+  } else {
+    const authHeader = req.headers['authorization'] || '';
+    const match = authHeader.match(/^Bearer\s+(.+)$/i);
+    provided = match ? match[1] : '';
   }
 
-  const authHeader = req.headers['authorization'] || '';
-  const match = authHeader.match(/^Bearer\s+(.+)$/i);
-  const provided = match ? match[1] : '';
-  return tokenMatch(ctx.apiToken, provided);
+  // RBAC: try role-token map first
+  if (ctx.roleTokens?.active) {
+    const role = rbac.matchRole(ctx.roleTokens.tokenMap, provided);
+    if (role) return { allowed: true, role };
+    return { allowed: false, role: null };
+  }
+
+  // Legacy: single token = admin
+  const ok = tokenMatch(ctx.apiToken, provided);
+  return { allowed: ok, role: ok ? 'admin' : null };
 }
 
 /**
@@ -470,10 +495,12 @@ function createServer(ctx, routeHandler) {
       });
     }
 
-    // Auth gate
-    if (!checkAuth(ctx, req)) {
+    // Auth gate (returns { allowed, role })
+    const authResult = checkAuth(ctx, req);
+    if (!authResult.allowed) {
       return json(res, 401, { error: 'unauthorized' });
     }
+    req.karviRole = authResult.role;
 
     // Built-in routes
     if (req.method === 'GET' && pathname === '/api/events') {
@@ -543,6 +570,7 @@ module.exports = {
   listen,
   checkAuth,
   tokenMatch,
+  rbac,
   storage,
   DEFAULT_RATE_LIMIT,
   DEFAULT_MAX_BODY,
