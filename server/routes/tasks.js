@@ -24,7 +24,7 @@ const fs = require('fs');
 const path = require('path');
 const bb = require('../blackboard-server');
 const { json } = bb;
-const { participantById, pushMessage, getUserIdForTask } = require('./_shared');
+const { participantById, pushMessage, getUserIdForTask, requireRole } = require('./_shared');
 const routeEngine = require('../route-engine');
 const worktreeHelper = require('../worktree');
 const { resolveRepoRoot, validateRepoRoot } = require('../repo-resolver');
@@ -1048,6 +1048,7 @@ module.exports = function tasksRoutes(req, res, helpers, deps) {
   // --- Task cancel endpoint ---
   const taskCancelMatch = req.url.match(/^\/api\/tasks\/([^/]+)\/cancel$/);
   if (req.method === 'POST' && taskCancelMatch) {
+    if (requireRole(req, res, 'operator')) return;
     const taskId = decodeURIComponent(taskCancelMatch[1]);
     let body = '';
     req.on('data', c => (body += c));
@@ -1144,6 +1145,7 @@ module.exports = function tasksRoutes(req, res, helpers, deps) {
   // --- Per-task manual status control ---
   const taskStatusMatch = req.url.match(/^\/api\/tasks\/([^/]+)\/status$/);
   if (req.method === 'POST' && taskStatusMatch) {
+    if (requireRole(req, res, 'operator')) return;
     const taskId = decodeURIComponent(taskStatusMatch[1]);
     let body = '';
     req.on('data', c => (body += c));
@@ -1445,6 +1447,7 @@ module.exports = function tasksRoutes(req, res, helpers, deps) {
   // POST /api/tasks/:id/steps/:stepId/kill — kill a running step
   const stepKillMatch = req.url.match(/^\/api\/tasks\/([^/]+)\/steps\/([^/]+)\/kill$/);
   if (req.method === 'POST' && stepKillMatch) {
+    if (requireRole(req, res, 'operator')) return;
     const taskId = decodeURIComponent(stepKillMatch[1]);
     const stepId = decodeURIComponent(stepKillMatch[2]);
 
@@ -1630,6 +1633,7 @@ module.exports = function tasksRoutes(req, res, helpers, deps) {
   // --- Per-task dispatch: send task directly to assigned agent ---
   const taskDispatchMatch = req.url.match(/^\/api\/tasks\/([^/]+)\/dispatch(\?|$)/);
   if (req.method === 'POST' && taskDispatchMatch) {
+    if (requireRole(req, res, 'operator')) return;
     const taskId = decodeURIComponent(taskDispatchMatch[1]);
     const dispatchUrl = new URL(req.url, 'http://localhost');
     const runtimeOverride = dispatchUrl.searchParams.get('runtime') || null;
@@ -1675,6 +1679,7 @@ module.exports = function tasksRoutes(req, res, helpers, deps) {
   // --- Bulk dispatch: notify Nox (Lead) to dispatch tasks via sessions_spawn ---
   const dispatchMatch = req.url.match(/^\/api\/tasks\/dispatch$/);
   if (req.method === 'POST' && dispatchMatch) {
+    if (requireRole(req, res, 'operator')) return;
     try {
       const board = helpers.readBoard();
 
@@ -1882,6 +1887,7 @@ module.exports = function tasksRoutes(req, res, helpers, deps) {
   // --- S6: High-Level Atomic APIs ---
 
   if (req.method === 'POST' && req.url === '/api/dispatch-next') {
+    if (requireRole(req, res, 'operator')) return;
     try {
       const board = helpers.readBoard();
       const task = mgmt.pickNextTask(board);
@@ -1994,6 +2000,7 @@ module.exports = function tasksRoutes(req, res, helpers, deps) {
   // --- DELETE /api/tasks/:id — remove task from board ---
   const deleteTaskMatch = req.url.match(/^\/api\/tasks\/([^/]+)$/);
   if (req.method === 'DELETE' && deleteTaskMatch) {
+    if (requireRole(req, res, 'admin')) return;
     const taskId = decodeURIComponent(deleteTaskMatch[1]);
     const board = helpers.readBoard();
     const removed = removeTask(board, taskId, deps, helpers);
@@ -2005,6 +2012,7 @@ module.exports = function tasksRoutes(req, res, helpers, deps) {
 
   // --- POST /api/tasks/cleanup — batch remove tasks by status/age ---
   if (req.method === 'POST' && req.url === '/api/tasks/cleanup') {
+    if (requireRole(req, res, 'admin')) return;
     let body = '';
     req.on('data', c => (body += c));
     req.on('end', () => {

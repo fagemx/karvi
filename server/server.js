@@ -187,6 +187,11 @@ const server = bb.createServer(ctx, (req, res, helpers) => {
 
   // POST /api/shutdown — graceful shutdown (critical for Windows where SIGTERM kills immediately)
   if (req.method === 'POST' && req.url === '/api/shutdown') {
+    // Admin-only: shutdown requires highest privilege
+    if (req.karviRole !== null && req.karviRole !== undefined && req.karviRole !== 'admin') {
+      console.log(`[rbac] 403 ${req.karviRole} tried POST /api/shutdown`);
+      return json(res, 403, { error: 'forbidden', requiredRole: 'admin', currentRole: req.karviRole });
+    }
     json(res, 200, { ok: true, message: 'shutting down' });
     setImmediate(gracefulShutdown);
     return;
@@ -477,7 +482,9 @@ process.on('SIGINT', gracefulShutdown);
   const runtimeNames = Object.keys(RUNTIMES);
   const allRt = ['openclaw', 'claude', 'claude-api', 'codex', 'opencode'];
   const rtLine = allRt.map(r => runtimeNames.includes(r) ? `${r} ✅` : `${r} ❌`).join('  ');
-  const tokenStatus = process.env.KARVI_API_TOKEN ? 'token set ✅' : 'no token (local only)';
+  const tokenStatus = ctx.roleTokens?.active
+    ? `RBAC (${[...new Set(ctx.roleTokens.tokenMap.values())].join(', ')})`
+    : process.env.KARVI_API_TOKEN ? 'token set' : 'no token (local only)';
   const addr = HOST || 'localhost';
 
   console.log('');

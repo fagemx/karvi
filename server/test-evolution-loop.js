@@ -315,6 +315,7 @@ async function main() {
   else { ok(`Error classified: type=${errProvider.error.type}, message="${errProvider.error.message}"`); }
 
   console.log('\n=== Done ===');
+  // RBAC tests are in server/test-rbac.js (dedicated test)
   stopServer();
 }
 
