@@ -166,6 +166,9 @@ function createStepWorker(deps) {
     });
     // Enforce: runtime timeout must match lock timeout (prevent misalignment)
     plan.timeoutSec = timeoutSec;
+    // Grace period for soft stop (SIGINT before hard kill)
+    const controls = mgmt.getControls(board);
+    plan.cancelGraceMs = controls.cancel_grace_ms || 5000;
     // Envelope-level model_hint (from model_map) overrides plan default
     if (envelope.model_hint) plan.modelHint = envelope.model_hint;
     const stepMessage = buildStepMessage(envelope, plan.artifacts, board, task);
@@ -590,6 +593,28 @@ function createStepWorker(deps) {
             retryable: true,
           };
           summary = `Contract violation: ${contractResult.reason}`;
+        }
+      }
+
+      // 5d. Step output schema validation — verify required output fields
+      if (status === 'succeeded') {
+        const stepContracts = require('./step-contracts');
+        const outputValidation = stepContracts.validateStepOutput(
+          envelope.step_type,
+          { status, summary, payload: stepResult, failure },
+          step,
+        );
+        if (outputValidation.warnings.length > 0) {
+          console.log(`[step-worker] output warnings for ${envelope.step_id}: ${outputValidation.warnings.join(', ')}`);
+        }
+        if (!outputValidation.ok) {
+          status = 'failed';
+          failure = {
+            failure_signature: `Output contract violation: ${outputValidation.errors.join('; ')}`,
+            failure_mode: 'CONTRACT_VIOLATION',
+            retryable: true,
+          };
+          summary = `Output contract violation: ${outputValidation.errors.join('; ')}`;
         }
       }
     }

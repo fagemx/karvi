@@ -1,6 +1,7 @@
 const { spawn } = require('child_process');
 const path = require('path');
 const killTree = require('./kill-tree');
+const { gracefulKill } = require('./kill-tree');
 
 const DIR = __dirname;
 const OPENCLAW_CMD = process.env.OPENCLAW_CMD || (process.platform === 'win32' ? 'openclaw.cmd' : 'openclaw');
@@ -43,7 +44,7 @@ function extractSessionId(obj) {
   );
 }
 
-function runOpenclawTurn({ agentId, sessionId, message, timeoutSec = 180, onActivity, signal }) {
+function runOpenclawTurn({ agentId, sessionId, message, timeoutSec = 180, onActivity, signal, cancelGraceMs }) {
   return new Promise((resolve, reject) => {
     let settled = false;
     function safeResolve(val) { if (!settled) { settled = true; resolve(val); } }
@@ -78,11 +79,11 @@ function runOpenclawTurn({ agentId, sessionId, message, timeoutSec = 180, onActi
       env: spawnEnv,
     });
 
-    // Allow external abort (kill step) — two-phase: SIGTERM then SIGKILL
+    // Allow external abort (kill step) — graceful SIGINT then hard kill
     if (signal) {
+      const graceMs = cancelGraceMs || 5000;
       signal.addEventListener('abort', () => {
-        killTree(child.pid, { signal: 'SIGTERM' });
-        setTimeout(() => killTree(child.pid), 5000).unref();
+        gracefulKill(child, child.pid, graceMs);
         safeReject(new Error('Step killed by user'));
       }, { once: true });
     }
@@ -169,6 +170,7 @@ function dispatch(plan) {
     timeoutSec: plan.timeoutSec || 180,
     onActivity: plan.onActivity,
     signal: plan.signal,
+    cancelGraceMs: plan.cancelGraceMs,
   });
 }
 

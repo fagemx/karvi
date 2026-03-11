@@ -35,6 +35,7 @@ function resolveClaudePath() {
 const CLAUDE_EXE = resolveClaudePath();
 
 const killTree = require('./kill-tree');
+const { gracefulKill } = require('./kill-tree');
 
 /**
  * Extract all text from a Claude assistant message content array.
@@ -99,12 +100,11 @@ function dispatch(plan) {
       stdio: ['ignore', 'pipe', 'pipe'],  // stdin MUST be ignored on Windows
     });
 
-    // Allow external abort (kill step) - graceful then hard kill
+    // Allow external abort (kill step) — graceful SIGINT then hard kill
     if (plan.signal) {
+      const graceMs = plan.cancelGraceMs || 5000;
       plan.signal.addEventListener('abort', () => {
-        killTree(child.pid, { signal: 'SIGTERM' });
-        // Hard kill fallback after grace period
-        setTimeout(() => killTree(child.pid), 5000);
+        gracefulKill(child, child.pid, graceMs);
       }, { once: true });
     }
 

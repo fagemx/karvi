@@ -43,6 +43,7 @@ const DEFAULT_CONTROLS = {
     default: 300
   },
   signal_max_count: 500,              // max signals kept in board.json; overflow archived to signal-archive.jsonl
+  cancel_grace_ms: 5000,              // grace period (ms) for soft stop before hard kill
 };
 
 // --- Evolution Layer: Schema validation ---
@@ -1157,6 +1158,8 @@ function normalizePipelineEntry(entry) {
       retry_policy: entry.retry_policy && typeof entry.retry_policy === 'object' ? entry.retry_policy : null,
       revision_target: typeof entry.revision_target === 'string' ? entry.revision_target : null,
       max_revision_cycles: typeof entry.max_revision_cycles === 'number' ? entry.max_revision_cycles : null,
+      input_schema: entry.input_schema && typeof entry.input_schema === 'object' ? entry.input_schema : null,
+      output_schema: entry.output_schema && typeof entry.output_schema === 'object' ? entry.output_schema : null,
     };
   }
   return null;
@@ -1194,6 +1197,8 @@ function generateStepsForTask(task, runId, pipeline, board) {
     if (stepDef.retry_policy) opts.retry_policy = stepDef.retry_policy;
     if (stepDef.revision_target) opts.revision_target = stepDef.revision_target;
     if (stepDef.max_revision_cycles != null) opts.max_revision_cycles = stepDef.max_revision_cycles;
+    if (stepDef.input_schema) opts.input_schema = stepDef.input_schema;
+    if (stepDef.output_schema) opts.output_schema = stepDef.output_schema;
     return stepSchema.createStep(task.id, runId, stepDef.type, opts);
   });
 }

@@ -270,6 +270,7 @@ async function runConversationLoop(opts) {
     maxTurns = DEFAULT_MAX_TURNS,
     timeoutSec = DEFAULT_TIMEOUT_SEC,
     maxTokens = DEFAULT_MAX_TOKENS,
+    signal,
   } = opts;
 
   const deadline = Date.now() + timeoutSec * 1000;
@@ -279,6 +280,11 @@ async function runConversationLoop(opts) {
   let turns = 0;
 
   for (let turn = 0; turn < maxTurns; turn++) {
+    // Check abort signal before each turn
+    if (signal?.aborted) {
+      throw new Error('Conversation cancelled by abort signal');
+    }
+
     // Check total timeout
     const remaining = deadline - Date.now();
     if (remaining <= 0) {
@@ -404,6 +410,7 @@ function create(opts = {}) {
       maxTurns: DEFAULT_MAX_TURNS,
       timeoutSec: plan.timeoutSec || DEFAULT_TIMEOUT_SEC,
       maxTokens: DEFAULT_MAX_TOKENS,
+      signal: plan.signal,
     });
 
     // 6. Surface accumulated usage for extractUsage() to find on parsed

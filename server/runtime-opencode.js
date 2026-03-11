@@ -45,6 +45,7 @@ function resolveOpencodePath() {
 const OPENCODE_EXE = resolveOpencodePath();
 
 const killTree = require('./kill-tree');
+const { gracefulKill } = require('./kill-tree');
 const { createIdleController } = require('./runtime-utils');
 
 /**
@@ -119,12 +120,11 @@ function dispatch(plan) {
       stdio: ['ignore', 'pipe', 'pipe'],
     });
 
-    // Allow external abort (kill step) - graceful then hard kill
+    // Allow external abort (kill step) — graceful SIGINT then hard kill
     if (plan.signal) {
+      const graceMs = plan.cancelGraceMs || 5000;
       plan.signal.addEventListener('abort', () => {
-        killTree(child.pid, { signal: 'SIGTERM' });
-        // Hard kill fallback after grace period
-        setTimeout(() => killTree(child.pid), 5000);
+        gracefulKill(child, child.pid, graceMs);
       }, { once: true });
     }
 
