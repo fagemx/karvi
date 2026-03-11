@@ -455,7 +455,7 @@ function createKernel(deps) {
               );
               const planData = planDispatcher.extractPlanFromArtifact(synthArtifact);
               if (planData) {
-                planDispatcher.parsePlanAndDispatch(
+                await planDispatcher.parsePlanAndDispatch(
                   latestBoard, planData, helpers, deps, latestTask
                 );
                 // parsePlanAndDispatch calls writeBoard internally,

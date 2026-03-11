@@ -17,10 +17,43 @@ const path = require('path');
 const os = require('os');
 
 function readBoard(boardPath) {
-  return JSON.parse(fs.readFileSync(boardPath, 'utf8'));
+  const board = JSON.parse(fs.readFileSync(boardPath, 'utf8'));
+  
+  if (typeof board._version !== 'number') {
+    board._version = 0;
+  }
+  
+  return board;
 }
 
 function writeBoard(boardPath, board) {
+  const { OptimisticLockError } = require('./errors');
+  
+  if (typeof board._version !== 'number') {
+    board._version = 0;
+  }
+  
+  let currentVersion = 0;
+  try {
+    const current = JSON.parse(fs.readFileSync(boardPath, 'utf8'));
+    currentVersion = current._version || 0;
+  } catch (err) {
+    if (err.code !== 'ENOENT') {
+      console.warn('[storage] warning: could not read board for version check:', err.message);
+    }
+    currentVersion = 0;
+  }
+  
+  if (board._version !== currentVersion) {
+    throw new OptimisticLockError(
+      `Version conflict: expected ${currentVersion}, got ${board._version}`,
+      currentVersion,
+      board._version
+    );
+  }
+  
+  board._version++;
+  
   const dir = path.dirname(boardPath);
   const tmpPath = path.join(dir, `.board-${process.pid}-${Date.now()}.tmp`);
   const data = JSON.stringify(board, null, 2);

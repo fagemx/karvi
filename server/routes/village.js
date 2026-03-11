@@ -11,6 +11,7 @@
  */
 const bb = require('../blackboard-server');
 const { json } = bb;
+const { retryOnConflict } = require('../helpers/retry');
 
 // --- Default village block for board.json ---
 const DEFAULT_VILLAGE = {
@@ -289,102 +290,125 @@ module.exports = function villageRoutes(req, res, helpers, deps) {
 
   // ── POST /api/village/trigger — trigger a village meeting ──
   if (req.method === 'POST' && pathname === '/api/village/trigger') {
-    helpers.parseBody(req).then(body => {
+    helpers.parseBody(req).then(async body => {
       try {
-        const board = helpers.readBoard();
-        const village = ensureVillage(board);
-        const now = helpers.nowIso();
+        const result = await retryOnConflict(async () => {
+          const board = helpers.readBoard();
+          const village = ensureVillage(board);
+          const now = helpers.nowIso();
 
-        const meetingType = body.type || 'weekly_planning';
+          const meetingType = body.type || 'weekly_planning';
 
-        // Idempotency check: don't start a new meeting if one is already active
-        // - proposal phase: always block (weekly_planning already in progress)
-        // - checkin phase: block only if another midweek_checkin is requested
-        const activePhase = village.currentCycle?.phase;
-        const blockDuplicate =
-          activePhase === 'proposal' ||
-          (activePhase === 'checkin' && meetingType === 'midweek_checkin');
-        if (blockDuplicate) {
-          return json(res, 409, {
-            error: 'meeting_active',
-            message: `Cycle ${village.currentCycle.cycleId} is already in phase: ${activePhase}`,
-            currentCycle: village.currentCycle,
+          // Idempotency check: don't start a new meeting if one is already active
+          // - proposal phase: always block (weekly_planning already in progress)
+          // - checkin phase: block only if another midweek_checkin is requested
+          const activePhase = village.currentCycle?.phase;
+          const blockDuplicate =
+            activePhase === 'proposal' ||
+            (activePhase === 'checkin' && meetingType === 'midweek_checkin');
+          if (blockDuplicate) {
+            const error = new Error(`Cycle ${village.currentCycle.cycleId} is already in phase: ${activePhase}`);
+            error.code = 'MEETING_ACTIVE';
+            error.currentCycle = village.currentCycle;
+            throw error;
+          }
+
+          // Validate: need at least one department (not required for midweek check-ins)
+          if (meetingType !== 'midweek_checkin' && village.departments.length === 0) {
+            const error = new Error('Cannot trigger meeting without departments. Add departments first via POST /api/village/departments');
+            error.code = 'NO_DEPARTMENTS';
+            throw error;
+          }
+
+          // Ensure all department assignees are registered as participants
+          for (const dept of village.departments) {
+            ensureAgentParticipant(board, dept.assignee);
+          }
+
+          // Generate meeting tasks
+          const { generateMeetingTasks } = require('../village/village-meeting');
+          const meetingTasks = generateMeetingTasks(board, meetingType);
+
+          // Ensure ALL meeting task assignees are registered as participants
+          // (covers synthesis/chief assignee in addition to department assignees)
+          for (const task of meetingTasks) {
+            ensureAgentParticipant(board, task.assignee);
+          }
+
+          // Add tasks to board
+          if (!board.taskPlan) board.taskPlan = { goal: '', phase: 'idle', tasks: [] };
+          if (!Array.isArray(board.taskPlan.tasks)) board.taskPlan.tasks = [];
+          board.taskPlan.tasks.push(...meetingTasks);
+
+          // Set cycle state
+          // Extract cycleId from the first task id: MTG-{cycleId}-{suffix}
+          // suffix may be "proposal-{deptId}", "synthesis", or "checkin"
+          const rawId = meetingTasks[0]?.id || '';
+          const cycleId = rawId
+            .replace(/^MTG-/, '')
+            .replace(/-(proposal-.+|synthesis|checkin)$/, '') || `cycle-${Date.now()}`;
+
+          const cyclePhase = meetingType === 'midweek_checkin' ? 'checkin' : 'proposal';
+          village.currentCycle = {
+            cycleId,
+            phase: cyclePhase,
+            meetingType,
+            startedAt: now,
+            taskIds: meetingTasks.map(t => t.id),
+          };
+
+          helpers.writeBoard(board);
+          helpers.appendLog({
+            ts: now,
+            event: 'village_meeting_triggered',
+            cycleId,
+            meetingType,
+            taskCount: meetingTasks.length,
           });
-        }
+          helpers.broadcastSSE('village_meeting', { cycleId, meetingType, phase: cyclePhase });
 
-        // Validate: need at least one department (not required for midweek check-ins)
-        if (meetingType !== 'midweek_checkin' && village.departments.length === 0) {
-          return json(res, 400, {
-            error: 'no_departments',
-            message: 'Cannot trigger meeting without departments. Add departments first via POST /api/village/departments',
-          });
-        }
-
-        // Ensure all department assignees are registered as participants
-        for (const dept of village.departments) {
-          ensureAgentParticipant(board, dept.assignee);
-        }
-
-        // Generate meeting tasks
-        const { generateMeetingTasks } = require('../village/village-meeting');
-        const meetingTasks = generateMeetingTasks(board, meetingType);
-
-        // Ensure ALL meeting task assignees are registered as participants
-        // (covers synthesis/chief assignee in addition to department assignees)
-        for (const task of meetingTasks) {
-          ensureAgentParticipant(board, task.assignee);
-        }
-
-        // Add tasks to board
-        if (!board.taskPlan) board.taskPlan = { goal: '', phase: 'idle', tasks: [] };
-        if (!Array.isArray(board.taskPlan.tasks)) board.taskPlan.tasks = [];
-        board.taskPlan.tasks.push(...meetingTasks);
-
-        // Set cycle state
-        // Extract cycleId from the first task id: MTG-{cycleId}-{suffix}
-        // suffix may be "proposal-{deptId}", "synthesis", or "checkin"
-        const rawId = meetingTasks[0]?.id || '';
-        const cycleId = rawId
-          .replace(/^MTG-/, '')
-          .replace(/-(proposal-.+|synthesis|checkin)$/, '') || `cycle-${Date.now()}`;
-
-        const cyclePhase = meetingType === 'midweek_checkin' ? 'checkin' : 'proposal';
-        village.currentCycle = {
-          cycleId,
-          phase: cyclePhase,
-          meetingType,
-          startedAt: now,
-          taskIds: meetingTasks.map(t => t.id),
-        };
-
-        helpers.writeBoard(board);
-        helpers.appendLog({
-          ts: now,
-          event: 'village_meeting_triggered',
-          cycleId,
-          meetingType,
-          taskCount: meetingTasks.length,
-        });
-        helpers.broadcastSSE('village_meeting', { cycleId, meetingType, phase: cyclePhase });
-
-        // Auto-dispatch dispatched tasks
-        if (deps.tryAutoDispatch) {
-          for (const t of meetingTasks) {
-            if (t.status === 'dispatched') {
-              setImmediate(() => deps.tryAutoDispatch(t.id));
+          // Auto-dispatch dispatched tasks
+          if (deps.tryAutoDispatch) {
+            for (const t of meetingTasks) {
+              if (t.status === 'dispatched') {
+                setImmediate(() => deps.tryAutoDispatch(t.id));
+              }
             }
           }
-        }
 
-        return json(res, 200, {
-          ok: true,
-          cycleId,
-          meetingType,
-          phase: cyclePhase,
-          tasksCreated: meetingTasks.length,
-          taskIds: meetingTasks.map(t => t.id),
-        });
+          return {
+            ok: true,
+            cycleId,
+            meetingType,
+            phase: cyclePhase,
+            tasksCreated: meetingTasks.length,
+            taskIds: meetingTasks.map(t => t.id),
+          };
+        }, 3);
+
+        return json(res, 200, result);
       } catch (error) {
+        if (error.code === 'VERSION_CONFLICT') {
+          console.error('[village] max retries exhausted for trigger');
+          return res.status(503).json({ 
+            error: 'Service temporarily unavailable',
+            code: 'VERSION_CONFLICT',
+            message: 'Board is under high contention, please retry later'
+          });
+        }
+        if (error.code === 'MEETING_ACTIVE') {
+          return json(res, 409, {
+            error: 'meeting_active',
+            message: error.message,
+            currentCycle: error.currentCycle,
+          });
+        }
+        if (error.code === 'NO_DEPARTMENTS') {
+          return json(res, 400, {
+            error: 'no_departments',
+            message: error.message,
+          });
+        }
         return json(res, 500, { error: error.message });
       }
     }).catch(e => json(res, 400, { error: e.message }));
