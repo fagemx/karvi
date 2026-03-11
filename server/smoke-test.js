@@ -967,6 +967,18 @@ async function runSuite(target) {
     } catch (e) { fail('GET /api/artifacts/:run/:step/:kind → 404', e.message); }
   }
 
+  // ── Audit Log Query (GH-340) ──
+  if (port === 3461) {
+    try {
+      const r = await get(port, '/api/logs');
+      if (r.status !== 200) throw new Error(`status ${r.status}`);
+      const body = JSON.parse(r.body);
+      if (!Array.isArray(body.entries)) throw new Error('expected entries array');
+      if (typeof body.total !== 'number') throw new Error('missing total');
+      ok('GET /api/logs → 200 + entries array');
+    } catch (e) { fail('GET /api/logs', e.message); }
+  }
+
   console.log(`  ── ${passed} passed, ${failed} failed ──`);
   return { passed, failed };
 }

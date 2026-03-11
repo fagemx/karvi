@@ -22,6 +22,8 @@ const MAX_LIMIT = 1000;
 const DEFAULT_LIMIT = 100;
 
 function readLogEntries(logPath) {
+  // NOTE: reads entire file into memory — adequate for single-server JSON file storage.
+  // If task-log.jsonl grows beyond ~100 MB, switch to streaming (readline) or pagination at the FS layer.
   const raw = fs.readFileSync(logPath, 'utf8');
   const entries = [];
   for (const line of raw.split('\n')) {
@@ -29,8 +31,8 @@ function readLogEntries(logPath) {
     if (!trimmed) continue;
     try {
       entries.push(JSON.parse(trimmed));
-    } catch {
-      // 跳過無法解析的行
+    } catch (err) {
+      console.warn(`[logs] skipping unparseable JSONL line: ${err.message}`);
     }
   }
   return entries;
