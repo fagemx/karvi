@@ -31,6 +31,7 @@ const DEFAULT_CONTROLS = {
   target_repo: null,             // absolute path to target repo (null = karvi itself / dogfood mode)
   repo_map: {},                  // GitHub slug → local absolute path, e.g. { "owner/repo": "C:/path/to/repo" }
   auto_merge_on_approve: false,  // when true, auto squash-merge PR after review LGTM
+  event_webhook_url: null,       // POST step events to this URL (null = disabled)
   model_map: {},                  // { "opencode": { "plan": "anthropic/claude-opus-4", "default": "anthropic/claude-sonnet-4" }, "codex": { ... } }
   step_timeout_sec: {
     plan: 300,
