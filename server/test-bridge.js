@@ -110,34 +110,34 @@ function createFullDeps(runtimeOverrides = {}) {
   console.log('\n=== Bridge Integration Tests (issue #108) ===\n');
 
   // ------------------------------------------------------------------
-  // Test 1: Feature flag — use_step_pipeline=false → legacy path (no steps created)
+  // Test 1: Tasks without pipeline default to single 'execute' step (GH-218)
   // ------------------------------------------------------------------
-  await test('feature flag off → legacy dispatch (no steps)', async () => {
+  await test('no pipeline → defaults to single execute step', async () => {
     const taskId = `T-BRIDGE-${++testCounter}`;
     const task = { id: taskId, title: 'Test task', description: 'desc', assignee: 'engineer_lite', status: 'dispatched' };
-    const board = createBoard([task], { use_step_pipeline: false });
+    const board = createBoard([task]);
     const helpers = createMockHelpers(board);
 
-    // Simulate tryAutoDispatch check — with flag off, steps should NOT be created
-    const ctrl = mgmt.getControls(currentBoard);
-    assert.strictEqual(ctrl.use_step_pipeline, false);
+    // Tasks without explicit pipeline default to ['execute']
+    const runId = helpers.uid('run');
     const t = currentBoard.taskPlan.tasks[0];
-    assert.strictEqual(t.steps, undefined);
+    const pipeline = t.pipeline || ['execute'];
+    t.steps = mgmt.generateStepsForTask(t, runId, pipeline);
+
+    assert.strictEqual(t.steps.length, 1, 'should have exactly 1 step');
+    assert.strictEqual(t.steps[0].type, 'execute', 'step type should be execute');
+    assert.strictEqual(t.steps[0].state, 'queued', 'step should be queued');
   });
 
   // ------------------------------------------------------------------
-  // Test 2: Feature flag on → steps created + first step dispatched
+  // Test 2: Steps created + first step dispatched
   // ------------------------------------------------------------------
-  await test('feature flag on → steps created, step[0] running, envelope written', async () => {
+  await test('steps created, step[0] running, envelope written', async () => {
     const taskId = `T-BRIDGE-${++testCounter}`;
     const task = { id: taskId, title: 'Test task', description: 'desc', assignee: 'engineer_lite', status: 'dispatched' };
     const { deps } = createFullDeps();
     const board = createBoard([task]);
     const helpers = createMockHelpers(board);
-
-    // Inline the tryAutoDispatch step-pipeline logic for testability
-    const ctrl = mgmt.getControls(currentBoard);
-    assert.strictEqual(ctrl.use_step_pipeline, true);
 
     const runId = helpers.uid('run');
     const t = currentBoard.taskPlan.tasks[0];

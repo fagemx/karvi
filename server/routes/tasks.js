@@ -329,20 +329,26 @@ function dispatchTask(task, board, deps, helpers, opts = {}) {
     }
   }
 
-  // --- Phase 2: Step pipeline (if enabled) ---
-  if (ctrl.use_step_pipeline && deps.stepWorker) {
-    // Per-step-type concurrency check for step pipeline
-    const firstStepType = task.pipeline?.[0] || 'plan';
-    if (!canDispatchStepType(firstStepType, board, mgmt)) {
-      _dispatchLocks.delete(taskId);
-      const running = countRunningStepsByType(firstStepType, board);
-      console.log(`[dispatchTask:${taskId}] skip: ${firstStepType} concurrency ${running}/${ctrl.max_concurrent_by_type?.[firstStepType]}`);
-      return { dispatched: false, reason: `${firstStepType} concurrency limit reached` };
-    }
-    
-    console.log(`[dispatchTask:${taskId}] step-pipeline via ${source}`);
+  // --- Phase 2: Step pipeline (always — legacy path removed in GH-218) ---
+  if (!deps.stepWorker) {
+    _dispatchLocks.delete(taskId);
+    console.error(`[dispatchTask:${taskId}] stepWorker not available`);
+    return { dispatched: false, reason: 'stepWorker not initialized' };
+  }
+
+  // Per-step-type concurrency check
+  const pipeline = task.pipeline || ['execute'];
+  const firstStepType = (typeof pipeline[0] === 'string' ? pipeline[0] : pipeline[0]?.type) || 'execute';
+  if (!canDispatchStepType(firstStepType, board, mgmt)) {
+    _dispatchLocks.delete(taskId);
+    const running = countRunningStepsByType(firstStepType, board);
+    console.log(`[dispatchTask:${taskId}] skip: ${firstStepType} concurrency ${running}/${ctrl.max_concurrent_by_type?.[firstStepType]}`);
+    return { dispatched: false, reason: `${firstStepType} concurrency limit reached` };
+  }
+
+  console.log(`[dispatchTask:${taskId}] step-pipeline via ${source}`);
     const runId = helpers.uid('run');
-    task.steps = mgmt.generateStepsForTask(task, runId, task.pipeline || null, board);
+    task.steps = mgmt.generateStepsForTask(task, runId, pipeline, board);
     task._revisionCounts = {};  // Clear stale revision counts from previous runs
     task.status = 'in_progress';
     task.startedAt = task.startedAt || helpers.nowIso();
@@ -387,160 +393,8 @@ function dispatchTask(task, board, deps, helpers, opts = {}) {
       helpers.appendLog({ ts: helpers.nowIso(), event: 'dispatch_envelope_failed', taskId, source });
       console.error(`[dispatchTask:${taskId}] failed to build envelope for first step`);
     }
-    _dispatchLocks.delete(taskId);
-    return { dispatched: true, mode: 'step-pipeline', runId };
-  }
-
-  // --- Phase 3: Legacy single-shot dispatch ---
-  console.log(`[dispatchTask:${taskId}] legacy dispatch via ${source}`);
-
-  const sessionId = task.childSessionKey || board.conversations?.[0]?.sessionIds?.[task.assignee] || null;
-  const dispatchOpts = { mode, workingDir: task.worktreeDir || null };
-  if (opts.runtimeOverride) dispatchOpts.runtimeHint = opts.runtimeOverride;
-  const plan = mgmt.buildDispatchPlan(board, task, dispatchOpts);
-  plan.sessionId = plan.sessionId || sessionId;
-  if (opts.onActivity) plan.onActivity = opts.onActivity;
-  logDispatchPreflight(plan, task, deps, helpers);
-
-  // Update status
-  task.status = 'in_progress';
-  task.startedAt = task.startedAt || helpers.nowIso();
-  task.history = task.history || [];
-  task.history.push({
-    ts: helpers.nowIso(), status: 'in_progress', by: source,
-    model: plan.modelHint || undefined,
-    runtime: plan.runtimeHint,
-    runtimeRationale: plan.runtimeSelection?.rationale,
-    injectedLessons: plan.injectedLessonCount || 0,
-    ...(task.reviewAttempts ? { attempt: task.reviewAttempts } : {}),
-  });
-  task.lastDispatchModel = plan.modelHint || null;
-  if (board.taskPlan) board.taskPlan.phase = 'executing';
-
-  // Write dispatch state
-  task.dispatch = {
-    version: mgmt.DISPATCH_PLAN_VERSION,
-    state: 'dispatching',
-    planId: plan.planId,
-    runtime: plan.runtimeHint,
-    agentId: plan.agentId,
-    model: plan.modelHint || null,
-    timeoutSec: plan.timeoutSec || 300,
-    preparedAt: plan.createdAt,
-    startedAt: helpers.nowIso(),
-    finishedAt: null,
-    sessionId: plan.sessionId || null,
-    lastError: null,
-  };
-
-  helpers.writeBoard(board);
-  helpers.appendLog({
-    ts: helpers.nowIso(), event: 'task_dispatched', taskId,
-    assignee: task.assignee, source, planId: plan.planId,
-  });
-
-  // Async runtime execution
-  const rt = deps.getRuntime(plan.runtimeHint);
-  rt.dispatch(plan).then(result => {
-    const replyText = rt.extractReplyText(result.parsed, result.stdout);
-    const newSessionId = rt.extractSessionId(result.parsed);
-    const latestBoard = helpers.readBoard();
-    const latestTask = (latestBoard.taskPlan?.tasks || []).find(t => t.id === taskId);
-    const latestConv = latestBoard.conversations?.[0];
-
-    if (latestTask) {
-      latestTask.dispatch = latestTask.dispatch || {};
-      latestTask.dispatch.state = 'completed';
-      latestTask.dispatch.finishedAt = helpers.nowIso();
-      latestTask.dispatch.sessionId = newSessionId || latestTask.dispatch.sessionId || null;
-      latestTask.dispatch.lastError = null;
-      latestTask.lastReply = replyText;
-      latestTask.lastReplyAt = helpers.nowIso();
-      if (result.usage) latestTask.dispatch.usage = result.usage;
-    }
-
-    if (latestConv && newSessionId) {
-      latestConv.sessionIds = latestConv.sessionIds || {};
-      latestConv.sessionIds[task.assignee] = newSessionId;
-    }
-    if (latestConv) {
-      const prefix = mode === 'redispatch' ? `${taskId} Fix Reply` : `${taskId} Reply`;
-      pushMessage(latestConv, {
-        id: helpers.uid('msg'), ts: helpers.nowIso(), type: 'message',
-        from: task.assignee, to: 'human',
-        text: `[${prefix}]\n${replyText}`,
-        sessionId: newSessionId || sessionId,
-      });
-    }
-
-    helpers.writeBoard(latestBoard);
-    helpers.broadcastSSE('board', latestBoard);
-    helpers.appendLog({ ts: helpers.nowIso(), event: 'dispatch_reply', taskId, source, agent: task.assignee, reply: replyText.slice(0, 500) });
-    if (result.usage) helpers.appendLog({ ts: helpers.nowIso(), event: 'token_usage', taskId, usage: result.usage });
-
-    // Usage tracking
-    const userId = getUserIdForTask();
-    const duration = latestTask?.dispatch?.startedAt
-      ? Math.round((Date.now() - new Date(latestTask.dispatch.startedAt).getTime()) / 1000)
-      : 0;
-    usage.record(userId, 'dispatch', { taskId, runtime: plan.runtimeHint, assignee: task.assignee });
-    usage.record(userId, 'agent.runtime', { taskId, durationSec: duration, runtime: plan.runtimeHint });
-    const tokenUsage = rt.extractUsage?.(result.parsed, result.stdout);
-    if (tokenUsage) {
-      usage.record(userId, 'api.tokens', {
-        taskId, input: tokenUsage.inputTokens, output: tokenUsage.outputTokens, cost: tokenUsage.totalCost,
-      });
-    }
-  }).catch(err => {
-    console.error(`[dispatchTask:${taskId}:${source}] error:`, err.message);
-    const latestBoard = helpers.readBoard();
-    const latestTask = (latestBoard.taskPlan?.tasks || []).find(t => t.id === taskId);
-    const latestConv = latestBoard.conversations?.[0];
-
-    if (latestTask) {
-      latestTask.dispatch = latestTask.dispatch || {};
-      latestTask.dispatch.state = 'failed';
-      latestTask.dispatch.finishedAt = helpers.nowIso();
-      latestTask.dispatch.lastError = err.message || String(err);
-
-      if (source === 'dispatch' || source === 'auto-redispatch') {
-        latestTask.status = 'blocked';
-        latestTask.blocker = { reason: `Dispatch failed: ${err.message}`, askedAt: helpers.nowIso() };
-        latestTask.history = latestTask.history || [];
-        latestTask.history.push({ ts: helpers.nowIso(), status: 'blocked', reason: err.message, by: `${source}-error` });
-      }
-    }
-
-    if (latestConv) {
-      pushMessage(latestConv, {
-        id: helpers.uid('msg'), ts: helpers.nowIso(), type: 'error',
-        from: 'system', to: 'human',
-        text: `[${taskId}] Dispatch failed: ${err.message}`,
-      });
-    }
-
-    if (source === 'dispatch' || source === 'auto-redispatch') {
-      mgmt.ensureEvolutionFields(latestBoard);
-      latestBoard.signals.push({
-        id: helpers.uid('sig'), ts: helpers.nowIso(), by: 'dispatchTask',
-        type: 'error', content: `${taskId} dispatch failed: ${err.message}`,
-        refs: [taskId], data: { taskId, error: err.message, source },
-      });
-      if (latestBoard.signals.length > 500) latestBoard.signals = latestBoard.signals.slice(-500);
-    }
-
-    helpers.writeBoard(latestBoard);
-    helpers.broadcastSSE('board', latestBoard);
-
-    if (latestTask && (source === 'dispatch' || source === 'auto-redispatch')) {
-      push.notifyTaskEvent(PUSH_TOKENS_PATH, latestTask, 'dispatch.failed')
-        .catch(err2 => console.error('[push] dispatch-failed notify:', err2.message));
-    }
-  }).finally(() => {
-    _dispatchLocks.delete(taskId);
-  });
-
-  return { dispatched: true, planId: plan.planId, mode: 'legacy' };
+  _dispatchLocks.delete(taskId);
+  return { dispatched: true, mode: 'step-pipeline', runId };
 }
 
 // --- Per-step-type concurrency helpers ---
@@ -628,14 +482,12 @@ function tryAutoDispatch(taskId, deps, helpers) {
     }
   }
 
-  // Per-step-type concurrency gate (if using step pipeline)
-  if (ctrl.use_step_pipeline) {
-    const firstStepType = 'plan';
-    if (!canDispatchStepType(firstStepType, board, mgmt)) {
-      const running = countRunningStepsByType(firstStepType, board);
-      console.log(`[auto-dispatch:${taskId}] skip: ${firstStepType} concurrency ${running}/${ctrl.max_concurrent_by_type?.[firstStepType]}`);
-      return;
-    }
+  // Per-step-type concurrency gate
+  const firstStepType = (typeof (task.pipeline?.[0]) === 'string' ? task.pipeline[0] : task.pipeline?.[0]?.type) || 'execute';
+  if (!canDispatchStepType(firstStepType, board, mgmt)) {
+    const running = countRunningStepsByType(firstStepType, board);
+    console.log(`[auto-dispatch:${taskId}] skip: ${firstStepType} concurrency ${running}/${ctrl.max_concurrent_by_type?.[firstStepType]}`);
+    return;
   }
 
   // Delegate to unified dispatchTask (handles worktree + step pipeline + legacy)
