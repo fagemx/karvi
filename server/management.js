@@ -1079,6 +1079,7 @@ function buildDispatchPlan(board, task, options = {}) {
 
 // --- Step-level helpers ---
 
+// Default multi-step pipeline. Tasks can override with ['execute'] for single-step mode.
 const DEFAULT_STEP_PIPELINE = [
   'plan',
   'implement',

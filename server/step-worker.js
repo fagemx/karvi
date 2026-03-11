@@ -265,7 +265,28 @@ function createStepWorker(deps) {
         const failBoard = helpers.readBoard();
         const failTask = (failBoard.taskPlan?.tasks || []).find(t => t.id === envelope.task_id);
         const failStep = failTask?.steps?.find(s => s.step_id === envelope.step_id);
-        if (failStep && failStep.state === 'running') {
+        if (failStep && (failStep.state === 'running' || failStep.state === 'cancelling')) {
+          // If step was killed (cancelling), finalise to cancelled instead of failed
+          if (failStep.state === 'cancelling') {
+            stepSchema.transitionStep(failStep, 'cancelled', {
+              error: failStep.error || 'Killed by user',
+            });
+
+            mgmt.ensureEvolutionFields(failBoard);
+            failBoard.signals.push({
+              id: helpers.uid('sig'), ts: helpers.nowIso(), by: 'step-worker',
+              type: 'step_cancelled',
+              content: `${envelope.task_id} step ${envelope.step_id} cancelling → cancelled`,
+              refs: [envelope.task_id],
+              data: { taskId: envelope.task_id, stepId: envelope.step_id, from: 'cancelling', to: 'cancelled' },
+            });
+            if (failBoard.signals.length > 500) failBoard.signals = failBoard.signals.slice(-500);
+
+            helpers.writeBoard(failBoard);
+            helpers.appendLog({ ts: helpers.nowIso(), event: 'step_killed', taskId: envelope.task_id, stepId: envelope.step_id, duration_ms: dispatchDurationMs });
+            emitWebhookEvent(failBoard, 'step_cancelled', { taskId: envelope.task_id, stepId: envelope.step_id, state: 'cancelled' });
+            throw dispatchErr;
+          }
           const errorKind = classifyError(dispatchErr, null);
           stepSchema.transitionStep(failStep, 'failed', {
             error: (dispatchErr.message || 'dispatch error').slice(0, 500),
@@ -1027,6 +1048,13 @@ function buildStepMessage(envelope, upstreamArtifacts, board, task) {
       '- [ ] If review exists, update rather than recreate',
       '- [ ] Focus on addressing the specific error',
     ],
+    execute: [
+      '- [ ] Verify branch exists: `git branch --show-current`',
+      '- [ ] Check commits: `git log --oneline -5`',
+      '- [ ] Check PR status: `gh pr list --head "$(git branch --show-current)"`',
+      '- [ ] Review previous work before restarting from scratch',
+      '- [ ] Focus on fixing the specific error',
+    ],
   };
 
   const STEP_SKILL_MAP = {
@@ -1126,6 +1154,27 @@ function buildStepMessage(envelope, upstreamArtifacts, board, task) {
       ``,
       `## Deliverable`,
       `A review comment posted on the PR with a clear verdict.`,
+    ].join('\n'),
+    execute: [
+      `## Role`,
+      `Your role is to complete the assigned task end-to-end: research, plan, implement, and deliver.`,
+      ``,
+      `## Instructions`,
+      `1. Read the task requirements: \`gh issue view ${issueNumber}\``,
+      `2. Research the codebase — read relevant files, understand existing patterns`,
+      `3. Plan your approach before writing code`,
+      `4. Implement the solution`,
+      `5. Verify syntax: \`node -c <file>\` on each modified file`,
+      `6. Run tests if applicable`,
+      `7. Commit changes: \`git add <files> && git commit -m "feat(scope): description (GH-${issueNumber})"\``,
+      `8. Push and create PR: \`git push -u origin $(git branch --show-current) && gh pr create --title "..." --body "Closes #${issueNumber}"\``,
+      ``,
+      `## Deliverable`,
+      `A completed task with a pull request ready for review.`,
+      ``,
+      `## STEP_RESULT Output`,
+      `Your final STEP_RESULT MUST include a "prUrl" field with the full PR URL:`,
+      `STEP_RESULT:{"status":"succeeded","summary":"...","prUrl":"https://github.com/owner/repo/pull/123"}`,
     ].join('\n'),
   };
 
