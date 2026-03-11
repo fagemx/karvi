@@ -471,6 +471,102 @@ test('buildDispatchPlan workingDir defaults to null', () => {
 });
 
 // ─────────────────────────────────────
+// validateModelHint
+// ─────────────────────────────────────
+
+test('validateModelHint accepts null/undefined', () => {
+  assert.deepStrictEqual(mgmt.validateModelHint(null), { valid: true, normalized: null });
+  assert.deepStrictEqual(mgmt.validateModelHint(undefined), { valid: true, normalized: null });
+});
+
+test('validateModelHint accepts valid provider/model format', () => {
+  const r = mgmt.validateModelHint('anthropic/claude-sonnet-4');
+  assert.strictEqual(r.valid, true);
+  assert.strictEqual(r.normalized, 'anthropic/claude-sonnet-4');
+});
+
+test('validateModelHint trims whitespace', () => {
+  const r = mgmt.validateModelHint('  anthropic/claude-sonnet-4  ');
+  assert.strictEqual(r.valid, true);
+  assert.strictEqual(r.normalized, 'anthropic/claude-sonnet-4');
+});
+
+test('validateModelHint rejects empty string', () => {
+  const r = mgmt.validateModelHint('');
+  assert.strictEqual(r.valid, false);
+  assert.ok(r.reason.includes('empty'));
+});
+
+test('validateModelHint rejects whitespace-only', () => {
+  const r = mgmt.validateModelHint('   ');
+  assert.strictEqual(r.valid, false);
+  assert.ok(r.reason.includes('empty'));
+});
+
+test('validateModelHint rejects missing slash', () => {
+  const r = mgmt.validateModelHint('gpt5');
+  assert.strictEqual(r.valid, false);
+  assert.ok(r.reason.includes('provider/model'));
+});
+
+test('validateModelHint rejects non-string', () => {
+  const r = mgmt.validateModelHint(123);
+  assert.strictEqual(r.valid, false);
+  assert.ok(r.reason.includes('string'));
+});
+
+test('validateModelHint rejects empty provider', () => {
+  const r = mgmt.validateModelHint('/model');
+  assert.strictEqual(r.valid, false);
+  assert.ok(r.reason.includes('both provider and model'));
+});
+
+test('validateModelHint rejects empty model', () => {
+  const r = mgmt.validateModelHint('provider/');
+  assert.strictEqual(r.valid, false);
+  assert.ok(r.reason.includes('both provider and model'));
+});
+
+test('validateModelHint returns warning for unknown model', () => {
+  const r = mgmt.validateModelHint('unknown-provider/unknown-model');
+  assert.strictEqual(r.valid, true);
+  assert.strictEqual(r.normalized, 'unknown-provider/unknown-model');
+  assert.ok(r.warning && r.warning.includes('not in the known models registry'));
+});
+
+test('validateModelHint no warning for known model', () => {
+  // engineer_lite maps to custom-ai-t8star-cn/gpt-5.3-codex-high in AGENT_MODEL_MAP
+  const r = mgmt.validateModelHint('custom-ai-t8star-cn/gpt-5.3-codex-high');
+  assert.strictEqual(r.valid, true);
+  assert.strictEqual(r.warning, null);
+});
+
+test('buildDispatchPlan falls through on invalid modelHint', () => {
+  const board = {
+    taskPlan: { tasks: [{ id: 'T-00001', assignee: 'engineer_lite', status: 'dispatched', modelHint: 'bad-no-slash' }] },
+    controls: {},
+    lessons: [],
+    participants: [{ id: 'owner', type: 'human' }],
+  };
+  const task = board.taskPlan.tasks[0];
+  const plan = mgmt.buildDispatchPlan(board, task);
+  // Invalid modelHint should fall through — not used as-is
+  assert.notStrictEqual(plan.modelHint, 'bad-no-slash');
+});
+
+test('buildDispatchPlan normalizes whitespace in modelHint', () => {
+  const board = {
+    taskPlan: { tasks: [{ id: 'T-00001', assignee: 'engineer_lite', status: 'dispatched', modelHint: '  custom-ai-t8star-cn/gpt-5.3-codex-high  ' }] },
+    controls: {},
+    lessons: [],
+    participants: [{ id: 'owner', type: 'human' }],
+  };
+  const task = board.taskPlan.tasks[0];
+  const plan = mgmt.buildDispatchPlan(board, task);
+  assert.strictEqual(plan.modelHint, 'custom-ai-t8star-cn/gpt-5.3-codex-high');
+});
+
+// ─────────────────────────────────────
 // Cleanup & Summary
 // ─────────────────────────────────────
 
