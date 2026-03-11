@@ -264,8 +264,28 @@ function createStepWorker(deps) {
         if (execInfo?.guardTimer) clearTimeout(execInfo.guardTimer);
         activeExecutions.delete(envelope.step_id);
 
-        // If this was a kill, don't transition to failed - the kill endpoint handles it
+        // If this was a kill, finalise cancelling -> cancelled here (closest to action)
         if (wasCancelling) {
+          const dispatchDurationMs = Date.now() - startMs;
+          const killBoard = helpers.readBoard();
+          const killTask = (killBoard.taskPlan?.tasks || []).find(t => t.id === envelope.task_id);
+          const killStep = killTask?.steps?.find(s => s.step_id === envelope.step_id);
+          if (killStep && killStep.state === 'cancelling') {
+            stepSchema.transitionStep(killStep, 'cancelled', {
+              error: killStep.error || 'Killed by user',
+            });
+            mgmt.ensureEvolutionFields(killBoard);
+            killBoard.signals.push({
+              id: helpers.uid('sig'), ts: helpers.nowIso(), by: 'step-worker',
+              type: 'step_cancelled',
+              content: `${envelope.task_id} step ${envelope.step_id} cancelling \u2192 cancelled`,
+              refs: [envelope.task_id],
+              data: { taskId: envelope.task_id, stepId: envelope.step_id, from: 'cancelling', to: 'cancelled' },
+            });
+            if (killBoard.signals.length > 500) killBoard.signals = killBoard.signals.slice(-500);
+            helpers.writeBoard(killBoard);
+            helpers.appendLog({ ts: helpers.nowIso(), event: 'step_killed', taskId: envelope.task_id, stepId: envelope.step_id, duration_ms: dispatchDurationMs });
+          }
           throw dispatchErr;
         }
 

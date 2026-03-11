@@ -45,6 +45,10 @@ function extractSessionId(obj) {
 
 function runOpenclawTurn({ agentId, sessionId, message, timeoutSec = 180, onActivity, signal }) {
   return new Promise((resolve, reject) => {
+    let settled = false;
+    function safeResolve(val) { if (!settled) { settled = true; resolve(val); } }
+    function safeReject(err) { if (!settled) { settled = true; reject(err); } }
+
     const args = ['agent'];
 
     if (sessionId) {
@@ -79,7 +83,7 @@ function runOpenclawTurn({ agentId, sessionId, message, timeoutSec = 180, onActi
       signal.addEventListener('abort', () => {
         killTree(child.pid, { signal: 'SIGTERM' });
         setTimeout(() => killTree(child.pid), 5000).unref();
-        reject(new Error('Step killed by user'));
+        safeReject(new Error('Step killed by user'));
       }, { once: true });
     }
 
@@ -108,14 +112,14 @@ function runOpenclawTurn({ agentId, sessionId, message, timeoutSec = 180, onActi
     });
     child.stderr.on('data', chunk => (stderr += chunk));
 
-    child.on('error', reject);
+    child.on('error', safeReject);
 
     child.on('close', code => {
       const out = stdout.trim();
       const err = stderr.trim();
 
       if (code !== 0) {
-        return reject(new Error(err || out || `openclaw exited with code ${code}`));
+        return safeReject(new Error(err || out || `openclaw exited with code ${code}`));
       }
 
       let parsed = null;
@@ -125,7 +129,7 @@ function runOpenclawTurn({ agentId, sessionId, message, timeoutSec = 180, onActi
         // keep parsed as null
       }
 
-      resolve({ code, stdout: out, stderr: err, parsed });
+      safeResolve({ code, stdout: out, stderr: err, parsed });
     });
   });
 }

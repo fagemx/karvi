@@ -15,9 +15,12 @@ const STEP_STATES = ['queued', 'running', 'cancelling', 'succeeded', 'failed', '
 // Step state transitions:
 // - queued → running (normal execution start)
 // - queued → cancelled (user cancels before step starts)
+// - running → cancelling (kill requested, process terminating)
 // - running → succeeded (task completed successfully)
 // - running → failed (error occurred, retry scheduled)
-// - running → cancelled (user killed step during execution)
+// - running → cancelled (task-level cancel — immediate, no grace period)
+// - cancelling → cancelled (process terminated after kill)
+// - cancelling → failed (process failed during graceful shutdown)
 // - failed → queued (retry after backoff)
 // - failed → dead (max retries exhausted)
 // - failed → cancelled (user kills failed step)

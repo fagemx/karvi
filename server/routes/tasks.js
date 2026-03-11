@@ -1477,27 +1477,8 @@ module.exports = function tasksRoutes(req, res, helpers, deps) {
     helpers.writeBoard(board);
     helpers.appendLog({ ts: helpers.nowIso(), event: 'step_kill_requested', taskId, stepId });
 
-    // Schedule guard: transition cancelling -> cancelled after grace period
-    const CANCEL_GUARD_MS = 10000;
-    setTimeout(() => {
-      const guardBoard = helpers.readBoard();
-      const guardTask = (guardBoard.taskPlan?.tasks || []).find(t => t.id === taskId);
-      const guardStep = guardTask?.steps?.find(s => s.step_id === stepId);
-      if (guardStep && guardStep.state === 'cancelling') {
-        deps.stepSchema.transitionStep(guardStep, 'cancelled', { error: 'Killed by user (guard timeout)' });
-        mgmt.ensureEvolutionFields(guardBoard);
-        guardBoard.signals.push({
-          id: helpers.uid('sig'), ts: helpers.nowIso(), by: 'system',
-          type: 'step_cancelled',
-          content: `${taskId} step ${stepId} cancelling \u2192 cancelled (guard)`,
-          refs: [taskId],
-          data: { taskId, stepId, from: 'cancelling', to: 'cancelled' },
-        });
-        if (guardBoard.signals.length > 500) guardBoard.signals = guardBoard.signals.slice(-500);
-        helpers.writeBoard(guardBoard);
-        helpers.appendLog({ ts: helpers.nowIso(), event: 'step_killed', taskId, stepId, guard: true });
-      }
-    }, CANCEL_GUARD_MS);
+    // Guard timer removed — step-worker catch block handles cancelling -> cancelled
+    // (step-worker is closer to the action and has the KILL_GUARD_MS safety net)
 
     return json(res, 200, { ok: true, step_id: stepId, new_state: 'cancelling' });
   }
