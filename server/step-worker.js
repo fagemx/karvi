@@ -15,6 +15,24 @@ const mgmt = require('./management');
 const { resolveRepoRoot } = require('./repo-resolver');
 const LOCK_GRACE_MS = 30_000; // 30s grace on top of step timeout
 
+// --- Webhook event emission (#333) ---
+function emitWebhookEvent(board, eventType, payload) {
+  const url = mgmt.getControls(board).event_webhook_url;
+  if (!url) return;
+
+  const body = JSON.stringify({ event: eventType, ts: new Date().toISOString(), ...payload });
+  const parsed = new URL(url);
+  const mod = parsed.protocol === 'https:' ? require('https') : require('http');
+
+  const req = mod.request(parsed, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body) },
+    timeout: 5000,
+  });
+  req.on('error', err => console.error(`[webhook] ${eventType} POST failed:`, err.message));
+  req.end(body);
+}
+
 // Strip <think>...</think> blocks from model output (some providers leak reasoning tokens)
 const THINK_TAG_RE = /<think>[\s\S]*?<\/think>/g;
 function stripThinkTags(text) {
@@ -145,6 +163,8 @@ function createStepWorker(deps) {
       lockStep.locked_by = 'step-worker';
       helpers.writeBoard(lockBoard);
     }
+
+    emitWebhookEvent(board, 'step_started', { taskId: envelope.task_id, stepId: envelope.step_id, stepType: envelope.step_type });
 
     // 3. Per-step runtime selection (envelope.runtime_hint takes precedence)
     const step = task.steps?.find(s => s.step_id === envelope.step_id);
@@ -336,6 +356,7 @@ function createStepWorker(deps) {
 
           helpers.writeBoard(failBoard);
           helpers.appendLog({ ts: helpers.nowIso(), event: 'step_dispatch_error', taskId: envelope.task_id, stepId: envelope.step_id, error: dispatchErr.message, duration_ms: dispatchDurationMs });
+          emitWebhookEvent(failBoard, signalType, { taskId: envelope.task_id, stepId: envelope.step_id, state: failStep.state, error: dispatchErr.message });
 
           // Log diagnostic for dead steps
           if (failStep.state === 'dead') {
@@ -612,6 +633,7 @@ function createStepWorker(deps) {
       if (latestBoard.signals.length > 500) latestBoard.signals = latestBoard.signals.slice(-500);
       helpers.writeBoard(latestBoard);
       helpers.appendLog({ ts: helpers.nowIso(), event: signalType, taskId: envelope.task_id, stepId: envelope.step_id, from: 'running', to: latestStep.state });
+      emitWebhookEvent(latestBoard, signalType, { taskId: envelope.task_id, stepId: envelope.step_id, state: latestStep.state });
 
       // 8. Trigger kernel for terminal states (via setImmediate to avoid deep recursion)
       const newSignal = {
