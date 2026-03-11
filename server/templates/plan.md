@@ -17,3 +17,12 @@ You have a "Skill" tool available. Use it to load the skill by name (e.g., Skill
 
 ## Deliverable
 A plan comment posted on issue #{{issueNumber}}. The plan must list every file to modify, what to change, and why.
+
+## STEP_RESULT Output
+Your final STEP_RESULT MUST include a "scope" field listing files to modify:
+STEP_RESULT:{"status":"succeeded","summary":"Plan posted on issue #{{issueNumber}}","scope":{"allow":["server/kernel.js","server/routes/tasks.js"],"deny":[]}}
+
+Rules for scope:
+- "allow": glob patterns for ALL files the implementation will need to modify
+- "deny": glob patterns for files that MUST NOT be modified (leave empty if none)
+- Base your file list on the plan you just wrote — every file mentioned in the plan should be in "allow"

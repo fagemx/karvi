@@ -641,6 +641,16 @@ function createMockEnvelope(overrides = {}) {
     fs.rmSync(tmpDir, { recursive: true, force: true });
   });
 
+  console.log('\n--- Scope: SCOPE_VIOLATION error kind ---');
+
+  await test('SCOPE_VIOLATION is registered as retryable with linear backoff', async () => {
+    const stepSchemaModule = require('./step-schema');
+    const errorKind = stepSchemaModule.ERROR_KINDS?.SCOPE_VIOLATION;
+    assert.ok(errorKind, 'SCOPE_VIOLATION should be registered in ERROR_KINDS');
+    assert.strictEqual(errorKind.retryable, true);
+    assert.strictEqual(errorKind.backoff, 'linear');
+  });
+
   // Cleanup
   try {
     fs.rmSync(path.join(artifactStore.ARTIFACT_DIR, testRunId), { recursive: true, force: true });

@@ -188,6 +188,87 @@ test('buildEnvelope respects retry_policy timeout over controls', () => {
   assert.strictEqual(env.timeout_ms, 999000);
 });
 
+// --- Scope propagation tests ---
+
+test('buildEnvelope propagates planScope from plan artifact', () => {
+  const scopeRunId = `test-scope-${Date.now()}`;
+  artifactStore.writeArtifact(scopeRunId, 'T-2:plan', 'output', {
+    summary: 'Plan posted',
+    payload: {
+      scope: { allow: ['server/kernel.js', 'server/routes/tasks.js'], deny: ['server/runtime-*.js'] }
+    },
+  });
+
+  const decision = {
+    action: 'next_step',
+    from_step_id: 'T-2:plan',
+    next_step: { step_id: 'T-2:implement', step_type: 'implement' },
+  };
+  const steps = [
+    { step_id: 'T-2:plan', type: 'plan', state: 'succeeded', run_id: scopeRunId, attempt: 0, retry_policy: stepSchema.DEFAULT_RETRY_POLICY },
+    { step_id: 'T-2:implement', type: 'implement', state: 'queued', run_id: scopeRunId, attempt: 0, retry_policy: stepSchema.DEFAULT_RETRY_POLICY },
+  ];
+  const runState = { task: { id: 'T-2', description: 'Test scope' }, steps, run_id: scopeRunId };
+  const deps = { artifactStore, stepSchema };
+
+  const env = contextCompiler.buildEnvelope(decision, runState, deps);
+  assert.ok(env.scope_config, 'scope_config should be populated from plan output');
+  assert.deepStrictEqual(env.scope_config.allow, ['server/kernel.js', 'server/routes/tasks.js']);
+  assert.deepStrictEqual(env.scope_config.deny, ['server/runtime-*.js']);
+
+  fs.rmSync(path.join(artifactStore.ARTIFACT_DIR, scopeRunId), { recursive: true, force: true });
+});
+
+test('buildEnvelope scope_config is null when plan has no scope', () => {
+  const noScopeRunId = `test-noscope-${Date.now()}`;
+  artifactStore.writeArtifact(noScopeRunId, 'T-3:plan', 'output', {
+    summary: 'Plan posted',
+  });
+
+  const decision = {
+    action: 'next_step',
+    from_step_id: 'T-3:plan',
+    next_step: { step_id: 'T-3:implement', step_type: 'implement' },
+  };
+  const steps = [
+    { step_id: 'T-3:plan', type: 'plan', state: 'succeeded', run_id: noScopeRunId, attempt: 0, retry_policy: stepSchema.DEFAULT_RETRY_POLICY },
+    { step_id: 'T-3:implement', type: 'implement', state: 'queued', run_id: noScopeRunId, attempt: 0, retry_policy: stepSchema.DEFAULT_RETRY_POLICY },
+  ];
+  const runState = { task: { id: 'T-3', description: 'Test no scope' }, steps, run_id: noScopeRunId };
+  const deps = { artifactStore, stepSchema };
+
+  const env = contextCompiler.buildEnvelope(decision, runState, deps);
+  assert.strictEqual(env.scope_config, null, 'scope_config should be null when plan has no scope');
+
+  fs.rmSync(path.join(artifactStore.ARTIFACT_DIR, noScopeRunId), { recursive: true, force: true });
+});
+
+test('buildEnvelope task.scope overrides planScope', () => {
+  const overrideRunId = `test-override-${Date.now()}`;
+  artifactStore.writeArtifact(overrideRunId, 'T-4:plan', 'output', {
+    summary: 'Plan posted',
+    payload: { scope: { allow: ['server/**'], deny: [] } },
+  });
+
+  const decision = {
+    action: 'next_step',
+    from_step_id: 'T-4:plan',
+    next_step: { step_id: 'T-4:implement', step_type: 'implement' },
+  };
+  const steps = [
+    { step_id: 'T-4:plan', type: 'plan', state: 'succeeded', run_id: overrideRunId, attempt: 0, retry_policy: stepSchema.DEFAULT_RETRY_POLICY },
+    { step_id: 'T-4:implement', type: 'implement', state: 'queued', run_id: overrideRunId, attempt: 0, retry_policy: stepSchema.DEFAULT_RETRY_POLICY },
+  ];
+  const taskScope = { allow: ['index.html'], deny: ['server/**'] };
+  const runState = { task: { id: 'T-4', description: 'Test override', scope: taskScope }, steps, run_id: overrideRunId };
+  const deps = { artifactStore, stepSchema };
+
+  const env = contextCompiler.buildEnvelope(decision, runState, deps);
+  assert.deepStrictEqual(env.scope_config, taskScope, 'task.scope should override planScope');
+
+  fs.rmSync(path.join(artifactStore.ARTIFACT_DIR, overrideRunId), { recursive: true, force: true });
+});
+
 // Cleanup
 try {
   fs.rmSync(path.join(artifactStore.ARTIFACT_DIR, testRunId), { recursive: true, force: true });
