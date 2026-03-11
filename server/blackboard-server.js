@@ -84,6 +84,7 @@ function createContext(opts = {}) {
   const boardType = opts.boardType || null;
   const apiToken = opts.apiToken || process.env.KARVI_API_TOKEN || null;
   const roleTokens = opts.roleTokens || rbac.parseRoleTokens();
+  const userTokens = opts.userTokens || rbac.parseUserTokens();
   const corsOrigins = opts.corsOrigins || process.env.KARVI_CORS_ORIGINS || null;
 
   // Rate limiting config
@@ -131,6 +132,7 @@ function createContext(opts = {}) {
     boardType,
     apiToken,
     roleTokens,
+    userTokens,
     corsOrigins,
     sseClients: new Set(),
     taskSseClients: new Map(),  // taskId → Set<res>
@@ -151,20 +153,28 @@ function tokenMatch(expected, provided) {
 }
 
 /**
- * checkAuth — 驗證 request 的 token 並解析角色。
- * @returns {{ allowed: boolean, role: string|null }}
+ * checkAuth — 驗證 request 的 token 並解析角色和用戶歸屬。
+ * @returns {{ allowed: boolean, role: string|null, userId: string|null }}
  *   role = 'admin'|'operator'|'viewer'|null
+ *   userId = 用戶標識（來自 X-Karvi-User header 或 token 映射）
  *   null role with allowed=true → local dev mode (no auth configured)
  */
 function checkAuth(ctx, req) {
   const noAuth = !ctx.apiToken && !ctx.roleTokens?.active;
-  if (noAuth) return { allowed: true, role: null };
-  if (req.method === 'OPTIONS') return { allowed: true, role: null };
+  if (noAuth) {
+    // No auth configured — still try to get userId from header (gateway mode)
+    const headerUser = req.headers['x-karvi-user'];
+    return { allowed: true, role: null, userId: headerUser || null };
+  }
+  if (req.method === 'OPTIONS') return { allowed: true, role: null, userId: null };
 
   const url = new URL(req.url, 'http://localhost');
 
-  if (!url.pathname.startsWith('/api/')) return { allowed: true, role: null };
-  if (url.pathname.startsWith('/api/webhooks/')) return { allowed: true, role: null };
+  if (!url.pathname.startsWith('/api/')) {
+    const headerUser = req.headers['x-karvi-user'];
+    return { allowed: true, role: null, userId: headerUser || null };
+  }
+  if (url.pathname.startsWith('/api/webhooks/')) return { allowed: true, role: null, userId: null };
 
   // Extract token from query (SSE) or header (normal)
   let provided = '';
@@ -176,16 +186,26 @@ function checkAuth(ctx, req) {
     provided = match ? match[1] : '';
   }
 
+  // Extract userId from X-Karvi-User header (set by gateway) or from token mapping
+  const headerUser = req.headers['x-karvi-user'];
+  let userId = headerUser || null;
+
   // RBAC: try role-token map first
   if (ctx.roleTokens?.active) {
     const role = rbac.matchRole(ctx.roleTokens.tokenMap, provided);
-    if (role) return { allowed: true, role };
-    return { allowed: false, role: null };
+    if (role) {
+      // Try to get userId from token mapping if not from header
+      if (!userId && ctx.userTokens?.active) {
+        userId = rbac.matchUserId(ctx.userTokens.userTokenMap, provided);
+      }
+      return { allowed: true, role, userId };
+    }
+    return { allowed: false, role: null, userId: null };
   }
 
   // Legacy: single token = admin
   const ok = tokenMatch(ctx.apiToken, provided);
-  return { allowed: ok, role: ok ? 'admin' : null };
+  return { allowed: ok, role: ok ? 'admin' : null, userId: ok ? (headerUser || null) : null };
 }
 
 /**
@@ -495,12 +515,13 @@ function createServer(ctx, routeHandler) {
       });
     }
 
-    // Auth gate (returns { allowed, role })
+    // Auth gate (returns { allowed, role, userId })
     const authResult = checkAuth(ctx, req);
     if (!authResult.allowed) {
       return json(res, 401, { error: 'unauthorized' });
     }
     req.karviRole = authResult.role;
+    req.karviUser = authResult.userId;  // Per-user attribution
 
     // Built-in routes
     if (req.method === 'GET' && pathname === '/api/events') {

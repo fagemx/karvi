@@ -81,9 +81,14 @@ function normalizeText(input) {
   return String(input || '').replace(/\r\n/g, '\n').trim();
 }
 
+/**
+ * Get user ID from request (per-user attribution).
+ * Priority: req.karviUser (gateway/auth) > X-Karvi-User header > query param > default
+ */
 function getUserId(req) {
   const url = new URL(req.url, 'http://localhost');
-  return req.headers['x-karvi-user']
+  return req.karviUser
+    || req.headers['x-karvi-user']
     || url.searchParams.get('userId')
     || 'default';
 }
@@ -123,6 +128,47 @@ function requireRole(req, res, minRole) {
   return true;
 }
 
+/**
+ * Create a signal object with user attribution.
+ * @param {object} opts - Signal options
+ * @param {string} opts.type - Signal type (e.g., 'status_change', 'task_cancelled')
+ * @param {string} opts.content - Human-readable content
+ * @param {string[]} opts.refs - References (e.g., task IDs)
+ * @param {object} opts.data - Additional data
+ * @param {object} req - Express-like request object with karviUser/karviRole
+ * @param {object} helpers - Helper functions (uid, nowIso)
+ * @returns {object} Signal object ready to push to board.signals
+ */
+function createSignal(opts, req, helpers) {
+  const { type, content, refs = [], data = {} } = opts;
+  const actor = req?.karviUser || null;
+  const role = req?.karviRole || null;
+  
+  return {
+    id: helpers.uid('sig'),
+    ts: helpers.nowIso(),
+    by: actor || 'api',  // Use userId if available, else 'api'
+    type,
+    content,
+    refs,
+    data: {
+      ...data,
+      _attribution: actor ? { actor, role } : undefined,
+    },
+  };
+}
+
+/**
+ * Get attribution string for logging.
+ * @param {object} req - Request object
+ * @returns {string} Attribution string (e.g., "user:alice" or "role:admin" or "anonymous")
+ */
+function getAttribution(req) {
+  if (req?.karviUser) return `user:${req.karviUser}`;
+  if (req?.karviRole) return `role:${req.karviRole}`;
+  return 'anonymous';
+}
+
 module.exports = {
   conversationById,
   participantById,
@@ -135,4 +181,6 @@ module.exports = {
   getUserIdForTask,
   deepMerge,
   requireRole,
+  createSignal,
+  getAttribution,
 };

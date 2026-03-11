@@ -372,6 +372,7 @@ async function handleProxy(req, res, username) {
   proxy.proxyRequest(req, res, instance.port, {
     injectToken: instanceToken,
     stripPrefix,
+    injectUser: session.username,  // Per-user attribution
   });
 }
 
