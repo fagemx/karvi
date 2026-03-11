@@ -28,6 +28,9 @@ Complete API documentation with curl examples for all major endpoints.
 - [Controls](#controls)
   - [GET /api/controls](#get-apicontrols)
   - [POST /api/controls](#post-apicontrols)
+- [Edda Integration](#edda-integration)
+  - [POST /api/edda/propose-controls](#post-apieddapropose-controls)
+  - [GET /api/edda/status](#get-apieddastatus)
 - [Evolution Layer](#evolution-layer)
   - [POST /api/retro](#post-apiretro)
 - [Vault (Secrets)](#vault-secrets)
@@ -636,6 +639,90 @@ curl -X POST http://localhost:3461/api/controls \
 | `use_step_pipeline` | boolean | true | Enable step pipeline |
 | `use_worktrees` | boolean | true | Create git worktrees |
 | `auto_merge_on_approve` | boolean | false | Auto-merge approved PRs |
+
+---
+
+## Edda Integration
+
+Edda is the governance agent that can propose adjustments to Karvi's automation controls.
+
+### POST /api/edda/propose-controls
+
+Edda proposes a controls patch. Proposals are stored as insights and can be auto-applied (low risk) or require manual approval (medium/high risk).
+
+```bash
+curl -X POST http://localhost:3461/api/edda/propose-controls \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "patch": { "quality_threshold": 75 },
+    "reasoning": "Success rate improved, increase threshold",
+    "by": "edda"
+  }'
+```
+
+**Request Body Fields**:
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `patch` | object | Yes | Controls to update (key-value pairs) |
+| `reasoning` | string | No | Explanation for the proposal |
+| `by` | string | No | Source identifier (default: "edda") |
+| `risk` | string | No | Override risk level: "low", "medium", "high" |
+| `data` | object | No | Additional metadata |
+
+**Risk Classification** (automatic if not overridden):
+
+- **High risk**: Disabling `auto_dispatch`, `auto_review`, or other critical controls; large threshold changes (>50%)
+- **Medium risk**: Moderate threshold changes (20-50%); changes to `usage_limits` or `cost_routing`
+- **Low risk**: Small adjustments (<20%); adding `model_map` entries
+
+**Response (201)**:
+
+```json
+{
+  "ok": true,
+  "insight": {
+    "id": "ins-abc123",
+    "ts": "2026-03-12T12:00:00.000Z",
+    "by": "edda",
+    "about": "controls_adjustment",
+    "judgement": "Adjust controls: quality_threshold=75",
+    "reasoning": "Success rate improved, increase threshold",
+    "suggestedAction": {
+      "type": "controls_patch",
+      "payload": { "quality_threshold": 75 }
+    },
+    "risk": "low",
+    "status": "applied"
+  },
+  "autoApplied": true
+}
+```
+
+---
+
+### GET /api/edda/status
+
+Get current controls snapshot and pending proposal count.
+
+```bash
+curl http://localhost:3461/api/edda/status
+```
+
+**Response (200)**:
+
+```json
+{
+  "controls": {
+    "auto_dispatch": true,
+    "auto_review": true,
+    "quality_threshold": 75,
+    "max_concurrent_tasks": 2
+  },
+  "pendingProposals": 2,
+  "autoApplyEnabled": true
+}
+```
 
 ---
 
