@@ -9,19 +9,38 @@
  * Kernel = routing decisions, StepWorker = execution.
  */
 const { execSync, execFileSync } = require('child_process');
+const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
 const mgmt = require('./management');
 const { resolveRepoRoot } = require('./repo-resolver');
 const LOCK_GRACE_MS = 30_000; // 30s grace on top of step timeout
 
-// --- Webhook event emission (#333) ---
+// --- Webhook event emission (#333) — Event Envelope v1 contract ---
 function emitWebhookEvent(board, eventType, payload) {
   const url = mgmt.getControls(board).event_webhook_url;
   if (!url) return;
 
-  const body = JSON.stringify({ event: eventType, ts: new Date().toISOString(), ...payload });
-  const parsed = new URL(url);
+  let parsed;
+  try {
+    parsed = new URL(url);
+  } catch (err) {
+    console.error(`[webhook] malformed URL, skipping ${eventType}:`, err.message);
+    return;
+  }
+
+  const now = new Date().toISOString();
+  const envelope = {
+    version: 'karvi.event.v1',
+    event_id: `evt_${crypto.randomUUID()}`,
+    event_type: eventType,
+    occurred_at: now,
+    // backward compat fields
+    event: eventType,
+    ts: now,
+    ...payload,
+  };
+  const body = JSON.stringify(envelope);
   const mod = parsed.protocol === 'https:' ? require('https') : require('http');
 
   const req = mod.request(parsed, {
