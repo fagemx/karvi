@@ -3,6 +3,7 @@
  *
  * GET /api/artifacts              — query artifact metadata (board-indexed)
  * GET /api/artifacts/:run/:step/:kind — download specific artifact content
+ * GET /api/artifacts/:run/:step/log/stream — tail -f style streaming log
  *
  * Query params for GET /api/artifacts:
  *   task    — filter by task ID (e.g., GH-123)
@@ -13,10 +14,6 @@
 const bb = require('../blackboard-server');
 const { json } = bb;
 
-/**
- * Build artifact metadata list from board task/step data.
- * Checks actual file existence via artifactStore.
- */
 function queryArtifacts(board, filters, artifactStore) {
   const tasks = board.taskPlan?.tasks || [];
   const kinds = ['input', 'output'];
@@ -52,14 +49,68 @@ function queryArtifacts(board, filters, artifactStore) {
   return results;
 }
 
+function handleLogStream(req, res, runId, safeStepId, deps) {
+  const stepId = safeStepId.replace(/_/g, ':');
+  const url = new URL(req.url, 'http://localhost');
+  const follow = url.searchParams.get('follow') !== 'false';
+  const taskId = url.searchParams.get('taskId') || null;
+
+  res.writeHead(200, {
+    'Content-Type': 'text/event-stream; charset=utf-8',
+    'Cache-Control': 'no-cache, no-transform',
+    'Connection': 'keep-alive',
+    'Access-Control-Allow-Origin': bb.getCorsOrigin(deps.ctx, req),
+    'X-Accel-Buffering': 'no',
+  });
+
+  const sendEvent = (event, data) => {
+    try {
+      res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
+    } catch { }
+  };
+
+  sendEvent('connected', { ts: bb.nowIso(), runId, stepId });
+
+  const existingLines = deps.artifactStore.readLogLines(runId, stepId);
+  for (const line of existingLines) {
+    if (taskId && line.taskId !== taskId) continue;
+    sendEvent('log', line);
+  }
+
+  if (!follow) {
+    sendEvent('end', { reason: 'no_follow' });
+    res.end();
+    return;
+  }
+
+  const stopWatch = deps.artifactStore.watchLog(runId, stepId, (entry) => {
+    if (taskId && entry.taskId !== taskId) return;
+    sendEvent('log', entry);
+  });
+
+  const heartbeat = setInterval(() => {
+    try { res.write(': heartbeat\n\n'); }
+    catch { clearInterval(heartbeat); stopWatch(); }
+  }, 30000);
+
+  req.on('close', () => {
+    clearInterval(heartbeat);
+    stopWatch();
+  });
+}
+
 module.exports = function artifactsRoutes(req, res, helpers, deps) {
   if (req.method !== 'GET') return false;
 
-  // Match: /api/artifacts/:runId/:stepId/:kind
+  const streamMatch = req.url.match(/^\/api\/artifacts\/([^/]+)\/([^/]+)\/log\/stream(\?|$)/);
+  if (streamMatch) {
+    const [, runId, safeStepId] = streamMatch;
+    return handleLogStream(req, res, runId, safeStepId, deps);
+  }
+
   const downloadMatch = req.url.match(/^\/api\/artifacts\/([^/]+)\/([^/]+)\/([^/?]+)/);
   if (downloadMatch) {
     const [, runId, safeStepId, kind] = downloadMatch;
-    // Convert safe step ID back to colon format for readArtifact
     const stepId = safeStepId.replace(/_/g, ':');
 
     if (!['input', 'output', 'log'].includes(kind)) {
@@ -73,7 +124,6 @@ module.exports = function artifactsRoutes(req, res, helpers, deps) {
     return json(res, 200, data);
   }
 
-  // Match: /api/artifacts or /api/artifacts?...
   const listMatch = req.url.match(/^\/api\/artifacts(\?|$)/);
   if (!listMatch) return false;
 
