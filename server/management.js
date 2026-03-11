@@ -87,6 +87,8 @@ function trimSignals(board, archivePath) {
     for (const sig of overflow) {
       storage.appendLog(archivePath, sig);
     }
+  } else {
+    console.warn(`[trimSignals] archivePath is falsy — dropping ${overflow.length} overflow signal(s)`);
   }
   return overflow.length;
 }

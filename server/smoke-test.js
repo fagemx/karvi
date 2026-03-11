@@ -331,6 +331,34 @@ async function runSuite(target) {
       if (!all.some(l => l.by === 'smoke-test')) throw new Error('should contain smoke test lesson');
       ok('POST + GET /api/lessons → ok');
     } catch (e) { fail('POST + GET /api/lessons', e.message); }
+
+    // GET /api/signals/archive → consistent object shape (even when no archive file)
+    try {
+      const r = await get(port, '/api/signals/archive');
+      if (r.status !== 200) throw new Error(`status ${r.status}`);
+      const body = JSON.parse(r.body);
+      if (typeof body.total !== 'number') throw new Error('missing total');
+      if (typeof body.offset !== 'number') throw new Error('missing offset');
+      if (typeof body.limit !== 'number') throw new Error('missing limit');
+      if (!Array.isArray(body.signals)) throw new Error('missing signals array');
+      ok('GET /api/signals/archive → { total, offset, limit, signals }');
+    } catch (e) { fail('GET /api/signals/archive', e.message); }
+
+    // signal_max_count control: verify default and patchability
+    try {
+      const r = await get(port, '/api/controls');
+      const controls = JSON.parse(r.body);
+      if (typeof controls.signal_max_count !== 'number') throw new Error('missing signal_max_count');
+      if (controls.signal_max_count <= 0) throw new Error(`invalid default: ${controls.signal_max_count}`);
+      // Patch it
+      const patchR = await post(port, '/api/controls', { signal_max_count: 999 });
+      if (patchR.status !== 200) throw new Error(`patch status ${patchR.status}`);
+      const patched = JSON.parse(patchR.body);
+      if (patched.controls.signal_max_count !== 999) throw new Error(`expected 999, got ${patched.controls.signal_max_count}`);
+      // Reset
+      await post(port, '/api/controls', { signal_max_count: controls.signal_max_count });
+      ok(`GET/POST /api/controls → signal_max_count configurable (default: ${controls.signal_max_count})`);
+    } catch (e) { fail('signal_max_count control', e.message); }
   }
 
   // 13-16. Jira Webhook tests (task-engine only)

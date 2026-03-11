@@ -7,6 +7,7 @@
  * GET/POST /api/lessons
  * POST /api/lessons/:id/status
  */
+const fs = require('fs');
 const bb = require('../blackboard-server');
 const { json } = bb;
 
@@ -33,10 +34,11 @@ module.exports = function evolutionRoutes(req, res, helpers, deps) {
 
   // --- Signal Archive ---
   if (req.method === 'GET' && (req.url === '/api/signals/archive' || req.url.startsWith('/api/signals/archive?'))) {
-    const fs = require('fs');
     const archivePath = helpers.signalArchivePath;
     if (!archivePath || !fs.existsSync(archivePath)) {
-      return json(res, 200, []);
+      const parsedUrl0 = new URL(req.url, 'http://localhost');
+      const limit0 = Math.min(1000, Math.max(1, Number(parsedUrl0.searchParams.get('limit')) || 100));
+      return json(res, 200, { total: 0, offset: 0, limit: limit0, signals: [] });
     }
     const parsedUrl = new URL(req.url, 'http://localhost');
     const limit = Math.min(1000, Math.max(1, Number(parsedUrl.searchParams.get('limit')) || 100));
