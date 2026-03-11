@@ -116,6 +116,60 @@ function redispatchTask(board, task, deps, helpers) {
 }
 
 /**
+ * Kill running steps and cancel non-completed steps for a task.
+ * Returns { killedSteps, cancelledSteps }.
+ */
+function killAndCancelSteps(task, deps, reason, logPrefix = 'tasks') {
+  let killedSteps = 0;
+  let cancelledSteps = 0;
+  for (const step of (task.steps || [])) {
+    if (step.state === 'running') {
+      try {
+        const killResult = deps.stepWorker?.killStep?.(step.step_id);
+        if (killResult?.ok) killedSteps++;
+      } catch (err) {
+        console.error(`[${logPrefix}] killStep failed for ${task.id}/${step.step_id}:`, err.message);
+      }
+      deps.stepSchema.transitionStep(step, 'cancelled', { error: reason });
+      cancelledSteps++;
+    } else if (step.state === 'cancelling' || step.state === 'queued' || step.state === 'failed') {
+      deps.stepSchema.transitionStep(step, 'cancelled', { error: reason });
+      cancelledSteps++;
+    }
+  }
+  return { killedSteps, cancelledSteps };
+}
+
+/**
+ * Schedule worktree cleanup with delay + retry for Windows file-handle races.
+ * Clears task.worktreeDir/worktreeBranch immediately.
+ * Returns { attempted, scheduled }.
+ */
+function scheduleWorktreeCleanup(task, board, logPrefix = 'tasks') {
+  if (!task.worktreeDir) return { attempted: false, scheduled: false };
+  const repoRoot = resolveRepoRoot(task, board) || path.resolve(__dirname, '..', '..');
+  const cleanTaskId = task.id;
+  task.worktreeDir = null;
+  task.worktreeBranch = null;
+  setTimeout(() => {
+    try {
+      worktreeHelper.removeWorktree(repoRoot, cleanTaskId);
+      console.log(`[${logPrefix}] worktree cleaned up for ${cleanTaskId}`);
+    } catch (err) {
+      console.error(`[${logPrefix}] worktree cleanup failed for ${cleanTaskId}:`, err.message);
+      setTimeout(() => {
+        try {
+          worktreeHelper.removeWorktree(repoRoot, cleanTaskId);
+        } catch (err2) {
+          console.error(`[${logPrefix}] worktree cleanup retry failed for ${cleanTaskId}:`, err2.message);
+        }
+      }, 15000);
+    }
+  }, 3000);
+  return { attempted: true, scheduled: true };
+}
+
+/**
  * Shared task cancellation flow for both:
  * - POST /api/tasks/:id/status { status: "cancelled" }
  * - POST /api/tasks/:id/cancel
@@ -137,57 +191,8 @@ function cancelTaskFlow(task, board, deps, helpers, opts = {}) {
     ...(opts.reason ? { reason: String(opts.reason).slice(0, 240) } : {}),
   });
 
-  let killedSteps = 0;
-  let cancelledSteps = 0;
-  for (const step of (task.steps || [])) {
-    if (step.state === 'running') {
-      try {
-        const killResult = deps.stepWorker?.killStep?.(step.step_id);
-        if (killResult?.ok) killedSteps++;
-      } catch (err) {
-        console.error(`[tasks] cancel killStep failed for ${task.id}/${step.step_id}:`, err.message);
-      }
-      deps.stepSchema.transitionStep(step, 'cancelled', { error: reason });
-      cancelledSteps++;
-    } else if (step.state === 'cancelling') {
-      // Already being killed - just finalize
-      deps.stepSchema.transitionStep(step, 'cancelled', { error: reason });
-      cancelledSteps++;
-    } else if (step.state === 'queued' || step.state === 'failed') {
-      deps.stepSchema.transitionStep(step, 'cancelled', { error: reason });
-      cancelledSteps++;
-    }
-  }
-
-  let worktreeCleanup = { attempted: false, scheduled: false };
-  if (task.worktreeDir) {
-    const repoRoot = resolveRepoRoot(task, board) || path.resolve(__dirname, '..', '..');
-    const cleanTaskId = task.id;
-    worktreeCleanup = { attempted: true, scheduled: true };
-
-    // Clear metadata immediately so no future dispatch tries stale path.
-    task.worktreeDir = null;
-    task.worktreeBranch = null;
-
-    // Delay + retry pattern to avoid Windows file-handle races.
-    const CLEANUP_DELAY_MS = 3000;
-    setTimeout(() => {
-      try {
-        worktreeHelper.removeWorktree(repoRoot, cleanTaskId);
-        console.log(`[tasks] worktree cleaned up for ${cleanTaskId} (task cancelled)`);
-      } catch (err) {
-        console.error(`[tasks] worktree cleanup failed for ${cleanTaskId}:`, err.message);
-        setTimeout(() => {
-          try {
-            worktreeHelper.removeWorktree(repoRoot, cleanTaskId);
-            console.log(`[tasks] worktree cleaned up for ${cleanTaskId} (task cancelled, retry)`);
-          } catch (err2) {
-            console.error(`[tasks] worktree cleanup retry failed for ${cleanTaskId}:`, err2.message);
-          }
-        }, 15000);
-      }
-    }, CLEANUP_DELAY_MS);
-  }
+  const { killedSteps, cancelledSteps } = killAndCancelSteps(task, deps, reason, 'cancel');
+  const worktreeCleanup = scheduleWorktreeCleanup(task, board, 'cancel');
 
   return { killedSteps, cancelledSteps, worktreeCleanup };
 }
@@ -2011,32 +2016,13 @@ module.exports = function tasksRoutes(req, res, helpers, deps) {
           return json(res, 400, { error: `Cannot rollback task in ${oldStatus} state` });
         }
 
-        // --- Phase 1: Kill running steps (same pattern as cancelTaskFlow) ---
-        let killedSteps = 0;
-        let cancelledSteps = 0;
-        for (const step of (task.steps || [])) {
-          if (step.state === 'running') {
-            try {
-              const killResult = deps.stepWorker?.killStep?.(step.step_id);
-              if (killResult?.ok) killedSteps++;
-            } catch (err) {
-              console.error(`[rollback:${taskId}] killStep failed for ${step.step_id}:`, err.message);
-            }
-            deps.stepSchema.transitionStep(step, 'cancelled', { error: reason || 'Task rolled back' });
-            cancelledSteps++;
-          } else if (step.state === 'cancelling') {
-            deps.stepSchema.transitionStep(step, 'cancelled', { error: reason || 'Task rolled back' });
-            cancelledSteps++;
-          } else if (step.state === 'queued' || step.state === 'failed') {
-            deps.stepSchema.transitionStep(step, 'cancelled', { error: reason || 'Task rolled back' });
-            cancelledSteps++;
-          }
-        }
+        // --- Phase 1: Kill running steps ---
+        const { killedSteps, cancelledSteps } = killAndCancelSteps(task, deps, reason || 'Task rolled back', `rollback:${taskId}`);
 
         // --- Phase 2: Git revert (best-effort) ---
         let gitResult = { reverted: false, commits_reverted: 0, branch: null, error: null };
         if (task.worktreeDir && fs.existsSync(task.worktreeDir)) {
-          const { execFileSync } = require('child_process');
+          const { execFileSync } = require('child_process'); // inline — only used by rollback
           gitResult.branch = task.worktreeBranch || null;
           try {
             // Count commits on branch since diverging from main
@@ -2066,29 +2052,7 @@ module.exports = function tasksRoutes(req, res, helpers, deps) {
         }
 
         // --- Phase 3: Worktree cleanup (delayed for Windows file handles) ---
-        let worktreeCleanup = { attempted: false, scheduled: false };
-        if (task.worktreeDir) {
-          const repoRoot = resolveRepoRoot(task, board) || path.resolve(__dirname, '..', '..');
-          const cleanTaskId = task.id;
-          worktreeCleanup = { attempted: true, scheduled: true };
-          task.worktreeDir = null;
-          task.worktreeBranch = null;
-          setTimeout(() => {
-            try {
-              worktreeHelper.removeWorktree(repoRoot, cleanTaskId);
-              console.log(`[rollback:${cleanTaskId}] worktree cleaned up`);
-            } catch (err) {
-              console.error(`[rollback:${cleanTaskId}] worktree cleanup failed:`, err.message);
-              setTimeout(() => {
-                try {
-                  worktreeHelper.removeWorktree(repoRoot, cleanTaskId);
-                } catch (err2) {
-                  console.error(`[rollback:${cleanTaskId}] worktree cleanup retry failed:`, err2.message);
-                }
-              }, 15000);
-            }
-          }, 3000);
-        }
+        const worktreeCleanup = scheduleWorktreeCleanup(task, board, `rollback:${taskId}`);
 
         // --- Phase 4: Reset board state ---
         task.status = 'pending';
