@@ -77,6 +77,20 @@ function logPath(runId, stepId) {
   return path.join(ARTIFACT_DIR, runId, `${safeStepId}.log`);
 }
 
+/**
+ * List all run directories in the artifact store.
+ * Returns array of run_id strings.
+ */
+function listAllRuns() {
+  try {
+    return fs.readdirSync(ARTIFACT_DIR, { withFileTypes: true })
+      .filter(d => d.isDirectory())
+      .map(d => d.name);
+  } catch {
+    return [];
+  }
+}
+
 module.exports = {
   ARTIFACT_DIR,
   artifactPath,
@@ -86,4 +100,5 @@ module.exports = {
   listArtifacts,
   appendLog,
   logPath,
+  listAllRuns,
 };
