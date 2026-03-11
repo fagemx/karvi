@@ -95,7 +95,7 @@ module.exports = function githubRoutes(req, res, helpers, deps) {
                   mergeCommitSha: result.mergeCommitSha || null,
                 },
               });
-              if (board.signals.length > 500) board.signals = board.signals.slice(-500);
+              mgmt.trimSignals(board, helpers.signalArchivePath);
 
               helpers.writeBoard(board);
               helpers.appendLog({

@@ -31,6 +31,25 @@ module.exports = function evolutionRoutes(req, res, helpers, deps) {
     }
   }
 
+  // --- Signal Archive ---
+  if (req.method === 'GET' && (req.url === '/api/signals/archive' || req.url.startsWith('/api/signals/archive?'))) {
+    const fs = require('fs');
+    const archivePath = helpers.signalArchivePath;
+    if (!archivePath || !fs.existsSync(archivePath)) {
+      return json(res, 200, []);
+    }
+    const parsedUrl = new URL(req.url, 'http://localhost');
+    const limit = Math.min(1000, Math.max(1, Number(parsedUrl.searchParams.get('limit')) || 100));
+    const offset = Math.max(0, Number(parsedUrl.searchParams.get('offset')) || 0);
+    const lines = fs.readFileSync(archivePath, 'utf8').split('\n').filter(Boolean);
+    const signals = [];
+    const end = Math.min(offset + limit, lines.length);
+    for (let i = offset; i < end; i++) {
+      signals.push(JSON.parse(lines[i]));
+    }
+    return json(res, 200, { total: lines.length, offset, limit, signals });
+  }
+
   if (req.method === 'POST' && req.url === '/api/signals') {
     let body = '';
     req.on('data', c => (body += c));
@@ -55,7 +74,7 @@ module.exports = function evolutionRoutes(req, res, helpers, deps) {
         if (payload.refs) signal.refs = payload.refs;
         if (payload.data) signal.data = payload.data;
         board.signals.push(signal);
-        if (board.signals.length > 500) board.signals = board.signals.slice(-500);
+        mgmt.trimSignals(board, helpers.signalArchivePath);
 
         // Evolution Layer: trigger verification and auto-apply on review signals
         if (type === 'review_result') {
@@ -170,7 +189,7 @@ module.exports = function evolutionRoutes(req, res, helpers, deps) {
         refs: [insight.id],
         data: { insightId: insight.id, actionType: sa.type, snapshot: insight.snapshot || null },
       });
-      if (board.signals.length > 500) board.signals = board.signals.slice(-500);
+      mgmt.trimSignals(board, helpers.signalArchivePath);
 
       helpers.writeBoard(board);
       json(res, 200, { ok: true, applied: sa });

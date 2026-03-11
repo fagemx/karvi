@@ -370,7 +370,7 @@ function dispatchTask(task, board, deps, helpers, opts = {}) {
       type: 'steps_created', content: `${taskId} steps created (${task.steps.length})`,
       refs: [taskId], data: { taskId, runId, count: task.steps.length },
     });
-    if (board.signals.length > 500) board.signals = board.signals.slice(-500);
+    mgmt.trimSignals(board, helpers.signalArchivePath);
 
     const firstStep = task.steps[0];
     const runState = { task, steps: task.steps, run_id: runId, budget: task.budget, controls: ctrl };
@@ -808,7 +808,7 @@ module.exports = function tasksRoutes(req, res, helpers, deps) {
             refs: [task.id],
             data: { taskId: task.id, from: oldStatus, to: task.status, assignee: task.assignee },
           });
-          if (board.signals.length > 500) board.signals = board.signals.slice(-500);
+          mgmt.trimSignals(board, helpers.signalArchivePath);
         }
 
         helpers.writeBoard(board);
@@ -1014,7 +1014,7 @@ module.exports = function tasksRoutes(req, res, helpers, deps) {
           refs: [taskId],
           data: { taskId, from: oldStatus, runId, steps: newSteps.map(s => s.step_id) }
         });
-        if (board.signals.length > 500) board.signals = board.signals.slice(-500);
+        mgmt.trimSignals(board, helpers.signalArchivePath);
         
         helpers.writeBoard(board);
         helpers.appendLog({ 
@@ -1093,7 +1093,7 @@ module.exports = function tasksRoutes(req, res, helpers, deps) {
           refs: [task.id],
           data: { taskId: task.id, from: oldStatus, to: 'cancelled', assignee: task.assignee },
         });
-        if (board.signals.length > 500) board.signals = board.signals.slice(-500);
+        mgmt.trimSignals(board, helpers.signalArchivePath);
 
         helpers.writeBoard(board);
         helpers.appendLog({
@@ -1234,7 +1234,7 @@ module.exports = function tasksRoutes(req, res, helpers, deps) {
           refs: [task.id],
           data: { taskId: task.id, from: oldStatus, to: newStatus, assignee: task.assignee },
         });
-        if (board.signals.length > 500) board.signals = board.signals.slice(-500);
+        mgmt.trimSignals(board, helpers.signalArchivePath);
 
         helpers.writeBoard(board);
         helpers.appendLog({ ts: helpers.nowIso(), event: 'task_status_manual', taskId, from: oldStatus, to: newStatus });
@@ -1355,7 +1355,7 @@ module.exports = function tasksRoutes(req, res, helpers, deps) {
           type: 'steps_created', content: `${taskId} steps created (${task.steps.length})`,
           refs: [taskId], data: { taskId, runId, count: task.steps.length },
         });
-        if (board.signals.length > 500) board.signals = board.signals.slice(-500);
+        mgmt.trimSignals(board, helpers.signalArchivePath);
         helpers.writeBoard(board);
         helpers.appendLog({ ts: helpers.nowIso(), event: 'steps_created', taskId, runId, count: task.steps.length });
         json(res, 200, { ok: true, taskId, runId, steps: task.steps });
@@ -1418,7 +1418,7 @@ module.exports = function tasksRoutes(req, res, helpers, deps) {
           refs: [taskId],
           data: { taskId, stepId, from: oldState, to: step.state, attempt: step.attempt },
         });
-        if (board.signals.length > 500) board.signals = board.signals.slice(-500);
+        mgmt.trimSignals(board, helpers.signalArchivePath);
 
         helpers.writeBoard(board);
         helpers.appendLog({ ts: helpers.nowIso(), event: signalType, taskId, stepId, from: oldState, to: step.state });
@@ -1472,7 +1472,7 @@ module.exports = function tasksRoutes(req, res, helpers, deps) {
       refs: [taskId],
       data: { taskId, stepId, from: 'running', to: 'cancelling' },
     });
-    if (board.signals.length > 500) board.signals = board.signals.slice(-500);
+    mgmt.trimSignals(board, helpers.signalArchivePath);
 
     helpers.writeBoard(board);
     helpers.appendLog({ ts: helpers.nowIso(), event: 'step_kill_requested', taskId, stepId });
@@ -1534,7 +1534,7 @@ module.exports = function tasksRoutes(req, res, helpers, deps) {
       refs: [taskId],
       data: { taskId, stepId, from: fromState, to: 'queued', taskUnblocked },
     });
-    if (board.signals.length > 500) board.signals = board.signals.slice(-500);
+    mgmt.trimSignals(board, helpers.signalArchivePath);
 
     helpers.writeBoard(board);
     helpers.appendLog({ ts: helpers.nowIso(), event: 'step_reset', taskId, stepId, from: fromState });
@@ -1958,7 +1958,7 @@ module.exports = function tasksRoutes(req, res, helpers, deps) {
           type: 'pipeline_template_updated', content: `Template "${name}" updated (${normalized.length} steps)`,
           refs: [], data: { name, count: normalized.length },
         });
-        if (board.signals.length > 500) board.signals = board.signals.slice(-500);
+        mgmt.trimSignals(board, helpers.signalArchivePath);
         helpers.writeBoard(board);
         json(res, 200, { ok: true, name, pipeline: normalized });
       } catch (error) {
@@ -1982,7 +1982,7 @@ module.exports = function tasksRoutes(req, res, helpers, deps) {
       type: 'pipeline_template_deleted', content: `Template "${name}" deleted`,
       refs: [], data: { name },
     });
-    if (board.signals.length > 500) board.signals = board.signals.slice(-500);
+    mgmt.trimSignals(board, helpers.signalArchivePath);
     helpers.writeBoard(board);
     json(res, 200, { ok: true, name, deleted: true });
     return;

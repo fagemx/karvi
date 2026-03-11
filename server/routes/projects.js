@@ -276,7 +276,7 @@ module.exports = function projectsRoutes(req, res, helpers, deps) {
             refs: taskIds,
             data: { projectId, taskIds },
           });
-          if (board.signals.length > 500) board.signals = board.signals.slice(-500);
+          mgmt.trimSignals(board, helpers.signalArchivePath);
         }
 
         helpers.writeBoard(board);

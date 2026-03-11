@@ -321,7 +321,7 @@ function createStepWorker(deps) {
               refs: [envelope.task_id],
               data: { taskId: envelope.task_id, stepId: envelope.step_id, from: 'cancelling', to: 'cancelled' },
             });
-            if (killBoard.signals.length > 500) killBoard.signals = killBoard.signals.slice(-500);
+            mgmt.trimSignals(killBoard, helpers.signalArchivePath);
             helpers.writeBoard(killBoard);
             helpers.appendLog({ ts: helpers.nowIso(), event: 'step_killed', taskId: envelope.task_id, stepId: envelope.step_id, duration_ms: dispatchDurationMs });
           }
@@ -348,7 +348,7 @@ function createStepWorker(deps) {
               refs: [envelope.task_id],
               data: { taskId: envelope.task_id, stepId: envelope.step_id, from: 'cancelling', to: 'cancelled' },
             });
-            if (failBoard.signals.length > 500) failBoard.signals = failBoard.signals.slice(-500);
+            mgmt.trimSignals(failBoard, helpers.signalArchivePath);
 
             helpers.writeBoard(failBoard);
             helpers.appendLog({ ts: helpers.nowIso(), event: 'step_killed', taskId: envelope.task_id, stepId: envelope.step_id, duration_ms: dispatchDurationMs });
@@ -371,7 +371,7 @@ function createStepWorker(deps) {
             refs: [envelope.task_id],
             data: { taskId: envelope.task_id, stepId: envelope.step_id, from: 'running', to: failStep.state, attempt: failStep.attempt },
           });
-          if (failBoard.signals.length > 500) failBoard.signals = failBoard.signals.slice(-500);
+          mgmt.trimSignals(failBoard, helpers.signalArchivePath);
 
           helpers.writeBoard(failBoard);
           helpers.appendLog({ ts: helpers.nowIso(), event: 'step_dispatch_error', taskId: envelope.task_id, stepId: envelope.step_id, error: dispatchErr.message, duration_ms: dispatchDurationMs });
@@ -649,7 +649,7 @@ function createStepWorker(deps) {
         refs: [envelope.task_id],
         data: { taskId: envelope.task_id, stepId: envelope.step_id, from: 'running', to: latestStep.state, attempt: latestStep.attempt, ...(preflightResult.alreadyDone ? { preflight: { skipped: true, evidence: preflightResult.evidence } } : {}) },
       });
-      if (latestBoard.signals.length > 500) latestBoard.signals = latestBoard.signals.slice(-500);
+      mgmt.trimSignals(latestBoard, helpers.signalArchivePath);
       helpers.writeBoard(latestBoard);
       helpers.appendLog({ ts: helpers.nowIso(), event: signalType, taskId: envelope.task_id, stepId: envelope.step_id, from: 'running', to: latestStep.state });
       emitWebhookEvent(latestBoard, signalType, { taskId: envelope.task_id, stepId: envelope.step_id, state: latestStep.state });
