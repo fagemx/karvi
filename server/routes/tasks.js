@@ -568,6 +568,14 @@ function tryAutoDispatch(taskId, deps, helpers) {
     return;
   }
 
+  // Wave filter: only dispatch if task wave matches active_wave
+  const taskWave = task.wave ?? null;
+  const activeWave = ctrl.active_wave ?? null;
+  if (activeWave !== null && taskWave !== null && taskWave !== activeWave) {
+    console.log(`[auto-dispatch:${taskId}] skip: wave ${taskWave} !== active ${activeWave}`);
+    return;
+  }
+
   // Concurrency gate: limit parallel in-progress tasks
   const inProgressCount = (board.taskPlan?.tasks || [])
     .filter(t => t.status === 'in_progress').length;
@@ -764,14 +772,23 @@ module.exports = function tasksRoutes(req, res, helpers, deps) {
         if (!board.taskPlan.createdAt) board.taskPlan.createdAt = payload.createdAt || helpers.nowIso();
 
         const ACTIVE_STATUSES = ['in_progress', 'dispatched'];
-        const SAFE_FIELDS = ['title', 'description', 'assignee', 'depends', 'spec', 'skill', 'estimate', 'target_repo', 'scope'];
+        const SAFE_FIELDS = ['title', 'description', 'assignee', 'depends', 'spec', 'skill', 'estimate', 'target_repo', 'scope', 'wave'];
         const incomingTasks = Array.isArray(payload.tasks) ? payload.tasks : [];
         const existingIds = new Set(board.taskPlan.tasks.map(t => t.id));
         for (const t of incomingTasks) {
           if (existingIds.has(t.id)) {
             const existing = board.taskPlan.tasks.find(e => e.id === t.id);
             if (existing && !ACTIVE_STATUSES.includes(existing.status)) {
-              for (const k of SAFE_FIELDS) { if (t[k] !== undefined) existing[k] = t[k]; }
+              for (const k of SAFE_FIELDS) {
+                if (t[k] !== undefined) {
+                  if (k === 'wave') {
+                    if (t.wave !== null && (typeof t.wave !== 'number' || !Number.isInteger(t.wave) || t.wave < 0)) {
+                      continue;
+                    }
+                  }
+                  existing[k] = t[k];
+                }
+              }
               existing.history = existing.history || [];
               existing.history.push({ ts: helpers.nowIso(), status: 'updated', by: 'api' });
             }
@@ -788,6 +805,7 @@ module.exports = function tasksRoutes(req, res, helpers, deps) {
             skill: t.skill || null,
             estimate: t.estimate || null,
             target_repo: t.target_repo || null,
+            wave: (t.wave !== undefined && t.wave !== null && typeof t.wave === 'number' && Number.isInteger(t.wave) && t.wave >= 0) ? t.wave : null,
             history: [{ ts: helpers.nowIso(), status: (t.depends?.length > 0) ? 'pending' : 'dispatched', reason: 'api_created' }],
           };
           if (t.scope) newTask.scope = t.scope;
