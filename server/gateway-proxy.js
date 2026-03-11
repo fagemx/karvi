@@ -31,6 +31,7 @@ const CONNECT_TIMEOUT_MS = 10000;
  * @param {object}               opts - Options
  * @param {string}  opts.injectToken  - Bearer token to inject for instance auth
  * @param {string}  opts.stripPrefix  - URL prefix to strip (e.g., '/u/alice')
+ * @param {string}  opts.injectUser   - User identity to inject (X-Karvi-User header)
  */
 function proxyRequest(req, res, port, opts = {}) {
   const targetPath = opts.stripPrefix
@@ -51,6 +52,11 @@ function proxyRequest(req, res, port, opts = {}) {
   // Inject instance Bearer token (gateway → instance auth)
   if (opts.injectToken) {
     headers['authorization'] = `Bearer ${opts.injectToken}`;
+  }
+
+  // Inject user identity for per-user attribution (gateway → instance)
+  if (opts.injectUser) {
+    headers['x-karvi-user'] = opts.injectUser;
   }
 
   // Forward client IP

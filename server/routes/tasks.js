@@ -25,7 +25,7 @@ const fs = require('fs');
 const path = require('path');
 const bb = require('../blackboard-server');
 const { json } = bb;
-const { participantById, pushMessage, getUserIdForTask, requireRole } = require('./_shared');
+const { participantById, pushMessage, getUserIdForTask, requireRole, createSignal, getAttribution } = require('./_shared');
 const routeEngine = require('../route-engine');
 const worktreeHelper = require('../worktree');
 const { resolveRepoRoot, validateRepoRoot } = require('../repo-resolver');
@@ -802,18 +802,15 @@ module.exports = function tasksRoutes(req, res, helpers, deps) {
           setImmediate(() => tryAutoDispatch(task.id, deps, helpers));
         }
 
-        // Evolution Layer: emit status_change signal
+        // Evolution Layer: emit status_change signal with attribution
         if (payload.status) {
           mgmt.ensureEvolutionFields(board);
-          board.signals.push({
-            id: helpers.uid('sig'),
-            ts: helpers.nowIso(),
-            by: 'server.js',
+          board.signals.push(createSignal({
             type: 'status_change',
             content: `${task.id} ${oldStatus} → ${task.status}`,
             refs: [task.id],
             data: { taskId: task.id, from: oldStatus, to: task.status, assignee: task.assignee },
-          });
+          }, req, helpers));
           mgmt.trimSignals(board, helpers.signalArchivePath);
         }
 
@@ -1011,15 +1008,12 @@ module.exports = function tasksRoutes(req, res, helpers, deps) {
         });
         
         mgmt.ensureEvolutionFields(board);
-        board.signals.push({
-          id: helpers.uid('sig'),
-          ts: helpers.nowIso(),
-          by: 'human',
+        board.signals.push(createSignal({
           type: 'task_reopened',
           content: `${taskId} reopened from ${oldStatus}`,
           refs: [taskId],
-          data: { taskId, from: oldStatus, runId, steps: newSteps.map(s => s.step_id) }
-        });
+          data: { taskId, from: oldStatus, runId, steps: newSteps.map(s => s.step_id) },
+        }, req, helpers));
         mgmt.trimSignals(board, helpers.signalArchivePath);
         
         helpers.writeBoard(board);
@@ -1091,15 +1085,12 @@ module.exports = function tasksRoutes(req, res, helpers, deps) {
         if (allApproved) board.taskPlan.phase = 'done';
 
         mgmt.ensureEvolutionFields(board);
-        board.signals.push({
-          id: helpers.uid('sig'),
-          ts: helpers.nowIso(),
-          by: 'server.js',
+        board.signals.push(createSignal({
           type: 'status_change',
           content: `${task.id} ${oldStatus} → cancelled`,
           refs: [task.id],
           data: { taskId: task.id, from: oldStatus, to: 'cancelled', assignee: task.assignee },
-        });
+        }, req, helpers));
         mgmt.trimSignals(board, helpers.signalArchivePath);
 
         helpers.writeBoard(board);
@@ -1233,15 +1224,12 @@ module.exports = function tasksRoutes(req, res, helpers, deps) {
 
         // Evolution Layer: emit status_change signal
         mgmt.ensureEvolutionFields(board);
-        board.signals.push({
-          id: helpers.uid('sig'),
-          ts: helpers.nowIso(),
-          by: 'server.js',
+        board.signals.push(createSignal({
           type: 'status_change',
           content: `${task.id} ${oldStatus} → ${newStatus}`,
           refs: [task.id],
           data: { taskId: task.id, from: oldStatus, to: newStatus, assignee: task.assignee },
-        });
+        }, req, helpers));
         mgmt.trimSignals(board, helpers.signalArchivePath);
 
         helpers.writeBoard(board);
