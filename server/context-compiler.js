@@ -7,6 +7,7 @@
  */
 const path = require('path');
 const { BUDGET_DEFAULTS } = require('./route-engine');
+const { resolveCostRoutingModel } = require('./management');
 
 const STEP_OBJECTIVES = {
   plan:      'Research the codebase, understand the issue requirements, and produce a concrete implementation plan. Post the plan as a comment on the GitHub issue.',
@@ -20,7 +21,11 @@ const STEP_DEFAULT_CONTRACTS = {
   implement: { deliverable: 'pr' },
 };
 
-function resolveEnvelopeModel(runtimeHint, stepType, controls) {
+function resolveEnvelopeModel(runtimeHint, stepType, controls, taskBudget) {
+  // Cost routing tiers — delegate to management.js (single source of truth)
+  const costModel = resolveCostRoutingModel(runtimeHint, stepType, controls, taskBudget);
+  if (costModel) return costModel;
+  // Fall through to global model_map
   const map = controls?.model_map;
   if (!map || typeof map !== 'object') return null;
   const runtimeMap = map[runtimeHint];
@@ -136,7 +141,7 @@ function buildEnvelope(decision, runState, deps) {
       const timeoutSec = stepTimeouts[stepType] || stepTimeouts.default || 300;
       return timeoutSec * 1000;
     })(),
-    model_hint: resolveEnvelopeModel(targetStep.runtime_hint, stepType, runState.controls),
+    model_hint: resolveEnvelopeModel(targetStep.runtime_hint, stepType, runState.controls, task.budget),
     contract: task.contract || STEP_DEFAULT_CONTRACTS[stepType] || null,
     scope_config: task.scope || planScope || null,
   };
