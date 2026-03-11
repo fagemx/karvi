@@ -116,7 +116,9 @@ function test_writeBoard_overwrite() {
   test('5. writeBoard overwrites existing board', () => {
     const bp = boardPath('overwrite.json');
     storageJson.writeBoard(bp, sampleBoard({ projectName: 'v1' }));
-    storageJson.writeBoard(bp, sampleBoard({ projectName: 'v2' }));
+    const board = storageJson.readBoard(bp);
+    board.projectName = 'v2';
+    storageJson.writeBoard(bp, board);
     const loaded = storageJson.readBoard(bp);
     assert.strictEqual(loaded.projectName, 'v2');
   });
@@ -182,8 +184,11 @@ function test_ensureLogFile_idempotent() {
 function test_multiWrite_integrity() {
   test('11. Multiple writeBoard calls preserve integrity', () => {
     const bp = boardPath('multi-write.json');
-    for (let i = 0; i < 20; i++) {
-      storageJson.writeBoard(bp, sampleBoard({ projectName: `iter-${i}` }));
+    storageJson.writeBoard(bp, sampleBoard({ projectName: 'iter-0' }));
+    for (let i = 1; i < 20; i++) {
+      const board = storageJson.readBoard(bp);
+      board.projectName = `iter-${i}`;
+      storageJson.writeBoard(bp, board);
     }
     const loaded = storageJson.readBoard(bp);
     assert.strictEqual(loaded.projectName, 'iter-19');
@@ -300,6 +305,143 @@ function test_factoryDefaultJson() {
 }
 
 // =============================================================================
+// Optimistic Locking Tests
+// =============================================================================
+
+function test_versionIncrement() {
+  console.log('Test: version increments on write');
+  const board = { projectName: 'test', _version: 0 };
+  helpers.writeBoard(board);
+  
+  const reloaded = helpers.readBoard();
+  assert(reloaded._version === 1, 'Version should be 1 after first write');
+  
+  helpers.writeBoard(reloaded);
+  const reloaded2 = helpers.readBoard();
+  assert(reloaded2._version === 2, 'Version should be 2 after second write');
+}
+
+function test_conflictDetection() {
+  console.log('Test: conflict detection');
+  
+  // Write initial board
+  const board1 = { projectName: 'test', _version: 0 };
+  helpers.writeBoard(board1);
+  
+  // Two handlers read the same version
+  const copy1 = helpers.readBoard();
+  const copy2 = helpers.readBoard();
+  
+  // First handler writes successfully
+  copy1.projectName = 'handler1';
+  helpers.writeBoard(copy1);
+  
+  // Second handler should fail (version mismatch)
+  copy2.projectName = 'handler2';
+  try {
+    helpers.writeBoard(copy2);
+    assert(false, 'Should have thrown OptimisticLockError');
+  } catch (err) {
+    assert(err.code === 'VERSION_CONFLICT', 'Should be VERSION_CONFLICT error');
+    assert(err.expectedVersion === 1, 'Expected version should be 1');
+    assert(err.actualVersion === 0, 'Actual version should be 0');
+  }
+}
+
+function test_backwardCompatibility() {
+  console.log('Test: backward compatibility (no _version field)');
+  
+  // Write board without _version field using raw fs
+  const board = { projectName: 'legacy' };
+  const tmpPath = path.join(os.tmpdir(), `test-board-${Date.now()}.json`);
+  fs.writeFileSync(tmpPath, JSON.stringify(board, null, 2));
+  
+  // Read should add _version
+  const loaded = helpers.readBoard(tmpPath);
+  assert(loaded._version === 0, 'Should initialize _version to 0');
+  
+  // Write should succeed
+  helpers.writeBoard(loaded);
+  const reloaded = helpers.readBoard(tmpPath);
+  assert(reloaded._version === 1, 'Version should be 1 after write');
+  
+  fs.unlinkSync(tmpPath);
+}
+
+// =============================================================================
+// Optimistic Locking Tests
+// =============================================================================
+
+function test_versionIncrement() {
+  console.log('Test: version increments on write');
+  
+  const bp = boardPath('version-test.json');
+  const board = { projectName: 'test', _version: 0 };
+  storageJson.writeBoard(bp, board);
+  
+  const reloaded = storageJson.readBoard(bp);
+  assert(reloaded._version === 1, 'Version should be 1 after first write');
+  
+  storageJson.writeBoard(bp, reloaded);
+  const reloaded2 = storageJson.readBoard(bp);
+  assert(reloaded2._version === 2, 'Version should be 2 after second write');
+  
+  console.log('✓ Version increment works');
+}
+
+function test_conflictDetection() {
+  console.log('Test: conflict detection');
+  
+  const bp = boardPath('conflict-test.json');
+  
+  // Write initial board
+  const board1 = { projectName: 'test', _version: 0 };
+  storageJson.writeBoard(bp, board1);
+  
+  // Two handlers read the same version
+  const copy1 = storageJson.readBoard(bp);
+  const copy2 = storageJson.readBoard(bp);
+  
+  // First handler writes successfully
+  copy1.projectName = 'handler1';
+  storageJson.writeBoard(bp, copy1);
+  
+  // Second handler should fail (version mismatch)
+  copy2.projectName = 'handler2';
+  try {
+    storageJson.writeBoard(bp, copy2);
+    assert(false, 'Should have thrown OptimisticLockError');
+  } catch (err) {
+    assert(err.code === 'VERSION_CONFLICT', 'Should be VERSION_CONFLICT error');
+    assert(err.expectedVersion === 2, 'Expected version should be 2 (current on disk)');
+    assert(err.actualVersion === 1, 'Actual version should be 1 (stale copy)');
+  }
+  
+  console.log('✓ Conflict detection works');
+}
+
+function test_backwardCompatibility() {
+  console.log('Test: backward compatibility (no _version field)');
+  
+  // Write board without _version field using raw fs
+  const board = { projectName: 'legacy' };
+  const tmpPath = path.join(os.tmpdir(), `test-board-${Date.now()}.json`);
+  fs.writeFileSync(tmpPath, JSON.stringify(board, null, 2));
+  
+  // Read should add _version
+  const loaded = storageJson.readBoard(tmpPath);
+  assert(loaded._version === 0, 'Should initialize _version to 0');
+  
+  // Write should succeed
+  storageJson.writeBoard(tmpPath, loaded);
+  const reloaded = storageJson.readBoard(tmpPath);
+  assert(reloaded._version === 1, 'Version should be 1 after write');
+  
+  fs.unlinkSync(tmpPath);
+  console.log('✓ Backward compatibility works');
+}
+
+// =============================================================================
 // Run all tests
 // =============================================================================
 
@@ -325,6 +467,12 @@ function main() {
     test_specialChars_roundtrip();
     test_corruptedJson();
     test_jsonExportsName();
+
+    // Optimistic locking tests
+    console.log('\n--- Optimistic Locking ---\n');
+    test_versionIncrement();
+    test_conflictDetection();
+    test_backwardCompatibility();
 
     // storage-sqlite.js
     console.log('\n--- storage-sqlite.js ---\n');
