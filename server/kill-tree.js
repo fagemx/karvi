@@ -2,7 +2,8 @@
  * kill-tree.js - Kill an entire process tree (cross-platform).
  *
  * Supports graceful (SIGTERM) and hard (SIGKILL) kill modes.
- * Windows: always hard kill (taskkill /F) - no SIGTERM concept for process trees.
+ * Windows: SIGTERM uses taskkill without /F (sends WM_CLOSE for graceful shutdown),
+ *          SIGKILL uses taskkill /F (forced termination).
  */
 const { execSync } = require('child_process');
 
@@ -14,13 +15,12 @@ const { execSync } = require('child_process');
 function killTree(pid, { signal = 'SIGKILL' } = {}) {
   try {
     if (process.platform === 'win32') {
-      // Windows: taskkill /F is always hard kill (no SIGTERM for tree)
-      execSync(`taskkill /PID ${pid} /T /F`, { stdio: 'ignore' });
+      const forceFlag = signal === 'SIGTERM' ? '' : ' /F';
+      execSync(`taskkill /PID ${pid} /T${forceFlag}`, { stdio: 'ignore' });
     } else {
       process.kill(-pid, signal);
     }
   } catch (err) {
-    // ESRCH = process already dead - not an error
     if (err.code !== 'ESRCH') {
       console.error(`[kill-tree] failed to kill pid=${pid} signal=${signal}:`, err.message);
     }
