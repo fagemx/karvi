@@ -1940,12 +1940,19 @@ module.exports = function tasksRoutes(req, res, helpers, deps) {
 
   // --- Pipeline Templates ---
 
+  // GET /api/pipeline-templates/built-in — 列出所有內建範本
+  if (req.method === 'GET' && req.url === '/api/pipeline-templates/built-in') {
+    json(res, 200, mgmt.BUILT_IN_TEMPLATES);
+    return;
+  }
+
   const templatesMatch = req.url.match(/^\/api\/pipeline-templates(?:\/([^/?]+))?$/);
 
-  // GET /api/pipeline-templates — list all templates
+  // GET /api/pipeline-templates — list all templates (user + built-in merged)
   if (req.method === 'GET' && templatesMatch && !templatesMatch[1]) {
     const board = helpers.readBoard();
-    json(res, 200, board.pipelineTemplates || {});
+    const merged = Object.assign({}, mgmt.BUILT_IN_TEMPLATES, board.pipelineTemplates || {});
+    json(res, 200, merged);
     return;
   }
 
