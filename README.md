@@ -171,6 +171,8 @@ Runtimes load with try/catch — if a CLI isn't installed, the runtime is silent
 
 ## API
 
+> **完整 API 參考**: [`docs/api-reference.md`](docs/api-reference.md) — 所有 endpoint 的 curl 範例、request/response 格式、常見錯誤。
+
 ### Task Management
 
 | Method | Path | Description |
