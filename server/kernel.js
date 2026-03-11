@@ -124,7 +124,7 @@ function createKernel(deps) {
       refs: [taskId],
       data: { taskId, stepId, decision },
     });
-    if (latestBoard.signals.length > 500) latestBoard.signals = latestBoard.signals.slice(-500);
+    mgmt.trimSignals(latestBoard, helpers.signalArchivePath);
 
     // Execute decision
     switch (decision.action) {
@@ -248,7 +248,7 @@ function createKernel(deps) {
                     refs: [taskId],
                     data: { taskId, eventType: 'task.blocked', error: err.message },
                   });
-                  if (latestBoard.signals.length > 500) latestBoard.signals = latestBoard.signals.slice(-500);
+                  mgmt.trimSignals(latestBoard, helpers.signalArchivePath);
                 });
             }
             return;
@@ -267,7 +267,7 @@ function createKernel(deps) {
                 refs: [taskId],
                 data: { taskId, eventType: 'task.blocked', error: err.message },
               });
-              if (latestBoard.signals.length > 500) latestBoard.signals = latestBoard.signals.slice(-500);
+              mgmt.trimSignals(latestBoard, helpers.signalArchivePath);
             });
         }
         return;
@@ -310,7 +310,7 @@ function createKernel(deps) {
                     refs: [taskId],
                     data: { taskId, eventType: 'task.blocked', error: err.message },
                   });
-                  if (latestBoard.signals.length > 500) latestBoard.signals = latestBoard.signals.slice(-500);
+                  mgmt.trimSignals(latestBoard, helpers.signalArchivePath);
                 });
             }
             return;
@@ -328,7 +328,7 @@ function createKernel(deps) {
                 refs: [taskId],
                 data: { taskId, eventType: 'task.blocked', error: err.message },
               });
-              if (latestBoard.signals.length > 500) latestBoard.signals = latestBoard.signals.slice(-500);
+              mgmt.trimSignals(latestBoard, helpers.signalArchivePath);
             });
         }
         return;
@@ -419,7 +419,7 @@ function createKernel(deps) {
                     refs: [taskId],
                     data: { taskId, prNumber: number, error: err.message },
                   });
-                  if (freshBoard.signals.length > 500) freshBoard.signals = freshBoard.signals.slice(-500);
+                  mgmt.trimSignals(freshBoard, helpers.signalArchivePath);
                   helpers.writeBoard(freshBoard);
                 });
             }
@@ -451,7 +451,7 @@ function createKernel(deps) {
                     refs: [],
                     data: { taskId: null, eventType: 'village.plan_ready', error: err.message },
                   });
-                  if (latestBoard.signals.length > 500) latestBoard.signals = latestBoard.signals.slice(-500);
+                  mgmt.trimSignals(latestBoard, helpers.signalArchivePath);
                 });
             }
             try {
@@ -491,7 +491,7 @@ function createKernel(deps) {
                   refs: [],
                   data: { taskId: null, eventType: 'village.plan_ready', error: err.message },
                 });
-                if (latestBoard.signals.length > 500) latestBoard.signals = latestBoard.signals.slice(-500);
+                mgmt.trimSignals(latestBoard, helpers.signalArchivePath);
               });
             }
           }
@@ -534,14 +534,14 @@ function createKernel(deps) {
                     refs: [],
                     data: { taskId: null, eventType: 'village.checkin_summary', error: err.message },
                   });
-                  if (latestBoard.signals.length > 500) latestBoard.signals = latestBoard.signals.slice(-500);
+                  mgmt.trimSignals(latestBoard, helpers.signalArchivePath);
                 });
               }
             }
           }
         }
 
-        if (latestBoard.signals.length > 500) latestBoard.signals = latestBoard.signals.slice(-500);
+        mgmt.trimSignals(latestBoard, helpers.signalArchivePath);
 
         helpers.writeBoard(latestBoard);
 
@@ -556,7 +556,7 @@ function createKernel(deps) {
                 refs: [taskId],
                 data: { taskId, eventType: 'task.completed', error: err.message },
               });
-              if (latestBoard.signals.length > 500) latestBoard.signals = latestBoard.signals.slice(-500);
+              mgmt.trimSignals(latestBoard, helpers.signalArchivePath);
             });
         }
 
@@ -579,7 +579,7 @@ function createKernel(deps) {
                   refs: [],
                   data: { taskId: null, eventType: 'village.proposals_ready', error: err.message },
                 });
-                if (latestBoard.signals.length > 500) latestBoard.signals = latestBoard.signals.slice(-500);
+                mgmt.trimSignals(latestBoard, helpers.signalArchivePath);
               });
             }
           }

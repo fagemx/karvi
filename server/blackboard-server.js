@@ -78,6 +78,7 @@ function createContext(opts = {}) {
   const dir = opts.dir || __dirname;
   const boardPath = path.resolve(dir, opts.boardPath || 'board.json');
   const logPath = path.resolve(dir, opts.logPath || 'log.jsonl');
+  const signalArchivePath = path.resolve(dir, opts.signalArchivePath || 'signal-archive.jsonl');
   const port = Number(opts.port) || 3400;
   const boardType = opts.boardType || null;
   const apiToken = opts.apiToken || process.env.KARVI_API_TOKEN || null;
@@ -118,6 +119,7 @@ function createContext(opts = {}) {
     dir,
     boardPath,
     logPath,
+    signalArchivePath,
     port,
     host: opts.host || undefined,
     boardType,
@@ -393,6 +395,7 @@ function createServer(ctx, routeHandler) {
     writeBoard: (b) => writeBoard(ctx, b),
     appendLog: (e) => appendLog(ctx, e),
     broadcastSSE: (ev, d) => broadcastSSE(ctx, ev, d),
+    signalArchivePath: ctx.signalArchivePath,
     nowIso,
     uid,
   };

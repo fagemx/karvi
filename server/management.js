@@ -5,6 +5,7 @@ const bb = require('./blackboard-server');
 const { nowIso, uid } = bb;
 const stepSchema = require('./step-schema');
 const { resolveRepoRoot } = require('./repo-resolver');
+const storage = require('./storage');
 
 const DIR = __dirname;
 const SKILLS_DIR = path.join(DIR, 'skills');
@@ -41,6 +42,7 @@ const DEFAULT_CONTROLS = {
     execute: 600,   // same as implement — full task execution
     default: 300
   },
+  signal_max_count: 500,              // max signals kept in board.json; overflow archived to signal-archive.jsonl
 };
 
 // --- Evolution Layer: Schema validation ---
@@ -65,6 +67,30 @@ function ensureEvolutionFields(board) {
   if (!Array.isArray(board.insights)) board.insights = [];
   if (!Array.isArray(board.lessons)) board.lessons = [];
   return board;
+}
+
+// --- Signal Retention ---
+
+/**
+ * trimSignals — 超過 signal_max_count 的 signals 歸檔到 signal-archive.jsonl，
+ * 保留最新的 max 條在 board.signals。
+ * @param {object} board - board 物件
+ * @param {string} archivePath - signal-archive.jsonl 的絕對路徑
+ * @returns {number} 歸檔的 signal 數量
+ */
+function trimSignals(board, archivePath) {
+  const max = getControls(board).signal_max_count;
+  if (!board.signals || board.signals.length <= max) return 0;
+  const overflow = board.signals.slice(0, -max);
+  board.signals = board.signals.slice(-max);
+  if (archivePath) {
+    for (const sig of overflow) {
+      storage.appendLog(archivePath, sig);
+    }
+  } else {
+    console.warn(`[trimSignals] archivePath is falsy — dropping ${overflow.length} overflow signal(s)`);
+  }
+  return overflow.length;
 }
 
 // --- Evolution Layer: Gate Logic ---
@@ -1264,4 +1290,5 @@ module.exports = {
   normalizePipelineEntry,
   generateStepsForTask,
   DEFAULT_STEP_PIPELINE,
+  trimSignals,
 };

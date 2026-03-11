@@ -170,7 +170,7 @@ async function parsePlanAndDispatch(board, planData, helpers, deps, synthesisTas
         deferred: planData.deferred || [],
       },
     });
-    if (latestBoard.signals.length > 500) latestBoard.signals = latestBoard.signals.slice(-500);
+    mgmt.trimSignals(latestBoard, helpers.signalArchivePath);
 
     // Write board + broadcast
     helpers.writeBoard(latestBoard);

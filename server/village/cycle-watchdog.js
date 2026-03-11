@@ -11,6 +11,8 @@
  *   B) Time-based: phase stuck longer than stallTimeoutMs
  */
 
+const mgmt = require('../management');
+
 const DEFAULT_STALL_TIMEOUT_MS = 4 * 3_600_000; // 4 hours
 
 const TERMINAL_STATUSES = new Set(["blocked"]);
@@ -131,7 +133,7 @@ function closeStalledCycle(board, helpers, reason, healthResult) {
       stuckDurationMs: healthResult?.stuckDurationMs || 0,
     },
   });
-  if (board.signals.length > 500) board.signals = board.signals.slice(-500);
+  mgmt.trimSignals(board, helpers.signalArchivePath);
 
   helpers.writeBoard(board);
   helpers.appendLog({
