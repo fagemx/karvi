@@ -51,6 +51,18 @@ function buildEnvelope(decision, runState, deps) {
     previousOutputRef = prevStep.output_ref || null;
   }
 
+  // Validate previous step output against next step's input expectations (warn-only)
+  if (previousOutput && targetIdx > 0) {
+    const prevStepType = steps[targetIdx - 1].type;
+    const contractResult = stepSchema.validateStepContract(prevStepType, previousOutput, stepType);
+    if (contractResult.warnings?.length > 0) {
+      console.log(`[context-compiler] input warnings for ${targetStepId}: ${contractResult.warnings.join(', ')}`);
+    }
+    if (!contractResult.valid && contractResult.errors?.length > 0) {
+      console.log(`[context-compiler] input contract errors for ${targetStepId} (warn-only): ${contractResult.errors.join(', ')}`);
+    }
+  }
+
   // Compute idempotency key from inputs
   const inputContent = {
     task_id: task.id,

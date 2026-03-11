@@ -592,6 +592,25 @@ function createStepWorker(deps) {
           summary = `Contract violation: ${contractResult.reason}`;
         }
       }
+
+      // 5d. Step output schema validation — verify required output fields
+      if (status === 'succeeded') {
+        const outputValidation = stepSchema.validateStepOutputSchema(envelope.step_type, {
+          status, summary, payload: stepResult,
+        });
+        if (outputValidation.warnings?.length > 0) {
+          console.log(`[step-worker] output warnings for ${envelope.step_id}: ${outputValidation.warnings.join(', ')}`);
+        }
+        if (!outputValidation.valid && outputValidation.errors?.length > 0) {
+          status = 'failed';
+          failure = {
+            failure_signature: `Output contract violation: ${outputValidation.errors.join('; ')}`,
+            failure_mode: 'CONTRACT_VIOLATION',
+            retryable: true,
+          };
+          summary = `Output contract violation: ${outputValidation.errors.join('; ')}`;
+        }
+      }
     }
 
     // Preserve full STEP_RESULT payload (proposal, plan, etc.) for downstream modules.
