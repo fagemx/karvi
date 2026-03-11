@@ -412,12 +412,6 @@ function test_conflictDetection() {
     storageJson.writeBoard(bp, copy2);
     assert(false, 'Should have thrown OptimisticLockError');
   } catch (err) {
-    console.log('Error details:', {
-      code: err.code,
-      expectedVersion: err.expectedVersion,
-      actualVersion: err.actualVersion,
-      message: err.message
-    });
     assert(err.code === 'VERSION_CONFLICT', 'Should be VERSION_CONFLICT error');
     assert(err.expectedVersion === 2, 'Expected version should be 2 (current on disk)');
     assert(err.actualVersion === 1, 'Actual version should be 1 (stale copy)');
