@@ -93,6 +93,10 @@ module.exports = function controlsRoutes(req, res, helpers, deps) {
             }
           }
         }
+        // Deprecation warning: use_step_pipeline=false is no longer supported (GH-218)
+        if (patch.use_step_pipeline === false) {
+          console.warn('[controls] use_step_pipeline=false is deprecated — all dispatch uses step pipeline');
+        }
         helpers.writeBoard(board);
         helpers.appendLog({ ts: helpers.nowIso(), event: 'controls_updated', controls: board.controls });
         json(res, 200, { ok: true, controls: mgmt.getControls(board) });

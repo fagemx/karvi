@@ -131,7 +131,7 @@ describe('dispatch lock prevents concurrent dispatch (F1)', () => {
     };
 
     const mgmt = {
-      getControls: () => ({ use_worktrees: false, use_step_pipeline: false }),
+      getControls: () => ({ use_worktrees: false, use_step_pipeline: true }),
       buildDispatchPlan: () => ({
         planId: 'p1', runtimeHint: 'opencode', message: 'test',
         timeoutSec: 10, runtimeSelection: {}, createdAt: new Date().toISOString(),
