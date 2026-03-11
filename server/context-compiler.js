@@ -7,6 +7,7 @@
  */
 const path = require('path');
 const { BUDGET_DEFAULTS } = require('./route-engine');
+const { resolveCostRoutingModel } = require('./management');
 
 const STEP_OBJECTIVES = {
   plan:      'Research the codebase, understand the issue requirements, and produce a concrete implementation plan. Post the plan as a comment on the GitHub issue.',
@@ -21,25 +22,9 @@ const STEP_DEFAULT_CONTRACTS = {
 };
 
 function resolveEnvelopeModel(runtimeHint, stepType, controls, taskBudget) {
-  // Cost routing tiers override global model_map when budget is low
-  const costRouting = controls?.cost_routing;
-  if (costRouting?.tiers?.length && taskBudget) {
-    const limits = { ...BUDGET_DEFAULTS, ...taskBudget.limits };
-    const used = taskBudget.used || {};
-    const pctRemaining = limits.max_tokens > 0
-      ? Math.max(0, Math.min(100, ((limits.max_tokens - (used.tokens || 0)) / limits.max_tokens) * 100))
-      : 100;
-    const sortedTiers = [...costRouting.tiers].sort((a, b) => a.budget_pct_remaining - b.budget_pct_remaining);
-    for (const tier of sortedTiers) {
-      if (pctRemaining <= tier.budget_pct_remaining && tier.model_map) {
-        const tierMap = tier.model_map[runtimeHint];
-        if (tierMap && typeof tierMap === 'object') {
-          const model = (stepType && tierMap[stepType]) || tierMap.default || null;
-          if (model) return model;
-        }
-      }
-    }
-  }
+  // Cost routing tiers — delegate to management.js (single source of truth)
+  const costModel = resolveCostRoutingModel(runtimeHint, stepType, controls, taskBudget);
+  if (costModel) return costModel;
   // Fall through to global model_map
   const map = controls?.model_map;
   if (!map || typeof map !== 'object') return null;
