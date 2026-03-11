@@ -8,6 +8,7 @@
  * UI is just a dashboard.
  */
 const routeEngine = require('./route-engine');
+const { BLOCKER_TYPES } = require('./blocker-types');
 const contextCompiler = require('./context-compiler');
 const planDispatcher = require('./village/plan-dispatcher');
 const cycleWatchdog = require('./village/cycle-watchdog');
@@ -275,7 +276,11 @@ function createKernel(deps) {
       case 'dead_letter': {
         if (latestTask) {
           latestTask.status = 'blocked';
-          latestTask.blocker = { reason: `Dead letter: ${decision.rule}`, askedAt: helpers.nowIso() };
+          latestTask.blocker = {
+            type: BLOCKER_TYPES.DEAD_LETTER,
+            reason: `Dead letter: ${decision.rule}`,
+            askedAt: helpers.nowIso()
+          };
           // Preserve worktree on failure — agent may have written code that hasn't been
           // committed yet. Deleting it permanently loses work. Worktree will be cleaned
           // up when the task is manually cancelled/deleted or re-dispatched. (GH-325)
