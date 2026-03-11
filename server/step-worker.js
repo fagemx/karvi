@@ -651,8 +651,30 @@ function createStepWorker(deps) {
       });
       mgmt.trimSignals(latestBoard, helpers.signalArchivePath);
       helpers.writeBoard(latestBoard);
-      helpers.appendLog({ ts: helpers.nowIso(), event: signalType, taskId: envelope.task_id, stepId: envelope.step_id, from: 'running', to: latestStep.state });
-      emitWebhookEvent(latestBoard, signalType, { taskId: envelope.task_id, stepId: envelope.step_id, state: latestStep.state });
+      helpers.appendLog({
+        ts: helpers.nowIso(), event: signalType,
+        taskId: envelope.task_id, stepId: envelope.step_id,
+        from: 'running', to: latestStep.state,
+        runtime: runtimeHint || null,
+        model: plan.modelHint || null,
+        tokens_used: agentOutput.tokens_used || 0,
+        duration_ms: agentOutput.duration_ms || 0,
+        step_type: latestStep.type || null,
+        error_kind: agentOutput.failure?.failure_mode || null,
+      });
+      emitWebhookEvent(latestBoard, signalType, {
+        taskId: envelope.task_id, stepId: envelope.step_id, state: latestStep.state,
+        runtime: runtimeHint || null,
+        model: plan.modelHint || null,
+        step_type: latestStep.type || null,
+        usage: {
+          token_in: usage?.inputTokens || 0,
+          token_out: usage?.outputTokens || 0,
+          cost_usd: usage?.totalCost || 0,
+          latency_ms: durationMs || 0,
+        },
+        error_code: agentOutput.failure?.failure_mode || null,
+      });
 
       // 8. Trigger kernel for terminal states (via setImmediate to avoid deep recursion)
       const newSignal = {

@@ -1007,6 +1007,19 @@ async function runSuite(target) {
     } catch (e) { fail('GET /api/logs', e.message); }
   }
 
+  // ── Per-Agent Quality Metrics (GH-345) ──
+  if (port === 3461) {
+    try {
+      const r = await get(port, '/api/metrics/agents');
+      if (r.status !== 200) throw new Error(`status ${r.status}`);
+      const body = JSON.parse(r.body);
+      if (!Array.isArray(body.agents)) throw new Error('expected agents array');
+      if (typeof body.total_entries !== 'number') throw new Error('missing total_entries');
+      if (!body.period || !('from' in body.period)) throw new Error('missing period');
+      ok('GET /api/metrics/agents → 200 + agents array');
+    } catch (e) { fail('GET /api/metrics/agents', e.message); }
+  }
+
   console.log(`  ── ${passed} passed, ${failed} failed ──`);
   return { passed, failed };
 }
