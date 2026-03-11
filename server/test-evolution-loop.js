@@ -17,6 +17,14 @@ const path = require('path');
 
 const PORT = Number(process.env.TEST_PORT) || 13461;
 const API_TOKEN = process.env.KARVI_API_TOKEN || null;
+
+// Global timeout — kill the process if test hangs (CI safety net)
+const GLOBAL_TIMEOUT_MS = 120_000;
+setTimeout(() => {
+  console.error(`\n❌ Global timeout (${GLOBAL_TIMEOUT_MS / 1000}s) — test hung, forcing exit`);
+  if (serverProc) { serverProc.kill(); serverProc = null; }
+  process.exit(2);
+}, GLOBAL_TIMEOUT_MS).unref();
 // Use a temp directory for board data to avoid clobbering production board.json
 const TEST_DATA_DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'karvi-test-'));
 let serverProc = null;
