@@ -264,6 +264,56 @@ async function main() {
     }
   }
 
+  // ============================================
+  console.log('\n=== Part C: Provider Health Check Test ===\n');
+  // ============================================
+
+  // Step 12: GET /api/health/providers — 驗證 response 格式
+  console.log('Step 12: Testing GET /api/health/providers...');
+  const healthResult = await get('/api/health/providers');
+  if (!healthResult.ts) { fail('health/providers missing ts', JSON.stringify(healthResult)); }
+  else if (!Array.isArray(healthResult.providers)) { fail('health/providers missing providers array', JSON.stringify(healthResult)); }
+  else {
+    ok(`Got ${healthResult.providers.length} provider(s)`);
+    // 每個 provider 必須有 id, type, status, checks
+    let formatOk = true;
+    for (const p of healthResult.providers) {
+      if (!p.id || !p.type || !p.status || !p.checks) {
+        fail(`provider ${p.id || '?'} missing required fields`, JSON.stringify(p));
+        formatOk = false;
+        break;
+      }
+      if (!['healthy', 'degraded', 'unhealthy'].includes(p.status)) {
+        fail(`provider ${p.id} invalid status`, p.status);
+        formatOk = false;
+        break;
+      }
+    }
+    if (formatOk) ok('All providers have valid format (id, type, status, checks)');
+  }
+
+  // Step 13: GET /api/health/providers?id=openclaw — 過濾特定 provider
+  console.log('\nStep 13: Testing filtered provider health check...');
+  const filteredResult = await get('/api/health/providers?id=openclaw');
+  if (!Array.isArray(filteredResult.providers)) { fail('filtered health missing providers', JSON.stringify(filteredResult)); }
+  else if (filteredResult.providers.length !== 1) { fail('filtered health should return 1 provider', `got ${filteredResult.providers.length}`); }
+  else if (filteredResult.providers[0].id !== 'openclaw') { fail('filtered provider id mismatch', filteredResult.providers[0].id); }
+  else { ok(`Filtered to: ${filteredResult.providers[0].id} (${filteredResult.providers[0].status})`); }
+
+  // Step 14: 不存在的 provider → 回傳 unhealthy
+  console.log('\nStep 14: Testing non-existent provider...');
+  const badResult = await get('/api/health/providers?id=nonexistent');
+  if (!Array.isArray(badResult.providers)) { fail('bad provider missing providers', JSON.stringify(badResult)); }
+  else if (badResult.providers[0]?.status !== 'unhealthy') { fail('non-existent provider should be unhealthy', badResult.providers[0]?.status); }
+  else { ok('Non-existent provider correctly reported as unhealthy'); }
+
+  // Step 15: Error classification 驗證（非存在 provider 的 error.type）
+  console.log('\nStep 15: Verifying error classification format...');
+  const errProvider = badResult.providers?.[0];
+  if (!errProvider?.error?.type) { fail('error provider missing error.type', JSON.stringify(errProvider)); }
+  else if (!errProvider?.error?.message) { fail('error provider missing error.message', JSON.stringify(errProvider)); }
+  else { ok(`Error classified: type=${errProvider.error.type}, message="${errProvider.error.message}"`); }
+
   console.log('\n=== Done ===');
   stopServer();
 }

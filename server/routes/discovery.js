@@ -6,9 +6,12 @@
  * GET /api/skills            — list available skills from .claude/skills/
  * GET /api/health/preflight  — environment readiness check
  * GET /api/capabilities      — aggregate discovery: runtimes, stepTypes, models, providers
+ * GET /api/health/providers  — provider health check (key + endpoint reachability)
  */
 const fs = require('fs');
 const path = require('path');
+const https = require('https');
+const http = require('http');
 const { execSync } = require('child_process');
 const bb = require('../blackboard-server');
 const { json } = bb;
@@ -22,6 +25,8 @@ let _preflightCache = null;
 let _preflightCacheTs = 0;
 const PREFLIGHT_TTL_MS = 30_000;
 let _providersCache = null;
+const _providerCache = new Map();
+const PROVIDER_TTL_MS = 30_000;
 
 function listRuntimes(deps) {
   const runtimes = [];
@@ -211,6 +216,227 @@ function buildCapabilities(deps, helpers) {
   return { runtimes, stepTypes, models, providers, defaultPipeline };
 }
 
+// --- Provider Health Check ---
+
+/**
+ * 分類錯誤類型：auth / network / rate_limit / unknown
+ */
+function classifyError(err, httpStatus) {
+  if (httpStatus === 401 || httpStatus === 403) return 'auth';
+  if (httpStatus === 429) return 'rate_limit';
+  if (err) {
+    const code = err.code || '';
+    if (['ECONNREFUSED', 'ENOTFOUND', 'ETIMEDOUT', 'ECONNRESET', 'EAI_AGAIN'].includes(code)) return 'network';
+    if (err.message && err.message.includes('timed out')) return 'network';
+  }
+  return 'unknown';
+}
+
+/**
+ * HTTP(S) probe — 發 request 到外部 endpoint，回傳健康狀態。
+ * @param {string} urlStr - 完整 URL
+ * @param {object} headers - 額外 headers（如 Authorization）
+ * @param {number} timeoutMs - 超時毫秒
+ * @returns {Promise<{ok: boolean, latency_ms: number, http_status?: number, error_type?: string, message?: string}>}
+ */
+function httpProbe(urlStr, headers = {}, timeoutMs = 8000) {
+  return new Promise((resolve) => {
+    const start = Date.now();
+    const parsed = new URL(urlStr);
+    const mod = parsed.protocol === 'https:' ? https : http;
+
+    const opts = {
+      hostname: parsed.hostname,
+      port: parsed.port || (parsed.protocol === 'https:' ? 443 : 80),
+      path: parsed.pathname + parsed.search,
+      method: 'GET',
+      headers,
+      timeout: timeoutMs,
+    };
+
+    const req = mod.request(opts, (res) => {
+      let body = '';
+      res.setEncoding('utf8');
+      res.on('data', (c) => (body += c));
+      res.on('end', () => {
+        const latency_ms = Date.now() - start;
+        if (res.statusCode >= 200 && res.statusCode < 400) {
+          resolve({ ok: true, latency_ms, http_status: res.statusCode });
+        } else {
+          resolve({
+            ok: false,
+            latency_ms,
+            http_status: res.statusCode,
+            error_type: classifyError(null, res.statusCode),
+            message: `HTTP ${res.statusCode}`,
+          });
+        }
+      });
+    });
+
+    req.on('timeout', () => {
+      req.destroy();
+      resolve({
+        ok: false,
+        latency_ms: Date.now() - start,
+        error_type: 'network',
+        message: `Request timed out after ${timeoutMs}ms`,
+      });
+    });
+
+    req.on('error', (err) => {
+      resolve({
+        ok: false,
+        latency_ms: Date.now() - start,
+        error_type: classifyError(err, null),
+        message: err.message,
+      });
+    });
+
+    req.end();
+  });
+}
+
+/**
+ * 探測 CLI runtime（openclaw, claude, codex）是否已安裝。
+ */
+function probeCliRuntime(id) {
+  const cmdMap = { openclaw: 'openclaw', claude: 'claude', codex: 'codex', opencode: 'opencode' };
+  const cmd = cmdMap[id] || id;
+  const whereCmd = process.platform === 'win32' ? `where ${cmd}` : `which ${cmd}`;
+  let cli_installed = false;
+  try {
+    execSync(whereCmd, { encoding: 'utf8', timeout: 5000, stdio: ['pipe', 'pipe', 'pipe'] });
+    cli_installed = true;
+  } catch { /* not found */ }
+  return { cli_installed };
+}
+
+/**
+ * 探測單個 provider 的健康狀態。
+ * @returns {Promise<{id, type, status, latency_ms?, checks, error?}>}
+ */
+async function probeProvider(id, rt, deps) {
+  const caps = typeof rt.capabilities === 'function' ? rt.capabilities() : {};
+  const runtimeName = caps.runtime || id;
+
+  // Claude API — 深度探測
+  if (runtimeName === 'claude-api') {
+    const checks = { key_configured: false, endpoint_reachable: false };
+    // 檢查 vault 是否啟用
+    const vault = deps.vault;
+    const vaultEnabled = vault && typeof vault.isEnabled === 'function' && vault.isEnabled();
+    checks.key_configured = vaultEnabled;
+    if (!vaultEnabled) {
+      return {
+        id, type: 'api', status: 'unhealthy', checks,
+        error: { type: 'not_configured', message: 'Vault not configured — cannot retrieve API key' },
+      };
+    }
+    // Probe Anthropic API endpoint (GET to /v1/messages returns 405 Method Not Allowed — 但表示 endpoint 可達 + TLS 握手成功)
+    const probeResult = await httpProbe('https://api.anthropic.com/v1/messages', {
+      'anthropic-version': '2023-06-01',
+    });
+    // 405 = endpoint reachable (GET not allowed, but server responded)
+    if (probeResult.ok || probeResult.http_status === 405) {
+      checks.endpoint_reachable = true;
+      return { id, type: 'api', status: 'healthy', latency_ms: probeResult.latency_ms, checks };
+    }
+    // auth 或 rate_limit 也表示 endpoint 可達
+    if (probeResult.http_status === 401 || probeResult.http_status === 403) {
+      checks.endpoint_reachable = true;
+      return {
+        id, type: 'api', status: 'degraded', latency_ms: probeResult.latency_ms, checks,
+        error: { type: 'auth', message: 'API key may be invalid (endpoint reachable but auth failed)' },
+      };
+    }
+    if (probeResult.http_status === 429) {
+      checks.endpoint_reachable = true;
+      return {
+        id, type: 'api', status: 'degraded', latency_ms: probeResult.latency_ms, checks,
+        error: { type: 'rate_limit', message: 'Rate limited by provider' },
+      };
+    }
+    return {
+      id, type: 'api', status: 'unhealthy', latency_ms: probeResult.latency_ms, checks,
+      error: { type: probeResult.error_type || 'network', message: probeResult.message },
+    };
+  }
+
+  // OpenCode — CLI + env + optional API probe
+  if (runtimeName === 'opencode') {
+    const cliCheck = probeCliRuntime('opencode');
+    const envKey = process.env.T8STAR_API_KEY || process.env.OPENAI_API_KEY || '';
+    const checks = {
+      cli_installed: cliCheck.cli_installed,
+      env_configured: envKey.length > 0,
+    };
+    // 嘗試探測 T8Star endpoint（如果有 config）
+    if (envKey && process.env.T8STAR_API_KEY) {
+      const probeResult = await httpProbe('https://ai.t8star.cn/v1/models', {
+        'Authorization': `Bearer ${envKey}`,
+      });
+      checks.endpoint_reachable = probeResult.ok;
+      if (!probeResult.ok) {
+        const status = checks.cli_installed ? 'degraded' : 'unhealthy';
+        return {
+          id, type: 'hybrid', status, latency_ms: probeResult.latency_ms, checks,
+          error: { type: probeResult.error_type || 'network', message: probeResult.message },
+        };
+      }
+      return { id, type: 'hybrid', status: 'healthy', latency_ms: probeResult.latency_ms, checks };
+    }
+    const status = cliCheck.cli_installed ? (envKey ? 'healthy' : 'degraded') : 'unhealthy';
+    const error = !cliCheck.cli_installed
+      ? { type: 'not_installed', message: 'opencode CLI not found' }
+      : (!envKey ? { type: 'not_configured', message: 'No API key configured (T8STAR_API_KEY or OPENAI_API_KEY)' } : undefined);
+    return { id, type: 'hybrid', status, checks, ...(error ? { error } : {}) };
+  }
+
+  // CLI-only runtimes (openclaw, claude, codex)
+  const cliCheck = probeCliRuntime(id);
+  const envMap = { codex: 'OPENAI_API_KEY', claude: 'ANTHROPIC_API_KEY' };
+  const envVar = envMap[id];
+  const checks = { cli_installed: cliCheck.cli_installed };
+  if (envVar) checks.env_configured = !!process.env[envVar];
+
+  const status = cliCheck.cli_installed ? 'healthy' : 'unhealthy';
+  const error = !cliCheck.cli_installed
+    ? { type: 'not_installed', message: `${id} CLI not found` }
+    : undefined;
+  return { id, type: 'cli', status, checks, ...(error ? { error } : {}) };
+}
+
+/**
+ * 探測所有已註冊的 provider，支援 30 秒 cache。
+ */
+async function probeAllProviders(deps, filterId) {
+  const ids = filterId ? [filterId] : Object.keys(deps.RUNTIMES);
+  const results = [];
+
+  for (const id of ids) {
+    const rt = deps.RUNTIMES[id];
+    if (!rt) {
+      results.push({ id, type: 'unknown', status: 'unhealthy', checks: {}, error: { type: 'not_installed', message: `Runtime "${id}" not registered` } });
+      continue;
+    }
+
+    // Cache check
+    const now = Date.now();
+    const cached = _providerCache.get(id);
+    if (cached && (now - cached.ts) < PROVIDER_TTL_MS) {
+      results.push(cached.result);
+      continue;
+    }
+
+    const result = await probeProvider(id, rt, deps);
+    _providerCache.set(id, { ts: now, result });
+    results.push(result);
+  }
+
+  return results;
+}
+
 function urlMatch(url, pattern) {
   return url === pattern || url.startsWith(pattern + '?');
 }
@@ -241,6 +467,17 @@ module.exports = function discoveryRoutes(req, res, helpers, deps) {
     return json(res, 200, result);
   }
 
+  if (req.method === 'GET' && urlMatch(req.url, '/api/health/providers')) {
+    const url = new URL(req.url, 'http://localhost');
+    const filterId = url.searchParams.get('id') || null;
+    probeAllProviders(deps, filterId).then((providers) => {
+      json(res, 200, { ts: helpers.nowIso(), providers });
+    }).catch((err) => {
+      json(res, 500, { error: err.message });
+    });
+    return;
+  }
+
   return false;
 };
 
@@ -251,4 +488,6 @@ module.exports.buildCapabilities = buildCapabilities;
 module.exports.discoverProviders = discoverProviders;
 module.exports.listStepTypes = listStepTypes;
 module.exports.parseFrontmatter = parseFrontmatter;
-module.exports._resetCaches = () => { _skillsCache = null; _skillsCacheTs = 0; _preflightCache = null; _preflightCacheTs = 0; _providersCache = null; };
+module.exports.probeAllProviders = probeAllProviders;
+module.exports.classifyError = classifyError;
+module.exports._resetCaches = () => { _skillsCache = null; _skillsCacheTs = 0; _preflightCache = null; _preflightCacheTs = 0; _providersCache = null; _providerCache.clear(); };
