@@ -63,6 +63,12 @@ function buildEnvelope(decision, runState, deps) {
   // Compute remaining budget
   const budgetRemaining = computeRemainingBudget(task.budget);
 
+  // Extract scope from plan step output (for implement step and retry context)
+  let planScope = null;
+  if (previousOutput?.payload?.scope) {
+    planScope = previousOutput.payload.scope;
+  }
+
   // Build retry context if this is a retry/remediation
   let retryContext = null;
   if (decision.action === 'retry' && decision.from_step_id === targetStepId) {
@@ -81,6 +87,24 @@ function buildEnvelope(decision, runState, deps) {
         retryContext.remediation_hint =
           `Do NOT modify these @protected lines: ${annotations.map(a => a.file + ':' + a.line).join(', ')}. ` +
           `Work around them — extract/refactor other code while leaving protected lines untouched.`;
+      }
+    }
+    // For SCOPE_VIOLATION, provide clear guidance on allowed/denied patterns
+    if (retryContext.failure_mode === 'SCOPE_VIOLATION') {
+      const scopeConfig = task.scope || planScope;
+      if (scopeConfig) {
+        const allowList = scopeConfig.allow?.length
+          ? scopeConfig.allow.join(', ')
+          : '(no allow list — all files allowed except deny patterns)';
+        const denyList = scopeConfig.deny?.length
+          ? scopeConfig.deny.join(', ')
+          : '(none)';
+        retryContext.remediation_hint =
+          `Your previous attempt modified files outside the allowed scope. ` +
+          `Allowed patterns: ${allowList}. ` +
+          `Denied patterns: ${denyList}. ` +
+          `Only modify files matching the allowed patterns and avoid denied patterns. ` +
+          `The .claude/** directory is always denied.`;
       }
     }
   }
@@ -114,7 +138,7 @@ function buildEnvelope(decision, runState, deps) {
     })(),
     model_hint: resolveEnvelopeModel(targetStep.runtime_hint, stepType, runState.controls),
     contract: task.contract || STEP_DEFAULT_CONTRACTS[stepType] || null,
-    scope_config: task.scope || null,
+    scope_config: task.scope || planScope || null,
   };
 
   return envelope;

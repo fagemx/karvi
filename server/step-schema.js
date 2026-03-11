@@ -39,14 +39,15 @@ const DEFAULT_RETRY_POLICY = {
 };
 
 const ERROR_KINDS = {
-  TEMPORARY:    { retryable: true,  backoff: 'exponential' },
-  PROVIDER:     { retryable: true,  backoff: 'exponential' },
-  AGENT_ERROR:  { retryable: true,  backoff: 'linear' },
-  FINALIZE:     { retryable: true,  backoff: 'immediate' },
-  CONTRACT:     { retryable: true,  backoff: 'linear' },
-  PROTECTED:    { retryable: false, backoff: null },
-  CONFIG:       { retryable: false, backoff: null },
-  UNKNOWN:      { retryable: true,  backoff: 'exponential' },
+  TEMPORARY:         { retryable: true,  backoff: 'exponential' },
+  PROVIDER:          { retryable: true,  backoff: 'exponential' },
+  AGENT_ERROR:       { retryable: true,  backoff: 'linear' },
+  FINALIZE:          { retryable: true,  backoff: 'immediate' },
+  CONTRACT:          { retryable: true,  backoff: 'linear' },
+  PROTECTED:         { retryable: false, backoff: null },
+  CONFIG:            { retryable: false, backoff: null },
+  SCOPE_VIOLATION:   { retryable: true,  backoff: 'linear' },
+  UNKNOWN:           { retryable: true,  backoff: 'exponential' },
 };
 
 // --- Functions ---
