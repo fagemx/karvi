@@ -536,7 +536,7 @@ async function runSuite(target) {
 
   // Health endpoint exempt from rate limit (always accessible)
   try {
-    const r = await get(port, '/health', { token: null });
+    const r = await get(port, '/health', { token: null, timeout: 10000 });
     if (r.status !== 200) throw new Error(`status ${r.status}`);
     // No rate limit headers should be on /health
     ok('Health endpoint → exempt from rate limit');

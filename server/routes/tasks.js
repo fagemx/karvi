@@ -1836,14 +1836,17 @@ module.exports = function tasksRoutes(req, res, helpers, deps) {
   if (req.method === 'POST' && confidenceMatch) {
     const taskId = decodeURIComponent(confidenceMatch[1]);
     if (!confidenceEngine) return json(res, 503, { error: 'Confidence engine not available' });
+    const board = helpers.readBoard();
+    const task = (board.taskPlan?.tasks || []).find(t => t.id === taskId);
+    if (!task) return json(res, 404, { error: 'Task not found' });
     try {
       confidenceEngine.triggerConfidence(taskId, 'manual', {
         readBoard: helpers.readBoard, writeBoard: helpers.writeBoard,
         broadcastSSE: helpers.broadcastSSE, appendLog: helpers.appendLog,
       });
-      const board = helpers.readBoard();
-      const task = (board.taskPlan?.tasks || []).find(t => t.id === taskId);
-      return json(res, 200, { ok: true, taskId, confidence: task?.confidence || null });
+      const updated = helpers.readBoard();
+      const updatedTask = (updated.taskPlan?.tasks || []).find(t => t.id === taskId);
+      return json(res, 200, { ok: true, taskId, confidence: updatedTask?.confidence || null });
     } catch (err) {
       return json(res, 500, { error: err.message });
     }
