@@ -409,6 +409,7 @@ async function main() {
   console.log('\n=== Done ===');
   // RBAC tests are in server/test-rbac.js (dedicated test)
   stopServer();
+  process.exit(process.exitCode || 0);
 }
 
 main().catch(err => { console.error('Fatal:', err.message); stopServer(); process.exit(1); });
