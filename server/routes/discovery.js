@@ -5,12 +5,15 @@
  * GET /api/runtimes          — list registered runtimes + capabilities
  * GET /api/skills            — list available skills from .claude/skills/
  * GET /api/health/preflight  — environment readiness check
+ * GET /api/capabilities      — aggregate discovery: runtimes, stepTypes, models, providers
  */
 const fs = require('fs');
 const path = require('path');
 const { execSync } = require('child_process');
 const bb = require('../blackboard-server');
 const { json } = bb;
+const { STEP_OBJECTIVES, STEP_DEFAULT_CONTRACTS } = require('../context-compiler');
+const { DEFAULT_CONTROLS, DEFAULT_STEP_PIPELINE } = require('../management');
 
 let _skillsCache = null;
 let _skillsCacheTs = 0;
@@ -18,6 +21,7 @@ const SKILLS_TTL_MS = 300_000;
 let _preflightCache = null;
 let _preflightCacheTs = 0;
 const PREFLIGHT_TTL_MS = 30_000;
+let _providersCache = null;
 
 function listRuntimes(deps) {
   const runtimes = [];
@@ -140,6 +144,73 @@ function getVersion() {
   }
 }
 
+// --- Capabilities aggregation ---
+
+function discoverProviders(projectRoot) {
+  if (_providersCache) return _providersCache;
+  const providers = [
+    { id: 'anthropic', name: 'Anthropic', models: [], runtimes: ['openclaw', 'claude', 'claude-api'] },
+  ];
+  const configPath = path.join(projectRoot, 'opencode.json');
+  if (fs.existsSync(configPath)) {
+    const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+    if (config.provider && typeof config.provider === 'object') {
+      for (const [id, def] of Object.entries(config.provider)) {
+        providers.push({
+          id,
+          name: def.name || id,
+          models: Object.keys(def.models || {}),
+          runtimes: ['opencode'],
+        });
+      }
+    }
+  }
+  _providersCache = providers;
+  return providers;
+}
+
+function listStepTypes() {
+  const timeouts = DEFAULT_CONTROLS.step_timeout_sec || {};
+  const types = Object.keys(STEP_OBJECTIVES);
+  if (!types.includes('execute')) types.push('execute');
+  return types.map(type => ({
+    type,
+    objective: STEP_OBJECTIVES[type] || `Execute step: ${type}`,
+    defaultTimeoutSec: timeouts[type] || timeouts.default || 300,
+    contract: STEP_DEFAULT_CONTRACTS[type] || null,
+  }));
+}
+
+function buildCapabilities(deps, helpers) {
+  // Runtimes — full capabilities from each adapter
+  const runtimes = [];
+  for (const [id, rt] of Object.entries(deps.RUNTIMES)) {
+    const caps = typeof rt.capabilities === 'function' ? rt.capabilities() : {};
+    runtimes.push({ id, installed: true, capabilities: caps });
+  }
+
+  // Step types — from STEP_OBJECTIVES + defaults
+  const stepTypes = listStepTypes();
+
+  // Models — live from board controls
+  const board = helpers.readBoard();
+  const controls = board.controls || {};
+  const models = {
+    configured: controls.model_map || {},
+    source: 'controls.model_map',
+  };
+
+  // Providers — cached, read from opencode.json + implicit
+  const providers = discoverProviders(deps.ctx.dir);
+
+  // Default pipeline
+  const defaultPipeline = DEFAULT_STEP_PIPELINE.map(entry =>
+    typeof entry === 'string' ? entry : entry.type
+  );
+
+  return { runtimes, stepTypes, models, providers, defaultPipeline };
+}
+
 function urlMatch(url, pattern) {
   return url === pattern || url.startsWith(pattern + '?');
 }
@@ -165,11 +236,19 @@ module.exports = function discoveryRoutes(req, res, helpers, deps) {
     return json(res, 200, result);
   }
 
+  if (req.method === 'GET' && urlMatch(req.url, '/api/capabilities')) {
+    const result = buildCapabilities(deps, helpers);
+    return json(res, 200, result);
+  }
+
   return false;
 };
 
 module.exports.listRuntimes = listRuntimes;
 module.exports.listSkills = listSkills;
 module.exports.runPreflight = runPreflight;
+module.exports.buildCapabilities = buildCapabilities;
+module.exports.discoverProviders = discoverProviders;
+module.exports.listStepTypes = listStepTypes;
 module.exports.parseFrontmatter = parseFrontmatter;
-module.exports._resetCaches = () => { _skillsCache = null; _skillsCacheTs = 0; _preflightCache = null; _preflightCacheTs = 0; };
+module.exports._resetCaches = () => { _skillsCache = null; _skillsCacheTs = 0; _preflightCache = null; _preflightCacheTs = 0; _providersCache = null; };
