@@ -28,6 +28,7 @@ const { participantById, pushMessage, getUserIdForTask } = require('./_shared');
 const routeEngine = require('../route-engine');
 const worktreeHelper = require('../worktree');
 const { resolveRepoRoot, validateRepoRoot } = require('../repo-resolver');
+const { BLOCKER_TYPES, shouldUnblockOnReset } = require('../blocker-types');
 
 // --- Preflight logging: lessons injection + runtime selection ---
 function logDispatchPreflight(plan, task, deps, helpers) {
@@ -277,7 +278,11 @@ function dispatchTask(task, board, deps, helpers, opts = {}) {
         _dispatchLocks.delete(taskId);
         console.error(`[dispatchTask:${taskId}] repo validation failed: ${validation.error}`);
         task.status = 'blocked';
-        task.blocker = { reason: `Repo validation failed: ${validation.error}`, askedAt: helpers.nowIso() };
+        task.blocker = {
+          type: BLOCKER_TYPES.REPO_ERROR,
+          reason: `Repo validation failed: ${validation.error}`,
+          askedAt: helpers.nowIso()
+        };
         helpers.writeBoard(board);
         helpers.appendLog({ ts: helpers.nowIso(), event: 'dispatch_blocked', taskId, source, error: validation.error });
         helpers.broadcastSSE('board', board);
@@ -293,7 +298,11 @@ function dispatchTask(task, board, deps, helpers, opts = {}) {
         _dispatchLocks.delete(taskId);
         console.error(`[dispatchTask:${taskId}] worktree failed: ${err.message}`);
         task.status = 'blocked';
-        task.blocker = { reason: `Worktree creation failed: ${err.message}`, askedAt: helpers.nowIso() };
+        task.blocker = {
+          type: BLOCKER_TYPES.WORKTREE_ERROR,
+          reason: `Worktree creation failed: ${err.message}`,
+          askedAt: helpers.nowIso()
+        };
         helpers.writeBoard(board);
         helpers.appendLog({ ts: helpers.nowIso(), event: 'dispatch_blocked', taskId, source, error: err.message });
         helpers.broadcastSSE('board', board);
@@ -874,7 +883,11 @@ module.exports = function tasksRoutes(req, res, helpers, deps) {
         }
 
         if (payload.status === 'blocked' && !payload.blocker) {
-          task.blocker = { reason: 'Unknown block', askedAt: helpers.nowIso() };
+          task.blocker = {
+            type: BLOCKER_TYPES.UNKNOWN,
+            reason: 'Unknown block',
+            askedAt: helpers.nowIso()
+          };
         }
 
         // Strict gate: only approved can unlock dependents
@@ -1292,7 +1305,11 @@ module.exports = function tasksRoutes(req, res, helpers, deps) {
           delete task.review;
         }
         if (newStatus === 'blocked' && payload.reason) {
-          task.blocker = { reason: payload.reason, askedAt: helpers.nowIso() };
+          task.blocker = {
+            type: payload.blocker?.type || BLOCKER_TYPES.MANUAL,
+            reason: payload.reason,
+            askedAt: helpers.nowIso()
+          };
         }
         if (newStatus !== 'blocked') task.blocker = null;
 
@@ -1603,10 +1620,9 @@ module.exports = function tasksRoutes(req, res, helpers, deps) {
     step.output_ref = null;
     step.scheduled_at = helpers.nowIso();
 
-    // Unblock task only if it was blocked due to dead/failed step (not dependency blocks)
+    // Unblock task only if it was blocked due to dead_letter (not dependency blocks)
     let taskUnblocked = false;
-    const blockerReason = task.blocker?.reason || '';
-    if (task.status === 'blocked' && (blockerReason.includes('Dead letter') || blockerReason.includes('dead') || blockerReason.includes('failed'))) {
+    if (task.status === 'blocked' && shouldUnblockOnReset(task.blocker)) {
       task.status = 'in_progress';
       task.blocker = null;
       taskUnblocked = true;
