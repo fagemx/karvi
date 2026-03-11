@@ -158,6 +158,14 @@ module.exports = function projectsRoutes(req, res, helpers, deps) {
           return json(res, 400, { error: 'circular dependency detected in tasks' });
         }
 
+        // Validate modelHint format on each task
+        for (const t of normalized) {
+          if (t.modelHint) {
+            const v = mgmt.validateModelHint(t.modelHint);
+            if (!v.valid) return json(res, 400, { error: `invalid modelHint for task ${t.id}: ${v.reason}` });
+          }
+        }
+
         const board = helpers.readBoard();
         board.projects = board.projects || [];
         board.taskPlan = board.taskPlan || { tasks: [] };

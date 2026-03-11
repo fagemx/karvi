@@ -334,9 +334,37 @@ function preferredModelFor(agentId) {
  * Priority: model_map[runtime][stepType] > model_map[runtime].default > (openclaw) AGENT_MODEL_MAP > null
  * CLI runtimes (opencode, codex, claude) only get a model if model_map is configured.
  */
+/**
+ * Validate modelHint format: must be "provider/model" with non-empty parts.
+ * Returns { valid, normalized, warning, reason }.
+ * null/undefined → valid (no hint). Bad format → invalid with reason.
+ * Unknown but well-formatted → valid with warning.
+ */
+function validateModelHint(hint) {
+  if (hint === null || hint === undefined) return { valid: true, normalized: null };
+  if (typeof hint !== 'string') return { valid: false, reason: 'modelHint must be a string' };
+  const trimmed = hint.trim();
+  if (!trimmed) return { valid: false, reason: 'modelHint must not be empty' };
+  const slashIdx = trimmed.indexOf('/');
+  if (slashIdx < 0) return { valid: false, reason: 'modelHint must be in "provider/model" format (e.g. "anthropic/claude-sonnet-4")' };
+  const provider = trimmed.slice(0, slashIdx);
+  const model = trimmed.slice(slashIdx + 1);
+  if (!provider || !model) return { valid: false, reason: 'modelHint must have both provider and model parts' };
+  const known = new Set(Object.values(AGENT_MODEL_MAP));
+  const warning = !known.has(trimmed) ? `model "${trimmed}" is not in the known models registry` : null;
+  return { valid: true, normalized: trimmed, warning };
+}
+
 function resolveModelHint(runtimeHint, stepType, controls, task) {
-  // Per-task model override takes highest priority
-  if (task.modelHint) return task.modelHint;
+  // Per-task model override takes highest priority — validate format first
+  if (task.modelHint) {
+    const v = validateModelHint(task.modelHint);
+    if (!v.valid) {
+      console.warn(`[resolveModelHint] invalid modelHint for ${task.id}: ${v.reason} — falling through to model_map`);
+    } else {
+      return v.normalized;
+    }
+  }
   const map = controls.model_map;
   if (map && typeof map === 'object') {
     const runtimeMap = map[runtimeHint];
@@ -1224,6 +1252,7 @@ module.exports = {
   buildTaskDispatchMessage,
   buildRedispatchMessage,
   buildDispatchPlan,
+  validateModelHint,
   resolveOwnerId,
   DISPATCH_PLAN_VERSION,
   VALID_DISPATCH_STATES,

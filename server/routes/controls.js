@@ -63,7 +63,11 @@ module.exports = function controlsRoutes(req, res, helpers, deps) {
                   if (mapping && typeof mapping === 'object') {
                     const rtClean = {};
                     for (const [k, v] of Object.entries(mapping)) {
-                      if (typeof v === 'string' && v.trim()) rtClean[k] = v.trim();
+                      if (typeof v === 'string' && v.trim()) {
+                        const mv = mgmt.validateModelHint(v.trim());
+                        if (!mv.valid) return json(res, 400, { error: `invalid model in model_map.${rt}.${k}: ${mv.reason}` });
+                        rtClean[k] = mv.normalized;
+                      }
                     }
                     if (Object.keys(rtClean).length > 0) clean[rt] = rtClean;
                   }
