@@ -939,6 +939,34 @@ async function runSuite(target) {
     } catch (e) { fail('POST /api/tasks/cleanup', e.message); }
   }
 
+  // --- Artifact Query API ---
+  {
+    // GET /api/artifacts — should return 200 with artifacts array
+    try {
+      const r = await get(port, '/api/artifacts');
+      if (r.status !== 200) throw new Error(`expected 200, got ${r.status}`);
+      const body = JSON.parse(r.body);
+      if (!Array.isArray(body.artifacts)) throw new Error('expected artifacts array');
+      ok('GET /api/artifacts → 200 with artifacts array');
+    } catch (e) { fail('GET /api/artifacts → 200', e.message); }
+
+    // GET /api/artifacts?task=NONEXISTENT — should return 200 with empty array
+    try {
+      const r = await get(port, '/api/artifacts?task=SMOKE-NOEXIST-999');
+      if (r.status !== 200) throw new Error(`expected 200, got ${r.status}`);
+      const body = JSON.parse(r.body);
+      if (!Array.isArray(body.artifacts) || body.artifacts.length !== 0) throw new Error('expected empty artifacts array');
+      ok('GET /api/artifacts?task=NONEXISTENT → 200 empty');
+    } catch (e) { fail('GET /api/artifacts?task=NONEXISTENT → 200 empty', e.message); }
+
+    // GET /api/artifacts/:run/:step/:kind — 404 for missing
+    try {
+      const r = await get(port, '/api/artifacts/run-nonexistent/step-nonexistent/output');
+      if (r.status !== 404) throw new Error(`expected 404, got ${r.status}`);
+      ok('GET /api/artifacts/:run/:step/:kind → 404 on missing');
+    } catch (e) { fail('GET /api/artifacts/:run/:step/:kind → 404', e.message); }
+  }
+
   console.log(`  ── ${passed} passed, ${failed} failed ──`);
   return { passed, failed };
 }
