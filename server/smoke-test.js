@@ -504,7 +504,17 @@ async function runSuite(target) {
     ok(`Health → rateLimiter.enabled: ${health.rateLimiter.enabled}`);
   } catch (e) { fail('Health rateLimiter field', e.message); }
 
+  // Health endpoint exempt from rate limit (always accessible)
+  // Tested before big-body test because the partial-payload trick can poison connections.
+  try {
+    const r = await get(port, '/health', { token: null, timeout: 10000 });
+    if (r.status !== 200) throw new Error(`status ${r.status}`);
+    ok('Health endpoint → exempt from rate limit');
+  } catch (e) { fail('Health rate limit exempt', e.message); }
+
   // POST body > 1MB → 413 Payload Too Large (Content-Length fast reject)
+  // NOTE: This test sends a partial payload with wrong Content-Length, which can
+  // leave the TCP connection in a bad state. Keep it last in this section.
   try {
     const bigPayload = JSON.stringify({ data: 'x'.repeat(1100000) });
     const r = await new Promise((resolve, reject) => {
@@ -529,21 +539,9 @@ async function runSuite(target) {
     if (r.status === 413) {
       ok('POST body > 1MB → 413 Payload Too Large');
     } else {
-      // Server might have read the partial body and returned 400 — still acceptable
       ok(`POST body > 1MB → ${r.status} (Content-Length guard active)`);
     }
   } catch (e) { fail('POST body > 1MB → 413', e.message); }
-
-  // Small delay after big-body test to let server reset connection state
-  await new Promise(r => setTimeout(r, 500));
-
-  // Health endpoint exempt from rate limit (always accessible)
-  try {
-    const r = await get(port, '/health', { token: null, timeout: 10000 });
-    if (r.status !== 200) throw new Error(`status ${r.status}`);
-    // No rate limit headers should be on /health
-    ok('Health endpoint → exempt from rate limit');
-  } catch (e) { fail('Health rate limit exempt', e.message); }
 
   // 17-18. GitHub API proxy tests (task-engine only)
   if (port === 3461) {
