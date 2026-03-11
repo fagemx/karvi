@@ -11,6 +11,7 @@ const fs = require('fs');
 const path = require('path');
 const bb = require('../blackboard-server');
 const { json } = bb;
+const { requireRole } = require('./_shared');
 
 /**
  * Detect circular dependencies using string task IDs.
@@ -123,6 +124,7 @@ module.exports = function projectsRoutes(req, res, helpers, deps) {
 
   // POST /api/projects (canonical) + POST /api/project (deprecated alias)
   if (req.method === 'POST' && (req.url === '/api/projects' || req.url === '/api/project')) {
+    if (requireRole(req, res, 'operator')) return;
     if (req.url === '/api/project') {
       helpers.appendLog({ ts: helpers.nowIso(), event: 'deprecated_api', endpoint: '/api/project', message: 'Use POST /api/projects instead' });
     }

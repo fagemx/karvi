@@ -38,6 +38,7 @@ module.exports = function vaultRoutes(req, res, helpers, deps) {
 
   const vaultKeysMatch = req.url.match(/^\/api\/vault\/keys\/([a-zA-Z0-9_-]+)$/);
   if (req.method === 'GET' && vaultKeysMatch) {
+    if (requireRole(req, res, 'operator')) return;
     const userId = vaultKeysMatch[1];
     const result = vault.list(userId);
     json(res, result.ok ? 200 : 400, result);

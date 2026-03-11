@@ -1553,6 +1553,7 @@ module.exports = function tasksRoutes(req, res, helpers, deps) {
   // POST /api/tasks/:id/steps/dispatch-batch — dispatch multiple steps in parallel
   const batchDispatchMatch = req.url.match(/^\/api\/tasks\/([^/]+)\/steps\/dispatch-batch$/);
   if (req.method === 'POST' && batchDispatchMatch) {
+    if (requireRole(req, res, 'operator')) return;
     const taskId = decodeURIComponent(batchDispatchMatch[1]);
     let body = '';
     req.on('data', c => (body += c));
