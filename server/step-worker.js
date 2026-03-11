@@ -610,6 +610,8 @@ function createStepWorker(deps) {
       tokens_used: (usage?.inputTokens || 0) + (usage?.outputTokens || 0),
       duration_ms: durationMs,
       model_used: plan.modelHint,
+      runtime: runtimeHint,
+      cost: usage?.totalCost || null,
       post_check: postCheckResult,
       payload,
       sessionId: sessionId || null,

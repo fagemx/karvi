@@ -2,7 +2,7 @@
  * routes/status.js — Status Aggregation API
  *
  * GET /api/status — returns core only (default)
- * GET /api/status?fields=core,steps,errors,metrics,events — specific groups
+ * GET /api/status?fields=core,steps,errors,metrics,events,agent_metrics — specific groups
  * GET /api/status?fields=all — all groups
  *
  * Field Groups:
@@ -11,9 +11,11 @@
  *   - errors: failed signals + failed steps
  *   - metrics: aggregated budget usage
  *   - events: recent signals
+ *   - agent_metrics: per-step quality metrics (model, runtime, result, tokens, cost)
  */
 const os = require('os');
 const bb = require('../blackboard-server');
+const artifactStore = require('../artifact-store');
 const { json } = bb;
 
 function formatAge(ms) {
@@ -134,6 +136,41 @@ function buildEvents(board) {
     }));
 }
 
+function buildAgentMetrics(board) {
+  const metrics = [];
+  
+  for (const task of (board.taskPlan?.tasks || [])) {
+    for (const step of (task.steps || [])) {
+      if (step.state !== 'succeeded' && step.state !== 'failed' && step.state !== 'dead') continue;
+      if (!step.run_id) continue;
+      
+      let output = null;
+      try {
+        output = artifactStore.readArtifact(step.run_id, step.step_id, 'output');
+      } catch {
+        // Skip if artifact cannot be read
+      }
+      
+      metrics.push({
+        task_id: task.id,
+        step_id: step.step_id,
+        step_type: step.type,
+        run_id: step.run_id,
+        model: output?.model_used || null,
+        runtime: output?.runtime || null,
+        result: output?.status || (step.state === 'succeeded' ? 'succeeded' : 'failed'),
+        tokens: output?.tokens_used || 0,
+        cost: output?.cost || null,
+        duration_ms: output?.duration_ms || null,
+        attempt: step.attempt || 0,
+        ts: step.state === 'succeeded' ? (step.completed_at || null) : null,
+      });
+    }
+  }
+  
+  return metrics;
+}
+
 module.exports = function statusRoutes(req, res, helpers, deps) {
   if (req.method !== 'GET') return false;
   
@@ -146,7 +183,7 @@ module.exports = function statusRoutes(req, res, helpers, deps) {
     
     const requestedFields = new Set(
       fieldsParam === 'all'
-        ? ['core', 'steps', 'errors', 'metrics', 'events']
+        ? ['core', 'steps', 'errors', 'metrics', 'events', 'agent_metrics']
         : fieldsParam.split(',').map(f => f.trim()).filter(Boolean)
     );
     
@@ -163,6 +200,7 @@ module.exports = function statusRoutes(req, res, helpers, deps) {
     if (requestedFields.has('errors')) response.errors = buildErrors(board, helpers);
     if (requestedFields.has('metrics')) response.metrics = buildMetrics(board);
     if (requestedFields.has('events')) response.events = buildEvents(board);
+    if (requestedFields.has('agent_metrics')) response.agent_metrics = buildAgentMetrics(board);
     
     return json(res, 200, response);
   } catch (error) {
