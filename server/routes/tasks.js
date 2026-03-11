@@ -261,6 +261,24 @@ function dispatchTask(task, board, deps, helpers, opts = {}) {
     return { dispatched: false, reason: 'assignee not agent' };
   }
 
+  // --- Budget gate: reject if task budget already exhausted ---
+  if (task.budget && routeEngine.isBudgetExceeded(task.budget)) {
+    _dispatchLocks.delete(taskId);
+    const remaining = deps.contextCompiler.computeRemainingBudget(task.budget);
+    console.log(`[dispatchTask:${taskId}] skip: budget exceeded`);
+    task.status = 'blocked';
+    task.blocker = {
+      type: BLOCKER_TYPES.BUDGET_EXCEEDED,
+      reason: 'Budget exceeded before dispatch',
+      askedAt: helpers.nowIso(),
+      remaining,
+    };
+    helpers.writeBoard(board);
+    helpers.appendLog({ ts: helpers.nowIso(), event: 'dispatch_blocked', taskId, source, code: 'BUDGET_EXCEEDED', remaining });
+    helpers.broadcastSSE('board', board);
+    return { dispatched: false, code: 'BUDGET_EXCEEDED', reason: 'budget exceeded', remaining };
+  }
+
   // --- Phase 1: Worktree (ensure exists on disk) ---
   if (ctrl.use_worktrees) {
     // Validate worktree exists on disk (may have been manually deleted)
@@ -1684,6 +1702,12 @@ module.exports = function tasksRoutes(req, res, helpers, deps) {
         if (!task) return json(res, 404, { error: `Task ${taskId} not found` });
         if (!task.steps?.length) return json(res, 400, { error: 'Task has no steps' });
 
+        // Budget gate: reject if task budget already exhausted
+        if (task.budget && routeEngine.isBudgetExceeded(task.budget)) {
+          const remaining = deps.contextCompiler.computeRemainingBudget(task.budget);
+          return json(res, 409, { error: 'Budget exceeded', code: 'BUDGET_EXCEEDED', remaining });
+        }
+
         // Filter steps: by step_ids (must be queued) or all queued
         let targets;
         if (Array.isArray(payload.step_ids) && payload.step_ids.length > 0) {
@@ -1779,6 +1803,9 @@ module.exports = function tasksRoutes(req, res, helpers, deps) {
       }
 
       const result = dispatchTask(task, board, deps, helpers, { source: 'dispatch', runtimeOverride });
+      if (result.code === 'BUDGET_EXCEEDED') {
+        return json(res, 409, { error: 'Budget exceeded', code: result.code, remaining: result.remaining });
+      }
       json(res, 200, { ok: true, taskId, dispatched: result.dispatched, planId: result.planId });
     } catch (error) {
       json(res, 500, { error: error.message });
@@ -2004,6 +2031,9 @@ module.exports = function tasksRoutes(req, res, helpers, deps) {
       }
 
       const result = dispatchTask(task, board, deps, helpers, { source: 'dispatch-next' });
+      if (result.code === 'BUDGET_EXCEEDED') {
+        return json(res, 409, { error: 'Budget exceeded', code: result.code, taskId: task.id, remaining: result.remaining });
+      }
       return json(res, 202, { ok: true, dispatched: result.dispatched, taskId: task.id, planId: result.planId });
     } catch (error) {
       return json(res, 500, { error: error.message });

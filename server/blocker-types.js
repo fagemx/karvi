@@ -7,6 +7,7 @@ const BLOCKER_TYPES = {
   REPO_ERROR: 'repo_error',
   WORKTREE_ERROR: 'worktree_error',
   DEPENDENCY: 'dependency',
+  BUDGET_EXCEEDED: 'budget_exceeded',
   MANUAL: 'manual',
   UNKNOWN: 'unknown',
 };
@@ -17,6 +18,7 @@ function inferBlockerType(reason) {
   if (r.includes('dead letter')) return BLOCKER_TYPES.DEAD_LETTER;
   if (r.includes('repo validation')) return BLOCKER_TYPES.REPO_ERROR;
   if (r.includes('worktree')) return BLOCKER_TYPES.WORKTREE_ERROR;
+  if (r.includes('budget exceeded')) return BLOCKER_TYPES.BUDGET_EXCEEDED;
   return BLOCKER_TYPES.MANUAL;
 }
 
