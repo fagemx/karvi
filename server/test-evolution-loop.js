@@ -144,7 +144,7 @@ async function main() {
 
   // Step 2: 跑 retro.js
   console.log('\nStep 2: Running retro.js...');
-  const retro1 = spawnSync('node', [path.join(__dirname, 'retro.js'), '--port', String(PORT)], { cwd: __dirname, encoding: 'utf8' });
+  const retro1 = spawnSync('node', [path.join(__dirname, 'retro.js'), '--port', String(PORT), '--board', path.join(TEST_DATA_DIR, 'board.json')], { cwd: __dirname, encoding: 'utf8' });
   console.log(retro1.stdout);
   if (retro1.status !== 0) { fail('retro.js', retro1.stderr); return; }
   ok('retro.js completed');
