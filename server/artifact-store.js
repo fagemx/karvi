@@ -91,6 +91,56 @@ function listAllRuns() {
   }
 }
 
+function readLogLines(runId, stepId) {
+  const filePath = logPath(runId, stepId);
+  try {
+    const raw = fs.readFileSync(filePath, 'utf8');
+    const lines = [];
+    for (const line of raw.split('\n')) {
+      const trimmed = line.trim();
+      if (!trimmed) continue;
+      try {
+        lines.push(JSON.parse(trimmed));
+      } catch { }
+    }
+    return lines;
+  } catch {
+    return [];
+  }
+}
+
+function watchLog(runId, stepId, callback) {
+  const filePath = logPath(runId, stepId);
+  let lastSize = 0;
+  try {
+    const stat = fs.statSync(filePath);
+    lastSize = stat.size;
+  } catch { }
+
+  const interval = setInterval(() => {
+    try {
+      const stat = fs.statSync(filePath);
+      if (stat.size > lastSize) {
+        const fd = fs.openSync(filePath, 'r');
+        const buffer = Buffer.alloc(stat.size - lastSize);
+        fs.readSync(fd, buffer, 0, buffer.length, lastSize);
+        fs.closeSync(fd);
+        const newContent = buffer.toString('utf8');
+        lastSize = stat.size;
+        for (const line of newContent.split('\n')) {
+          const trimmed = line.trim();
+          if (!trimmed) continue;
+          try {
+            callback(JSON.parse(trimmed));
+          } catch { }
+        }
+      }
+    } catch { }
+  }, 500);
+
+  return () => clearInterval(interval);
+}
+
 module.exports = {
   ARTIFACT_DIR,
   artifactPath,
@@ -101,4 +151,6 @@ module.exports = {
   appendLog,
   logPath,
   listAllRuns,
+  readLogLines,
+  watchLog,
 };
