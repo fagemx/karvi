@@ -1053,7 +1053,6 @@ function buildStepMessage(envelope, upstreamArtifacts, board, task) {
     execute:   ['requirements', 'upstream_artifacts', 'coding_standards', 'completion_criteria', 'protected_decisions', 'preflight_lessons'],
     test:      ['coding_standards'],
     review:    ['requirements'],
-    execute:   ['requirements', 'coding_standards', 'preflight_lessons'],
   };
 
   function shouldInjectSection(stepType, sectionName) {

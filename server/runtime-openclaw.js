@@ -74,14 +74,11 @@ function runOpenclawTurn({ agentId, sessionId, message, timeoutSec = 180, onActi
       env: spawnEnv,
     });
 
-    // Allow external abort (kill step)
+    // Allow external abort (kill step) — two-phase: SIGTERM then SIGKILL
     if (signal) {
       signal.addEventListener('abort', () => {
-        try {
-          killTree(child.pid);
-        } catch (err) {
-          console.error('[openclaw-rt] kill failed:', err.message);
-        }
+        killTree(child.pid, { signal: 'SIGTERM' });
+        setTimeout(() => killTree(child.pid), 5000).unref();
         reject(new Error('Step killed by user'));
       }, { once: true });
     }

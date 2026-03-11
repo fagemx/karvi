@@ -8,7 +8,7 @@ const crypto = require('crypto');
 
 // --- Constants ---
 
-const STEP_TYPES = ['plan', 'implement', 'test', 'review', 'execute'];
+const STEP_TYPES = ['plan', 'implement', 'test', 'review'];
 
 const STEP_STATES = ['queued', 'running', 'cancelling', 'succeeded', 'failed', 'dead', 'cancelled'];
 
