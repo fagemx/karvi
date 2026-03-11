@@ -259,7 +259,16 @@ function createStepWorker(deps) {
       try {
         result = await rt.dispatch(plan);
       } catch (dispatchErr) {
+        const execInfo = activeExecutions.get(envelope.step_id);
+        const wasCancelling = execInfo?.cancelling;
+        if (execInfo?.guardTimer) clearTimeout(execInfo.guardTimer);
         activeExecutions.delete(envelope.step_id);
+
+        // If this was a kill, don't transition to failed - the kill endpoint handles it
+        if (wasCancelling) {
+          throw dispatchErr;
+        }
+
         const dispatchDurationMs = Date.now() - startMs;
         // Transition step to failed instead of leaving it stuck in 'running'
         const failBoard = helpers.readBoard();
@@ -336,7 +345,18 @@ function createStepWorker(deps) {
         }
         throw dispatchErr;
       }
-      activeExecutions.delete(envelope.step_id);
+      {
+        const execInfo = activeExecutions.get(envelope.step_id);
+        const wasCancelling = execInfo?.cancelling;
+        if (execInfo?.guardTimer) clearTimeout(execInfo.guardTimer);
+        activeExecutions.delete(envelope.step_id);
+
+        if (wasCancelling) {
+          // Kill was requested - don't override with succeeded
+          // The kill endpoint already transitioned to cancelling -> cancelled
+          return null;
+        }
+      }
       durationMs = Date.now() - startMs;
       console.log(`[step-worker] dispatch returned for ${envelope.step_id} in ${durationMs}ms, code=${result?.code}`);
 
@@ -590,11 +610,27 @@ function createStepWorker(deps) {
     return agentOutput;
   }
 
+  const KILL_GUARD_MS = 15000;
+
   function killStep(stepId) {
     const exec = activeExecutions.get(stepId);
     if (!exec) return { ok: false, reason: 'not_running' };
+
+    // Mark as cancelling to prevent dispatch error handler from overriding
+    exec.cancelling = true;
+
+    // Phase 1: graceful abort (runtime will send SIGTERM on Unix, hard kill on Windows)
     exec.abort();
-    activeExecutions.delete(stepId);
+
+    // Phase 2: guard timer - if still in activeExecutions after KILL_GUARD_MS, force remove
+    exec.guardTimer = setTimeout(() => {
+      if (activeExecutions.has(stepId)) {
+        console.log('[step-worker] kill guard: force-removing ' + stepId + ' after ' + KILL_GUARD_MS + 'ms');
+        activeExecutions.delete(stepId);
+      }
+    }, KILL_GUARD_MS);
+
+    // Don't delete from activeExecutions yet - let the runtime close event do it
     return { ok: true };
   }
 
@@ -1017,6 +1053,7 @@ function buildStepMessage(envelope, upstreamArtifacts, board, task) {
     execute:   ['requirements', 'upstream_artifacts', 'coding_standards', 'completion_criteria', 'protected_decisions', 'preflight_lessons'],
     test:      ['coding_standards'],
     review:    ['requirements'],
+    execute:   ['requirements', 'coding_standards', 'preflight_lessons'],
   };
 
   function shouldInjectSection(stepType, sectionName) {

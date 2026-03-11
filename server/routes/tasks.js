@@ -148,6 +148,10 @@ function cancelTaskFlow(task, board, deps, helpers, opts = {}) {
       }
       deps.stepSchema.transitionStep(step, 'cancelled', { error: reason });
       cancelledSteps++;
+    } else if (step.state === 'cancelling') {
+      // Already being killed - just finalize
+      deps.stepSchema.transitionStep(step, 'cancelled', { error: reason });
+      cancelledSteps++;
     } else if (step.state === 'queued' || step.state === 'failed') {
       deps.stepSchema.transitionStep(step, 'cancelled', { error: reason });
       cancelledSteps++;
@@ -1456,24 +1460,46 @@ module.exports = function tasksRoutes(req, res, helpers, deps) {
     const killResult = deps.stepWorker.killStep(stepId);
     if (!killResult.ok) return json(res, 409, { error: killResult.reason });
 
-    // Transition to cancelled
-    deps.stepSchema.transitionStep(step, 'cancelled', { error: 'Killed by user' });
+    // Phase 1: transition to cancelling
+    deps.stepSchema.transitionStep(step, 'cancelling', { error: 'Killed by user' });
 
     // Emit signal
     mgmt.ensureEvolutionFields(board);
     board.signals.push({
       id: helpers.uid('sig'), ts: helpers.nowIso(), by: 'user',
-      type: 'step_cancelled',
-      content: `${taskId} step ${stepId} running → cancelled (killed)`,
+      type: 'step_cancelling',
+      content: `${taskId} step ${stepId} running → cancelling (kill requested)`,
       refs: [taskId],
-      data: { taskId, stepId, from: 'running', to: 'cancelled' },
+      data: { taskId, stepId, from: 'running', to: 'cancelling' },
     });
     if (board.signals.length > 500) board.signals = board.signals.slice(-500);
 
     helpers.writeBoard(board);
-    helpers.appendLog({ ts: helpers.nowIso(), event: 'step_killed', taskId, stepId });
+    helpers.appendLog({ ts: helpers.nowIso(), event: 'step_kill_requested', taskId, stepId });
 
-    return json(res, 200, { ok: true, step_id: stepId, new_state: 'cancelled' });
+    // Schedule guard: transition cancelling -> cancelled after grace period
+    const CANCEL_GUARD_MS = 10000;
+    setTimeout(() => {
+      const guardBoard = helpers.readBoard();
+      const guardTask = (guardBoard.taskPlan?.tasks || []).find(t => t.id === taskId);
+      const guardStep = guardTask?.steps?.find(s => s.step_id === stepId);
+      if (guardStep && guardStep.state === 'cancelling') {
+        deps.stepSchema.transitionStep(guardStep, 'cancelled', { error: 'Killed by user (guard timeout)' });
+        mgmt.ensureEvolutionFields(guardBoard);
+        guardBoard.signals.push({
+          id: helpers.uid('sig'), ts: helpers.nowIso(), by: 'system',
+          type: 'step_cancelled',
+          content: `${taskId} step ${stepId} cancelling \u2192 cancelled (guard)`,
+          refs: [taskId],
+          data: { taskId, stepId, from: 'cancelling', to: 'cancelled' },
+        });
+        if (guardBoard.signals.length > 500) guardBoard.signals = guardBoard.signals.slice(-500);
+        helpers.writeBoard(guardBoard);
+        helpers.appendLog({ ts: helpers.nowIso(), event: 'step_killed', taskId, stepId, guard: true });
+      }
+    }, CANCEL_GUARD_MS);
+
+    return json(res, 200, { ok: true, step_id: stepId, new_state: 'cancelling' });
   }
 
   // POST /api/tasks/:id/steps/:stepId/reset — reset a dead/failed/cancelled step to queued

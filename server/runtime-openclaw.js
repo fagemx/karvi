@@ -1,5 +1,6 @@
 const { spawn } = require('child_process');
 const path = require('path');
+const killTree = require('./kill-tree');
 
 const DIR = __dirname;
 const OPENCLAW_CMD = process.env.OPENCLAW_CMD || (process.platform === 'win32' ? 'openclaw.cmd' : 'openclaw');
@@ -42,7 +43,7 @@ function extractSessionId(obj) {
   );
 }
 
-function runOpenclawTurn({ agentId, sessionId, message, timeoutSec = 180, onActivity }) {
+function runOpenclawTurn({ agentId, sessionId, message, timeoutSec = 180, onActivity, signal }) {
   return new Promise((resolve, reject) => {
     const args = ['agent'];
 
@@ -72,6 +73,18 @@ function runOpenclawTurn({ agentId, sessionId, message, timeoutSec = 180, onActi
       shell: false,
       env: spawnEnv,
     });
+
+    // Allow external abort (kill step)
+    if (signal) {
+      signal.addEventListener('abort', () => {
+        try {
+          killTree(child.pid);
+        } catch (err) {
+          console.error('[openclaw-rt] kill failed:', err.message);
+        }
+        reject(new Error('Step killed by user'));
+      }, { once: true });
+    }
 
     let stdout = '';
     let stderr = '';
@@ -154,6 +167,7 @@ function dispatch(plan) {
     message: plan.message,
     timeoutSec: plan.timeoutSec || 180,
     onActivity: plan.onActivity,
+    signal: plan.signal,
   });
 }
 

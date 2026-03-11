@@ -10,7 +10,7 @@ const crypto = require('crypto');
 
 const STEP_TYPES = ['plan', 'implement', 'test', 'review', 'execute'];
 
-const STEP_STATES = ['queued', 'running', 'succeeded', 'failed', 'dead', 'cancelled'];
+const STEP_STATES = ['queued', 'running', 'cancelling', 'succeeded', 'failed', 'dead', 'cancelled'];
 
 // Step state transitions:
 // - queued → running (normal execution start)
@@ -23,12 +23,13 @@ const STEP_STATES = ['queued', 'running', 'succeeded', 'failed', 'dead', 'cancel
 // - failed → cancelled (user kills failed step)
 // - succeeded/dead/cancelled → no transitions (terminal states)
 const ALLOWED_STEP_TRANSITIONS = {
-  queued:    ['running', 'cancelled'],
-  running:   ['succeeded', 'failed', 'cancelled'],
-  failed:    ['queued', 'dead', 'cancelled'],
-  succeeded: [],
-  dead:      [],
-  cancelled: [],
+  queued:      ['running', 'cancelled'],
+  running:     ['cancelling', 'succeeded', 'failed', 'cancelled'],
+  cancelling:  ['cancelled', 'failed'],
+  failed:      ['queued', 'dead', 'cancelled'],
+  succeeded:   [],
+  dead:        [],
+  cancelled:   [],
 };
 
 const DEFAULT_RETRY_POLICY = {
@@ -138,6 +139,11 @@ function transitionStep(step, newState, extra = {}) {
     }
     step.locked_by = null;
     step.lock_expires_at = null;
+  }
+
+  if (newState === 'cancelling') {
+    step.error = extra.error || 'kill requested';
+    // Don't clear lock - process still running during grace period
   }
 
   if (newState === 'cancelled') {
