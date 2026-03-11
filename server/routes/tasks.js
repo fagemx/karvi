@@ -4,6 +4,7 @@
  * POST /api/tasks/:id/review — manual review trigger
  * POST /api/tasks/:id/reopen — reopen completed task with session continuation
  * POST /api/tasks/:id/cancel — cancel task, stop running step, cleanup worktree
+ * POST /api/tasks/:id/rollback — rollback task: git revert + state reset to pending
  * GET  /api/tasks — task list
  * GET  /api/spec/:file — serve spec files
  * POST /api/tasks — create task plan
@@ -115,6 +116,60 @@ function redispatchTask(board, task, deps, helpers) {
 }
 
 /**
+ * Kill running steps and cancel non-completed steps for a task.
+ * Returns { killedSteps, cancelledSteps }.
+ */
+function killAndCancelSteps(task, deps, reason, logPrefix = 'tasks') {
+  let killedSteps = 0;
+  let cancelledSteps = 0;
+  for (const step of (task.steps || [])) {
+    if (step.state === 'running') {
+      try {
+        const killResult = deps.stepWorker?.killStep?.(step.step_id);
+        if (killResult?.ok) killedSteps++;
+      } catch (err) {
+        console.error(`[${logPrefix}] killStep failed for ${task.id}/${step.step_id}:`, err.message);
+      }
+      deps.stepSchema.transitionStep(step, 'cancelled', { error: reason });
+      cancelledSteps++;
+    } else if (step.state === 'cancelling' || step.state === 'queued' || step.state === 'failed') {
+      deps.stepSchema.transitionStep(step, 'cancelled', { error: reason });
+      cancelledSteps++;
+    }
+  }
+  return { killedSteps, cancelledSteps };
+}
+
+/**
+ * Schedule worktree cleanup with delay + retry for Windows file-handle races.
+ * Clears task.worktreeDir/worktreeBranch immediately.
+ * Returns { attempted, scheduled }.
+ */
+function scheduleWorktreeCleanup(task, board, logPrefix = 'tasks') {
+  if (!task.worktreeDir) return { attempted: false, scheduled: false };
+  const repoRoot = resolveRepoRoot(task, board) || path.resolve(__dirname, '..', '..');
+  const cleanTaskId = task.id;
+  task.worktreeDir = null;
+  task.worktreeBranch = null;
+  setTimeout(() => {
+    try {
+      worktreeHelper.removeWorktree(repoRoot, cleanTaskId);
+      console.log(`[${logPrefix}] worktree cleaned up for ${cleanTaskId}`);
+    } catch (err) {
+      console.error(`[${logPrefix}] worktree cleanup failed for ${cleanTaskId}:`, err.message);
+      setTimeout(() => {
+        try {
+          worktreeHelper.removeWorktree(repoRoot, cleanTaskId);
+        } catch (err2) {
+          console.error(`[${logPrefix}] worktree cleanup retry failed for ${cleanTaskId}:`, err2.message);
+        }
+      }, 15000);
+    }
+  }, 3000);
+  return { attempted: true, scheduled: true };
+}
+
+/**
  * Shared task cancellation flow for both:
  * - POST /api/tasks/:id/status { status: "cancelled" }
  * - POST /api/tasks/:id/cancel
@@ -136,57 +191,8 @@ function cancelTaskFlow(task, board, deps, helpers, opts = {}) {
     ...(opts.reason ? { reason: String(opts.reason).slice(0, 240) } : {}),
   });
 
-  let killedSteps = 0;
-  let cancelledSteps = 0;
-  for (const step of (task.steps || [])) {
-    if (step.state === 'running') {
-      try {
-        const killResult = deps.stepWorker?.killStep?.(step.step_id);
-        if (killResult?.ok) killedSteps++;
-      } catch (err) {
-        console.error(`[tasks] cancel killStep failed for ${task.id}/${step.step_id}:`, err.message);
-      }
-      deps.stepSchema.transitionStep(step, 'cancelled', { error: reason });
-      cancelledSteps++;
-    } else if (step.state === 'cancelling') {
-      // Already being killed - just finalize
-      deps.stepSchema.transitionStep(step, 'cancelled', { error: reason });
-      cancelledSteps++;
-    } else if (step.state === 'queued' || step.state === 'failed') {
-      deps.stepSchema.transitionStep(step, 'cancelled', { error: reason });
-      cancelledSteps++;
-    }
-  }
-
-  let worktreeCleanup = { attempted: false, scheduled: false };
-  if (task.worktreeDir) {
-    const repoRoot = resolveRepoRoot(task, board) || path.resolve(__dirname, '..', '..');
-    const cleanTaskId = task.id;
-    worktreeCleanup = { attempted: true, scheduled: true };
-
-    // Clear metadata immediately so no future dispatch tries stale path.
-    task.worktreeDir = null;
-    task.worktreeBranch = null;
-
-    // Delay + retry pattern to avoid Windows file-handle races.
-    const CLEANUP_DELAY_MS = 3000;
-    setTimeout(() => {
-      try {
-        worktreeHelper.removeWorktree(repoRoot, cleanTaskId);
-        console.log(`[tasks] worktree cleaned up for ${cleanTaskId} (task cancelled)`);
-      } catch (err) {
-        console.error(`[tasks] worktree cleanup failed for ${cleanTaskId}:`, err.message);
-        setTimeout(() => {
-          try {
-            worktreeHelper.removeWorktree(repoRoot, cleanTaskId);
-            console.log(`[tasks] worktree cleaned up for ${cleanTaskId} (task cancelled, retry)`);
-          } catch (err2) {
-            console.error(`[tasks] worktree cleanup retry failed for ${cleanTaskId}:`, err2.message);
-          }
-        }, 15000);
-      }
-    }, CLEANUP_DELAY_MS);
-  }
+  const { killedSteps, cancelledSteps } = killAndCancelSteps(task, deps, reason, 'cancel');
+  const worktreeCleanup = scheduleWorktreeCleanup(task, board, 'cancel');
 
   return { killedSteps, cancelledSteps, worktreeCleanup };
 }
@@ -1988,6 +1994,148 @@ module.exports = function tasksRoutes(req, res, helpers, deps) {
     mgmt.trimSignals(board, helpers.signalArchivePath);
     helpers.writeBoard(board);
     json(res, 200, { ok: true, name, deleted: true });
+    return;
+  }
+
+  // --- POST /api/tasks/:id/rollback — git revert + state reset to pending ---
+  const taskRollbackMatch = req.url.match(/^\/api\/tasks\/([^/]+)\/rollback$/);
+  if (req.method === 'POST' && taskRollbackMatch) {
+    const taskId = decodeURIComponent(taskRollbackMatch[1]);
+    let body = '';
+    req.on('data', c => (body += c));
+    req.on('end', () => {
+      try {
+        const payload = JSON.parse(body || '{}');
+        const reason = String(payload.reason || '').trim();
+        const board = helpers.readBoard();
+        const task = (board.taskPlan?.tasks || []).find(t => t.id === taskId);
+        if (!task) return json(res, 404, { error: `Task ${taskId} not found` });
+
+        const oldStatus = task.status;
+        if (oldStatus === 'pending' || oldStatus === 'cancelled') {
+          return json(res, 400, { error: `Cannot rollback task in ${oldStatus} state` });
+        }
+
+        // --- Phase 1: Kill running steps ---
+        const { killedSteps, cancelledSteps } = killAndCancelSteps(task, deps, reason || 'Task rolled back', `rollback:${taskId}`);
+
+        // --- Phase 2: Git revert (best-effort) ---
+        let gitResult = { reverted: false, commits_reverted: 0, branch: null, error: null };
+        if (task.worktreeDir && fs.existsSync(task.worktreeDir)) {
+          const { execFileSync } = require('child_process'); // inline — only used by rollback
+          gitResult.branch = task.worktreeBranch || null;
+          try {
+            // Count commits on branch since diverging from main
+            const logOutput = execFileSync('git', ['log', 'main..HEAD', '--format=%H'], {
+              cwd: task.worktreeDir, encoding: 'utf8', timeout: 10000, stdio: 'pipe',
+            }).trim();
+            const commits = logOutput ? logOutput.split('\n').filter(Boolean) : [];
+            if (commits.length > 0) {
+              // Revert all commits in one go (newest first — git revert handles ordering)
+              execFileSync('git', ['revert', '--no-edit', 'main..HEAD'], {
+                cwd: task.worktreeDir, timeout: 30000, stdio: 'pipe',
+              });
+              gitResult.reverted = true;
+              gitResult.commits_reverted = commits.length;
+              console.log(`[rollback:${taskId}] reverted ${commits.length} commit(s) on ${gitResult.branch}`);
+            }
+          } catch (err) {
+            gitResult.error = err.message;
+            console.error(`[rollback:${taskId}] git revert failed:`, err.message);
+            // Abort any in-progress revert to leave worktree clean
+            try {
+              execFileSync('git', ['revert', '--abort'], {
+                cwd: task.worktreeDir, timeout: 5000, stdio: 'pipe',
+              });
+            } catch { /* revert wasn't in progress, ignore */ }
+          }
+        }
+
+        // --- Phase 3: Worktree cleanup (delayed for Windows file handles) ---
+        const worktreeCleanup = scheduleWorktreeCleanup(task, board, `rollback:${taskId}`);
+
+        // --- Phase 4: Reset board state ---
+        task.status = 'pending';
+        task.steps = [];
+        task.completedAt = null;
+        task.startedAt = null;
+        task.reviewAttempts = 0;
+        task.blocker = null;
+        delete task.review;
+        task.history = task.history || [];
+        task.history.push({
+          ts: helpers.nowIso(),
+          status: 'pending',
+          from: oldStatus,
+          by: 'human',
+          action: 'rollback',
+          ...(reason ? { reason: reason.slice(0, 240) } : {}),
+        });
+
+        // --- Phase 5: Signal + persist ---
+        const conv = board.conversations?.[0];
+        if (conv) {
+          const detail = reason ? `\nreason: ${reason.slice(0, 240)}` : '';
+          pushMessage(conv, {
+            id: helpers.uid('msg'),
+            ts: helpers.nowIso(),
+            type: 'system',
+            from: 'system',
+            to: 'human',
+            text: `[Task ${taskId}] rolled back: ${oldStatus} → pending${detail}`,
+          });
+        }
+
+        mgmt.ensureEvolutionFields(board);
+        board.signals.push({
+          id: helpers.uid('sig'),
+          ts: helpers.nowIso(),
+          by: 'api',
+          type: 'task_rolled_back',
+          content: `${task.id} ${oldStatus} → pending (rollback)`,
+          refs: [task.id],
+          data: { taskId: task.id, from: oldStatus, to: 'pending', reason: reason || null },
+        });
+        mgmt.trimSignals(board, helpers.signalArchivePath);
+
+        helpers.writeBoard(board);
+        helpers.appendLog({
+          ts: helpers.nowIso(),
+          event: 'task_rolled_back',
+          taskId,
+          from: oldStatus,
+          to: 'pending',
+          killedSteps,
+          cancelledSteps,
+          git: gitResult,
+          worktreeCleanup,
+          reason: reason || null,
+        });
+        helpers.broadcastSSE('board', board);
+
+        if (push && PUSH_TOKENS_PATH) {
+          push.notifyTaskEvent(PUSH_TOKENS_PATH, task, 'task.rolled_back')
+            .catch(err => console.error('[push] rollback notify failed:', err.message));
+        }
+
+        json(res, 200, {
+          ok: true,
+          taskId,
+          task,
+          rollback: {
+            from: oldStatus,
+            to: 'pending',
+            git: gitResult,
+            killedSteps,
+            cancelledSteps,
+            worktreeCleanup,
+            reason: reason || null,
+          },
+        });
+      } catch (error) {
+        json(res, 400, { error: error.message });
+      }
+    });
     return;
   }
 
