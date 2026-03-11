@@ -293,7 +293,12 @@ function createStepWorker(deps) {
 
       let result;
       const ac = new AbortController();
-      activeExecutions.set(envelope.step_id, { abort: () => ac.abort(), startedAt: Date.now() });
+      activeExecutions.set(envelope.step_id, {
+        abort: () => ac.abort(),
+        startedAt: Date.now(),
+        task_id: envelope.task_id,
+        runtime: runtimeHint || 'unknown',
+      });
       plan.signal = ac.signal;
       try {
         result = await rt.dispatch(plan);
@@ -698,7 +703,14 @@ function createStepWorker(deps) {
   }
 
   function getActiveExecutions() {
-    return Array.from(activeExecutions.entries()).map(([stepId, { startedAt }]) => ({ stepId, startedAt }));
+    const now = Date.now();
+    return Array.from(activeExecutions.entries()).map(([stepId, info]) => ({
+      stepId,
+      task_id: info.task_id,
+      runtime: info.runtime,
+      startedAt: info.startedAt,
+      elapsed_ms: now - info.startedAt,
+    }));
   }
 
   return { executeStep, killStep, getActiveExecutions };
