@@ -390,7 +390,7 @@ module.exports = function villageRoutes(req, res, helpers, deps) {
       } catch (error) {
         if (error.code === 'VERSION_CONFLICT') {
           console.error('[village] max retries exhausted for trigger');
-          return res.status(503).json({ 
+          return json(res, 503, {
             error: 'Service temporarily unavailable',
             code: 'VERSION_CONFLICT',
             message: 'Board is under high contention, please retry later'
