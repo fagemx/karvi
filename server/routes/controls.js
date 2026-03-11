@@ -84,6 +84,13 @@ module.exports = function controlsRoutes(req, res, helpers, deps) {
                 board.controls[key] = Object.keys(valid).length > 0 ? valid : null;
               }
             }
+            else if (key === 'active_wave') {
+              if (val === null) {
+                board.controls[key] = null;
+              } else if (typeof val === 'number' && Number.isFinite(val) && Number.isInteger(val) && val >= 0) {
+                board.controls[key] = val;
+              }
+            }
           }
         }
         helpers.writeBoard(board);

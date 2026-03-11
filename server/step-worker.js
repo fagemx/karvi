@@ -373,7 +373,7 @@ function createStepWorker(deps) {
 
         // 5b1. Scope guard — revert out-of-scope files before commit
         if (postResult.hasUncommittedChanges) {
-          const scopeConfig = task.scope || null;
+          const scopeConfig = envelope.scope_config || null;
           const scopeGuardResult = applyScopeGuard(
             plan.workingDir || plan.cwd,
             scopeConfig,
@@ -382,6 +382,15 @@ function createStepWorker(deps) {
           if (scopeGuardResult.reverted.length > 0) {
             summary = (summary || '') +
               ` [scope-guard: reverted ${scopeGuardResult.reverted.length} file(s): ${scopeGuardResult.reverted.join(', ')}]`;
+            // Trigger SCOPE_VIOLATION failure mode if scope was defined
+            if (scopeConfig && status === 'succeeded') {
+              status = 'failed';
+              failure = {
+                failure_signature: `Scope violation: ${scopeGuardResult.reverted.length} file(s) outside allowed scope: ${scopeGuardResult.reverted.join(', ')}`,
+                failure_mode: 'SCOPE_VIOLATION',
+                retryable: true,
+              };
+            }
           }
           // Re-check after scope guard removed out-of-scope files
           const recheck = await runPostCheck(plan.workingDir || plan.cwd);

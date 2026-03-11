@@ -10,6 +10,7 @@ const fs = require('fs');
 const os = require('os');
 const { spawn } = require('child_process');
 const path = require('path');
+const { shouldUnblockOnReset } = require('./blocker-types');
 
 let PORT = Number(process.env.TEST_PORT) || 0;  // 0 = OS assigns free port
 const API_TOKEN = process.env.KARVI_API_TOKEN || null;
@@ -477,10 +478,9 @@ async function runTests() {
     // Reset step
     const res = await post('/api/tasks/T-RESET-DEP/steps/T-RESET-DEP:plan/reset', {});
     
-    // Blocker reason should NOT include 'Dead letter', 'dead', or 'failed'
+    // Blocker reason should NOT be dead_letter type
     // So task_unblocked should be false
-    const blockerReason = beforeTask?.blocker?.reason || '';
-    const shouldUnblock = blockerReason.includes('Dead letter') || blockerReason.includes('dead') || blockerReason.includes('failed');
+    const shouldUnblock = shouldUnblockOnReset(beforeTask?.blocker);
     
     if (res.ok && !shouldUnblock && res.task_unblocked === false) {
       ok('Conditional unblock: task_unblocked=false for dependency blocker');

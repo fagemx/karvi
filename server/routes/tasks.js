@@ -28,6 +28,7 @@ const { participantById, pushMessage, getUserIdForTask } = require('./_shared');
 const routeEngine = require('../route-engine');
 const worktreeHelper = require('../worktree');
 const { resolveRepoRoot, validateRepoRoot } = require('../repo-resolver');
+const { BLOCKER_TYPES, shouldUnblockOnReset } = require('../blocker-types');
 
 // --- Preflight logging: lessons injection + runtime selection ---
 function logDispatchPreflight(plan, task, deps, helpers) {
@@ -277,7 +278,11 @@ function dispatchTask(task, board, deps, helpers, opts = {}) {
         _dispatchLocks.delete(taskId);
         console.error(`[dispatchTask:${taskId}] repo validation failed: ${validation.error}`);
         task.status = 'blocked';
-        task.blocker = { reason: `Repo validation failed: ${validation.error}`, askedAt: helpers.nowIso() };
+        task.blocker = {
+          type: BLOCKER_TYPES.REPO_ERROR,
+          reason: `Repo validation failed: ${validation.error}`,
+          askedAt: helpers.nowIso()
+        };
         helpers.writeBoard(board);
         helpers.appendLog({ ts: helpers.nowIso(), event: 'dispatch_blocked', taskId, source, error: validation.error });
         helpers.broadcastSSE('board', board);
@@ -293,7 +298,11 @@ function dispatchTask(task, board, deps, helpers, opts = {}) {
         _dispatchLocks.delete(taskId);
         console.error(`[dispatchTask:${taskId}] worktree failed: ${err.message}`);
         task.status = 'blocked';
-        task.blocker = { reason: `Worktree creation failed: ${err.message}`, askedAt: helpers.nowIso() };
+        task.blocker = {
+          type: BLOCKER_TYPES.WORKTREE_ERROR,
+          reason: `Worktree creation failed: ${err.message}`,
+          askedAt: helpers.nowIso()
+        };
         helpers.writeBoard(board);
         helpers.appendLog({ ts: helpers.nowIso(), event: 'dispatch_blocked', taskId, source, error: err.message });
         helpers.broadcastSSE('board', board);
@@ -568,6 +577,14 @@ function tryAutoDispatch(taskId, deps, helpers) {
     return;
   }
 
+  // Wave filter: only dispatch if task wave matches active_wave
+  const taskWave = task.wave ?? null;
+  const activeWave = ctrl.active_wave ?? null;
+  if (activeWave !== null && taskWave !== null && taskWave !== activeWave) {
+    console.log(`[auto-dispatch:${taskId}] skip: wave ${taskWave} !== active ${activeWave}`);
+    return;
+  }
+
   // Concurrency gate: limit parallel in-progress tasks
   const inProgressCount = (board.taskPlan?.tasks || [])
     .filter(t => t.status === 'in_progress').length;
@@ -764,14 +781,23 @@ module.exports = function tasksRoutes(req, res, helpers, deps) {
         if (!board.taskPlan.createdAt) board.taskPlan.createdAt = payload.createdAt || helpers.nowIso();
 
         const ACTIVE_STATUSES = ['in_progress', 'dispatched'];
-        const SAFE_FIELDS = ['title', 'description', 'assignee', 'depends', 'spec', 'skill', 'estimate', 'target_repo', 'scope'];
+        const SAFE_FIELDS = ['title', 'description', 'assignee', 'depends', 'spec', 'skill', 'estimate', 'target_repo', 'scope', 'wave'];
         const incomingTasks = Array.isArray(payload.tasks) ? payload.tasks : [];
         const existingIds = new Set(board.taskPlan.tasks.map(t => t.id));
         for (const t of incomingTasks) {
           if (existingIds.has(t.id)) {
             const existing = board.taskPlan.tasks.find(e => e.id === t.id);
             if (existing && !ACTIVE_STATUSES.includes(existing.status)) {
-              for (const k of SAFE_FIELDS) { if (t[k] !== undefined) existing[k] = t[k]; }
+              for (const k of SAFE_FIELDS) {
+                if (t[k] !== undefined) {
+                  if (k === 'wave') {
+                    if (t.wave !== null && (typeof t.wave !== 'number' || !Number.isInteger(t.wave) || t.wave < 0)) {
+                      continue;
+                    }
+                  }
+                  existing[k] = t[k];
+                }
+              }
               existing.history = existing.history || [];
               existing.history.push({ ts: helpers.nowIso(), status: 'updated', by: 'api' });
             }
@@ -788,6 +814,7 @@ module.exports = function tasksRoutes(req, res, helpers, deps) {
             skill: t.skill || null,
             estimate: t.estimate || null,
             target_repo: t.target_repo || null,
+            wave: (t.wave !== undefined && t.wave !== null && typeof t.wave === 'number' && Number.isInteger(t.wave) && t.wave >= 0) ? t.wave : null,
             history: [{ ts: helpers.nowIso(), status: (t.depends?.length > 0) ? 'pending' : 'dispatched', reason: 'api_created' }],
           };
           if (t.scope) newTask.scope = t.scope;
@@ -874,7 +901,11 @@ module.exports = function tasksRoutes(req, res, helpers, deps) {
         }
 
         if (payload.status === 'blocked' && !payload.blocker) {
-          task.blocker = { reason: 'Unknown block', askedAt: helpers.nowIso() };
+          task.blocker = {
+            type: BLOCKER_TYPES.UNKNOWN,
+            reason: 'Unknown block',
+            askedAt: helpers.nowIso()
+          };
         }
 
         // Strict gate: only approved can unlock dependents
@@ -1292,7 +1323,11 @@ module.exports = function tasksRoutes(req, res, helpers, deps) {
           delete task.review;
         }
         if (newStatus === 'blocked' && payload.reason) {
-          task.blocker = { reason: payload.reason, askedAt: helpers.nowIso() };
+          task.blocker = {
+            type: payload.blocker?.type || BLOCKER_TYPES.MANUAL,
+            reason: payload.reason,
+            askedAt: helpers.nowIso()
+          };
         }
         if (newStatus !== 'blocked') task.blocker = null;
 
@@ -1603,10 +1638,9 @@ module.exports = function tasksRoutes(req, res, helpers, deps) {
     step.output_ref = null;
     step.scheduled_at = helpers.nowIso();
 
-    // Unblock task only if it was blocked due to dead/failed step (not dependency blocks)
+    // Unblock task only if it was blocked due to dead_letter (not dependency blocks)
     let taskUnblocked = false;
-    const blockerReason = task.blocker?.reason || '';
-    if (task.status === 'blocked' && (blockerReason.includes('Dead letter') || blockerReason.includes('dead') || blockerReason.includes('failed'))) {
+    if (task.status === 'blocked' && shouldUnblockOnReset(task.blocker)) {
       task.status = 'in_progress';
       task.blocker = null;
       taskUnblocked = true;
