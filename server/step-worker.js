@@ -259,7 +259,36 @@ function createStepWorker(deps) {
       try {
         result = await rt.dispatch(plan);
       } catch (dispatchErr) {
+        const execInfo = activeExecutions.get(envelope.step_id);
+        const wasCancelling = execInfo?.cancelling;
+        if (execInfo?.guardTimer) clearTimeout(execInfo.guardTimer);
         activeExecutions.delete(envelope.step_id);
+
+        // If this was a kill, finalise cancelling -> cancelled here (closest to action)
+        if (wasCancelling) {
+          const dispatchDurationMs = Date.now() - startMs;
+          const killBoard = helpers.readBoard();
+          const killTask = (killBoard.taskPlan?.tasks || []).find(t => t.id === envelope.task_id);
+          const killStep = killTask?.steps?.find(s => s.step_id === envelope.step_id);
+          if (killStep && killStep.state === 'cancelling') {
+            stepSchema.transitionStep(killStep, 'cancelled', {
+              error: killStep.error || 'Killed by user',
+            });
+            mgmt.ensureEvolutionFields(killBoard);
+            killBoard.signals.push({
+              id: helpers.uid('sig'), ts: helpers.nowIso(), by: 'step-worker',
+              type: 'step_cancelled',
+              content: `${envelope.task_id} step ${envelope.step_id} cancelling \u2192 cancelled`,
+              refs: [envelope.task_id],
+              data: { taskId: envelope.task_id, stepId: envelope.step_id, from: 'cancelling', to: 'cancelled' },
+            });
+            if (killBoard.signals.length > 500) killBoard.signals = killBoard.signals.slice(-500);
+            helpers.writeBoard(killBoard);
+            helpers.appendLog({ ts: helpers.nowIso(), event: 'step_killed', taskId: envelope.task_id, stepId: envelope.step_id, duration_ms: dispatchDurationMs });
+          }
+          throw dispatchErr;
+        }
+
         const dispatchDurationMs = Date.now() - startMs;
         // Transition step to failed instead of leaving it stuck in 'running'
         const failBoard = helpers.readBoard();
@@ -336,7 +365,18 @@ function createStepWorker(deps) {
         }
         throw dispatchErr;
       }
-      activeExecutions.delete(envelope.step_id);
+      {
+        const execInfo = activeExecutions.get(envelope.step_id);
+        const wasCancelling = execInfo?.cancelling;
+        if (execInfo?.guardTimer) clearTimeout(execInfo.guardTimer);
+        activeExecutions.delete(envelope.step_id);
+
+        if (wasCancelling) {
+          // Kill was requested - don't override with succeeded
+          // The kill endpoint already transitioned to cancelling -> cancelled
+          return null;
+        }
+      }
       durationMs = Date.now() - startMs;
       console.log(`[step-worker] dispatch returned for ${envelope.step_id} in ${durationMs}ms, code=${result?.code}`);
 
@@ -590,11 +630,27 @@ function createStepWorker(deps) {
     return agentOutput;
   }
 
+  const KILL_GUARD_MS = 15000;
+
   function killStep(stepId) {
     const exec = activeExecutions.get(stepId);
     if (!exec) return { ok: false, reason: 'not_running' };
+
+    // Mark as cancelling to prevent dispatch error handler from overriding
+    exec.cancelling = true;
+
+    // Phase 1: graceful abort (runtime will send SIGTERM on Unix, hard kill on Windows)
     exec.abort();
-    activeExecutions.delete(stepId);
+
+    // Phase 2: guard timer - if still in activeExecutions after KILL_GUARD_MS, force remove
+    exec.guardTimer = setTimeout(() => {
+      if (activeExecutions.has(stepId)) {
+        console.log('[step-worker] kill guard: force-removing ' + stepId + ' after ' + KILL_GUARD_MS + 'ms');
+        activeExecutions.delete(stepId);
+      }
+    }, KILL_GUARD_MS);
+
+    // Don't delete from activeExecutions yet - let the runtime close event do it
     return { ok: true };
   }
 

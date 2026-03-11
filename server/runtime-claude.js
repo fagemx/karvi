@@ -99,9 +99,13 @@ function dispatch(plan) {
       stdio: ['ignore', 'pipe', 'pipe'],  // stdin MUST be ignored on Windows
     });
 
-    // Allow external abort (kill step)
+    // Allow external abort (kill step) - graceful then hard kill
     if (plan.signal) {
-      plan.signal.addEventListener('abort', () => killTree(child.pid), { once: true });
+      plan.signal.addEventListener('abort', () => {
+        killTree(child.pid, { signal: 'SIGTERM' });
+        // Hard kill fallback after grace period
+        setTimeout(() => killTree(child.pid), 5000);
+      }, { once: true });
     }
 
     let stderr = '';

@@ -8,27 +8,31 @@ const crypto = require('crypto');
 
 // --- Constants ---
 
-const STEP_TYPES = ['plan', 'implement', 'test', 'review', 'execute'];
+const STEP_TYPES = ['plan', 'implement', 'test', 'review'];
 
-const STEP_STATES = ['queued', 'running', 'succeeded', 'failed', 'dead', 'cancelled'];
+const STEP_STATES = ['queued', 'running', 'cancelling', 'succeeded', 'failed', 'dead', 'cancelled'];
 
 // Step state transitions:
 // - queued → running (normal execution start)
 // - queued → cancelled (user cancels before step starts)
+// - running → cancelling (kill requested, process terminating)
 // - running → succeeded (task completed successfully)
 // - running → failed (error occurred, retry scheduled)
-// - running → cancelled (user killed step during execution)
+// - running → cancelled (task-level cancel — immediate, no grace period)
+// - cancelling → cancelled (process terminated after kill)
+// - cancelling → failed (process failed during graceful shutdown)
 // - failed → queued (retry after backoff)
 // - failed → dead (max retries exhausted)
 // - failed → cancelled (user kills failed step)
 // - succeeded/dead/cancelled → no transitions (terminal states)
 const ALLOWED_STEP_TRANSITIONS = {
-  queued:    ['running', 'cancelled'],
-  running:   ['succeeded', 'failed', 'cancelled'],
-  failed:    ['queued', 'dead', 'cancelled'],
-  succeeded: [],
-  dead:      [],
-  cancelled: [],
+  queued:      ['running', 'cancelled'],
+  running:     ['cancelling', 'succeeded', 'failed', 'cancelled'],
+  cancelling:  ['cancelled', 'failed'],
+  failed:      ['queued', 'dead', 'cancelled'],
+  succeeded:   [],
+  dead:        [],
+  cancelled:   [],
 };
 
 const DEFAULT_RETRY_POLICY = {
@@ -138,6 +142,11 @@ function transitionStep(step, newState, extra = {}) {
     }
     step.locked_by = null;
     step.lock_expires_at = null;
+  }
+
+  if (newState === 'cancelling') {
+    step.error = extra.error || 'kill requested';
+    // Don't clear lock - process still running during grace period
   }
 
   if (newState === 'cancelled') {
