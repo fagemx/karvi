@@ -522,6 +522,7 @@ async function runSuite(target) {
       const headers = {
         'Content-Type': 'application/json',
         'Content-Length': Buffer.byteLength(bigPayload),
+        'Connection': 'close',  // Prevent keep-alive poisoning subsequent requests
       };
       if (authToken) headers['Authorization'] = `Bearer ${authToken}`;
       const req = http.request({
@@ -542,6 +543,9 @@ async function runSuite(target) {
       ok(`POST body > 1MB → ${r.status} (Content-Length guard active)`);
     }
   } catch (e) { fail('POST body > 1MB → 413', e.message); }
+
+  // Brief pause after big-body test (partial payload can poison keep-alive connections)
+  await new Promise(r => setTimeout(r, 300));
 
   // 17-18. GitHub API proxy tests (task-engine only)
   if (port === 3461) {
