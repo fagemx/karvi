@@ -534,6 +534,9 @@ async function runSuite(target) {
     }
   } catch (e) { fail('POST body > 1MB → 413', e.message); }
 
+  // Small delay after big-body test to let server reset connection state
+  await new Promise(r => setTimeout(r, 500));
+
   // Health endpoint exempt from rate limit (always accessible)
   try {
     const r = await get(port, '/health', { token: null, timeout: 10000 });
