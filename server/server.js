@@ -159,6 +159,12 @@ const logsRoutes = require('./routes/logs');
 const eddaRoutes = require('./routes/edda');
 const executionsRoutes = require('./routes/executions');
 
+const postmortem = require('./postmortem');
+
+function postmortemRoute(req, res, helpers, deps) {
+  return postmortem.handlePostmortem(req, res, helpers, deps);
+}
+
 // --- Route chain ---
 const routes = [
   pushRoutes,
@@ -173,6 +179,7 @@ const routes = [
   villageRoutes,
   projectsRoutes,
   tasksRoutes,
+  postmortemRoute,
   statusRoutes,
   versionRoutes,
   discoveryRoutes,
