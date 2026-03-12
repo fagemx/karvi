@@ -20,7 +20,28 @@ const { retryOnConflict } = require('./helpers/retry');
 const LOCK_GRACE_MS = 30_000; // 30s grace on top of step timeout
 const HEARTBEAT_DEBOUNCE_MS = 10_000; // Debounce heartbeat writes to 10s interval
 
-// --- Webhook event emission (#333, #444) — Event Envelope v1 contract + retry ---
+// --- Webhook event emission (#333/#443/#444) — Thyra-aligned envelope + retry ---
+
+// Map internal signal types to Thyra event_type values
+function mapEventType(type) {
+  if (type === 'step_succeeded' || type === 'step_failed' || type === 'step_dead') return 'step_completed';
+  return type; // step_started, step_cancelled pass through
+}
+
+// Map internal step state to Thyra state values
+function mapState(state) {
+  if (state === 'succeeded') return 'done';
+  if (state === 'dead') return 'failed';
+  return state; // 'failed', 'cancelled' 保持不變
+}
+
+// Compute 0-based step index from task's steps array
+function computeStepIndex(board, taskId, stepId) {
+  const task = (board.taskPlan?.tasks || []).find(t => t.id === taskId);
+  const idx = (task?.steps || []).findIndex(s => s.step_id === stepId);
+  return idx >= 0 ? idx : -1;
+}
+
 const WEBHOOK_MAX_RETRIES = 3;
 const WEBHOOK_BACKOFF_MS = [1000, 2000, 4000]; // 1s, 2s, 4s exponential backoff
 
@@ -37,15 +58,28 @@ function emitWebhookEvent(board, eventType, payload, helpers = null) {
   }
 
   const now = new Date().toISOString();
+  // 巢狀 payload，snake_case 欄位名，符合 Thyra KarviWebhookPayloadSchema
+  const nestedPayload = {
+    task_id: payload.taskId,
+    step_id: payload.stepId,
+    step_index: computeStepIndex(board, payload.taskId, payload.stepId),
+  };
+  // Default state for step_started (call site omits state)
+  const rawState = payload.state || (eventType === 'step_started' ? 'running' : undefined);
+  if (rawState) nestedPayload.state = mapState(rawState);
+  if (payload.stepType) nestedPayload.step_type = payload.stepType;
+  if (payload.error) nestedPayload.error = payload.error;
+
   const envelope = {
-    version: 'karvi.event.v1',
+    event_type: mapEventType(eventType),
     event_id: `evt_${crypto.randomUUID()}`,
-    event_type: eventType,
+    timestamp: now,
+    version: 'karvi.event.v1',
+    payload: nestedPayload,
+    // Deprecated compat fields — will be removed in v2
     occurred_at: now,
-    // backward compat fields
-    event: eventType,
     ts: now,
-    ...payload,
+    event: eventType,
   };
   const body = JSON.stringify(envelope);
   const mod = parsed.protocol === 'https:' ? require('https') : require('http');
