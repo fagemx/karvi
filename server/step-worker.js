@@ -623,7 +623,7 @@ function createStepWorker(deps) {
               // Already committed — restore violated files from parent commit
               for (const file of violatedFiles) {
                 try {
-                  execSync(`git checkout HEAD~1 -- "${file}"`, {
+                  execFileSync('git', ['checkout', 'HEAD~1', '--', file], {
                     cwd: workDir, encoding: 'utf8', timeout: 5000,
                   });
                 } catch { /* file may be new — delete instead */
@@ -858,7 +858,7 @@ function autoFinalize(workDir, envelope) {
   try {
     execSync('git add -A', opts);
     const msg = `chore: auto-finalize step ${envelope.step_id} for ${envelope.task_id}`;
-    execSync(`git commit -m "${msg}"`, opts);
+    execFileSync('git', ['commit', '-m', msg], opts);
     const hash = execSync('git log -1 --format=%h', opts).trim();
 
     // Try to push if on a branch
@@ -871,7 +871,7 @@ function autoFinalize(workDir, envelope) {
       try {
         const branch = execSync('git branch --show-current', opts).trim();
         if (branch) {
-          execSync(`git push -u origin ${branch}`, opts);
+          execFileSync('git', ['push', '-u', 'origin', branch], opts);
           pushed = true;
         }
       } catch {
@@ -885,14 +885,14 @@ function autoFinalize(workDir, envelope) {
       try {
         const branch = execSync('git branch --show-current', opts).trim();
         // Check if PR already exists
-        const existing = execSync(`gh pr list --head "${branch}" --json url --limit 1`, opts).trim();
+        const existing = execFileSync('gh', ['pr', 'list', '--head', branch, '--json', 'url', '--limit', '1'], opts).trim();
         const prs = JSON.parse(existing || '[]');
         if (prs.length > 0) {
           prUrl = prs[0].url;
         } else {
           const title = `${envelope.task_id}: auto-finalized implementation`;
           const body = `Auto-created PR for ${envelope.task_id}.\\n\\nAgent wrote code but did not complete git workflow. Auto-finalized by Karvi step-worker.`;
-          const out = execSync(`gh pr create --title "${title}" --body "${body}" --head "${branch}"`, opts).trim();
+          const out = execFileSync('gh', ['pr', 'create', '--title', title, '--body', body, '--head', branch], opts).trim();
           prUrl = out; // gh pr create outputs the PR URL
         }
       } catch (prErr) {
@@ -1006,7 +1006,7 @@ function validatePrDeliverable(agentOutput, workDir) {
   try {
     const branch = execSync('git branch --show-current', opts).trim();
     if (branch) {
-      const prList = execSync(`gh pr list --head "${branch}" --json url --limit 1`, opts).trim();
+      const prList = execFileSync('gh', ['pr', 'list', '--head', branch, '--json', 'url', '--limit', '1'], opts).trim();
       const prs = JSON.parse(prList || '[]');
       if (prs.length > 0) return { ok: true };
     }
@@ -1088,14 +1088,14 @@ function runPreflight(envelope, workDir) {
         found = fs.existsSync(path.resolve(workDir, target.value));
       } else if (target.type === 'function' || target.type === 'pattern') {
         try {
-          execSync(`git grep -q "${target.value}" -- "*.js" "*.ts"`, opts);
+          execFileSync('git', ['grep', '-q', target.value, '--', '*.js', '*.ts'], opts);
           found = true;
         } catch {
           found = false;
         }
       } else if (target.type === 'route') {
         try {
-          execSync(`git grep -q "${target.value}" -- "*.js"`, opts);
+          execFileSync('git', ['grep', '-q', target.value, '--', '*.js'], opts);
           found = true;
         } catch {
           found = false;
