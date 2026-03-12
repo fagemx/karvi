@@ -130,32 +130,12 @@ function requireRole(req, res, minRole) {
 
 /**
  * Create a signal object with user attribution.
- * @param {object} opts - Signal options
- * @param {string} opts.type - Signal type (e.g., 'status_change', 'task_cancelled')
- * @param {string} opts.content - Human-readable content
- * @param {string[]} opts.refs - References (e.g., task IDs)
- * @param {object} opts.data - Additional data
- * @param {object} req - Express-like request object with karviUser/karviRole
- * @param {object} helpers - Helper functions (uid, nowIso)
- * @returns {object} Signal object ready to push to board.signals
+ * Route-layer wrapper: preserves (opts, req, helpers) signature for backward compat.
+ * Actual logic lives in server/signal.js.
  */
+const { createSignal: _createSignal } = require('../signal');
 function createSignal(opts, req, helpers) {
-  const { type, content, refs = [], data = {}, by } = opts;
-  const actor = req?.karviUser || null;
-  const role = req?.karviRole || null;
-
-  return {
-    id: helpers.uid('sig'),
-    ts: helpers.nowIso(),
-    by: actor || by || 'api',
-    type,
-    content,
-    refs,
-    data: {
-      ...data,
-      _attribution: actor ? { actor, role } : undefined,
-    },
-  };
+  return _createSignal(opts, helpers, req);
 }
 
 /**

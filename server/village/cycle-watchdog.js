@@ -12,6 +12,7 @@
  */
 
 const mgmt = require('../management');
+const { createSignal } = require('../signal');
 
 const DEFAULT_STALL_TIMEOUT_MS = 4 * 3_600_000; // 4 hours
 
@@ -118,21 +119,16 @@ function closeStalledCycle(board, helpers, reason, healthResult) {
   cycle.failureReason = reason;
 
   if (!Array.isArray(board.signals)) board.signals = [];
-  board.signals.push({
-    id: helpers.uid("sig"),
-    ts: now,
-    by: "cycle-watchdog",
-    type: "cycle_stalled",
+  board.signals.push(createSignal({
+    by: "cycle-watchdog", type: "cycle_stalled",
     content: "Cycle " + cycleId + " stalled in phase " + failedPhase + ": " + reason,
     refs: [cycleId],
     data: {
-      cycleId,
-      stalledPhase: failedPhase,
-      reason,
+      cycleId, stalledPhase: failedPhase, reason,
       taskStatuses: healthResult?.taskStatuses || {},
       stuckDurationMs: healthResult?.stuckDurationMs || 0,
     },
-  });
+  }, helpers));
   mgmt.trimSignals(board, helpers.signalArchivePath);
 
   helpers.writeBoard(board);

@@ -15,6 +15,7 @@ const path = require('path');
 const mgmt = require('./management');
 const { resolveRepoRoot } = require('./repo-resolver');
 const { runHook } = require('./hook-runner');
+const { createSignal } = require('./signal');
 const LOCK_GRACE_MS = 30_000; // 30s grace on top of step timeout
 
 // --- Webhook event emission (#333) — Event Envelope v1 contract ---
@@ -385,13 +386,11 @@ function createStepWorker(deps) {
               error: killStep.error || 'Killed by user',
             });
             mgmt.ensureEvolutionFields(killBoard);
-            killBoard.signals.push({
-              id: helpers.uid('sig'), ts: helpers.nowIso(), by: 'step-worker',
-              type: 'step_cancelled',
+            killBoard.signals.push(createSignal({
+              by: 'step-worker', type: 'step_cancelled',
               content: `${envelope.task_id} step ${envelope.step_id} cancelling \u2192 cancelled`,
-              refs: [envelope.task_id],
-              data: { taskId: envelope.task_id, stepId: envelope.step_id, from: 'cancelling', to: 'cancelled' },
-            });
+              refs: [envelope.task_id], data: { taskId: envelope.task_id, stepId: envelope.step_id, from: 'cancelling', to: 'cancelled' },
+            }, helpers));
             mgmt.trimSignals(killBoard, helpers.signalArchivePath);
             helpers.writeBoard(killBoard);
             helpers.appendLog({ ts: helpers.nowIso(), event: 'step_killed', taskId: envelope.task_id, stepId: envelope.step_id, duration_ms: dispatchDurationMs });
@@ -412,13 +411,11 @@ function createStepWorker(deps) {
             });
 
             mgmt.ensureEvolutionFields(failBoard);
-            failBoard.signals.push({
-              id: helpers.uid('sig'), ts: helpers.nowIso(), by: 'step-worker',
-              type: 'step_cancelled',
+            failBoard.signals.push(createSignal({
+              by: 'step-worker', type: 'step_cancelled',
               content: `${envelope.task_id} step ${envelope.step_id} cancelling → cancelled`,
-              refs: [envelope.task_id],
-              data: { taskId: envelope.task_id, stepId: envelope.step_id, from: 'cancelling', to: 'cancelled' },
-            });
+              refs: [envelope.task_id], data: { taskId: envelope.task_id, stepId: envelope.step_id, from: 'cancelling', to: 'cancelled' },
+            }, helpers));
             mgmt.trimSignals(failBoard, helpers.signalArchivePath);
 
             helpers.writeBoard(failBoard);
@@ -435,13 +432,11 @@ function createStepWorker(deps) {
           // Emit signal so dashboard/SSE sees dispatch errors
           const signalType = failStep.state === 'dead' ? 'step_dead' : 'step_failed';
           mgmt.ensureEvolutionFields(failBoard);
-          failBoard.signals.push({
-            id: helpers.uid('sig'), ts: helpers.nowIso(), by: 'step-worker',
-            type: signalType,
+          failBoard.signals.push(createSignal({
+            by: 'step-worker', type: signalType,
             content: `${envelope.task_id} step ${envelope.step_id} dispatch error → ${failStep.state}`,
-            refs: [envelope.task_id],
-            data: { taskId: envelope.task_id, stepId: envelope.step_id, from: 'running', to: failStep.state, attempt: failStep.attempt },
-          });
+            refs: [envelope.task_id], data: { taskId: envelope.task_id, stepId: envelope.step_id, from: 'running', to: failStep.state, attempt: failStep.attempt },
+          }, helpers));
           mgmt.trimSignals(failBoard, helpers.signalArchivePath);
 
           helpers.writeBoard(failBoard);
@@ -725,13 +720,11 @@ function createStepWorker(deps) {
         : latestStep.state === 'queued' ? 'step_failed'
         : `step_${latestStep.state}`;
       mgmt.ensureEvolutionFields(latestBoard);
-      latestBoard.signals.push({
-        id: helpers.uid('sig'), ts: helpers.nowIso(), by: 'step-worker',
-        type: signalType,
+      latestBoard.signals.push(createSignal({
+        by: 'step-worker', type: signalType,
         content: `${envelope.task_id} step ${envelope.step_id} running → ${latestStep.state}`,
-        refs: [envelope.task_id],
-        data: { taskId: envelope.task_id, stepId: envelope.step_id, from: 'running', to: latestStep.state, attempt: latestStep.attempt, ...(preflightResult.alreadyDone ? { preflight: { skipped: true, evidence: preflightResult.evidence } } : {}) },
-      });
+        refs: [envelope.task_id], data: { taskId: envelope.task_id, stepId: envelope.step_id, from: 'running', to: latestStep.state, attempt: latestStep.attempt, ...(preflightResult.alreadyDone ? { preflight: { skipped: true, evidence: preflightResult.evidence } } : {}) },
+      }, helpers));
       mgmt.trimSignals(latestBoard, helpers.signalArchivePath);
       helpers.writeBoard(latestBoard);
       helpers.appendLog({ ts: helpers.nowIso(), event: signalType, taskId: envelope.task_id, stepId: envelope.step_id, from: 'running', to: latestStep.state });
