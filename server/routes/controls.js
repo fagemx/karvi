@@ -122,6 +122,7 @@ module.exports = function controlsRoutes(req, res, helpers, deps) {
                 return json(res, 400, { error: 'cost_routing must be null or { tiers: [...] }' });
               }
             }
+            else if ((key === 'hooks_after_worktree_create' || key === 'hooks_before_run' || key === 'hooks_after_run') && typeof val === 'string') board.controls[key] = val;
             else if (key === 'active_wave') {
               if (val === null) {
                 board.controls[key] = null;

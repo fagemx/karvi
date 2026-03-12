@@ -14,6 +14,7 @@ const fs = require('fs');
 const path = require('path');
 const mgmt = require('./management');
 const { resolveRepoRoot } = require('./repo-resolver');
+const { runHook } = require('./hook-runner');
 const LOCK_GRACE_MS = 30_000; // 30s grace on top of step timeout
 
 // --- Webhook event emission (#333) — Event Envelope v1 contract ---
@@ -147,6 +148,14 @@ function createStepWorker(deps) {
           helpers.writeBoard(wtBoard);
         }
         console.log(`[step-worker] worktree rebuilt: ${wt.worktreePath}`);
+        // 在 worktree 重建後執行 hook
+        const rebuildControls = mgmt.getControls(board);
+        if (rebuildControls.hooks_after_worktree_create) {
+          await runHook('hooks_after_worktree_create', rebuildControls.hooks_after_worktree_create, wt.worktreePath, {
+            KARVI_TASK_ID: task.id,
+            KARVI_WORKTREE_DIR: wt.worktreePath,
+          });
+        }
       } catch (err) {
         throw new Error(`ENOENT: worktree rebuild failed for ${task.id}: ${err.message}`);
       }
@@ -313,6 +322,16 @@ function createStepWorker(deps) {
       });
       plan.signal = ac.signal;
 
+      // hooks_before_run — agent 啟動前執行使用者定義的 shell command
+      if (controls.hooks_before_run) {
+        const hookCwd = plan.workingDir || plan.cwd || process.cwd();
+        await runHook('hooks_before_run', controls.hooks_before_run, hookCwd, {
+          KARVI_TASK_ID: envelope.task_id,
+          KARVI_STEP_ID: envelope.step_id,
+          KARVI_WORKTREE_DIR: task.worktreeDir || '',
+        });
+      }
+
       // Fallback loop: 嘗試主 runtime，PROVIDER 錯誤時依序嘗試 fallback chain 中的下一個
       let dispatchErr = null;
       let candidateIdx = 0;
@@ -467,6 +486,16 @@ function createStepWorker(deps) {
       }
       durationMs = Date.now() - startMs;
       console.log(`[step-worker] dispatch returned for ${envelope.step_id} in ${durationMs}ms, code=${result?.code}`);
+
+      // hooks_after_run — agent 完成後執行使用者定義的 shell command
+      if (controls.hooks_after_run) {
+        const hookCwd = plan.workingDir || plan.cwd || process.cwd();
+        await runHook('hooks_after_run', controls.hooks_after_run, hookCwd, {
+          KARVI_TASK_ID: envelope.task_id,
+          KARVI_STEP_ID: envelope.step_id,
+          KARVI_WORKTREE_DIR: task.worktreeDir || '',
+        });
+      }
 
       // 4b. Extend lock immediately after dispatch returns — prevent retry-poller from
       //     re-dispatching while we parse results and run post-checks

@@ -46,6 +46,9 @@ const DEFAULT_CONTROLS = {
     default: 300
   },
   signal_max_count: 500,              // max signals kept in board.json; overflow archived to signal-archive.jsonl
+  hooks_after_worktree_create: '',    // shell command run after worktree created
+  hooks_before_run: '',               // shell command run before agent starts
+  hooks_after_run: '',                // shell command run after agent completes
 };
 
 // --- Evolution Layer: Schema validation ---
