@@ -634,6 +634,11 @@
       font-size: 12px;
     }
 
+    .batch-bar button:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
+
     .t-reply {
       margin-top: 8px;
       background: #0d1528;
@@ -928,6 +933,14 @@
 
     const el = id => document.getElementById(id);
 
+    function isTaskDispatchable(t, tasks) {
+      if (t.status !== 'pending' && t.status !== 'dispatched') return false;
+      return !t.depends?.length || t.depends.every(depId => {
+        const dep = tasks.find(d => d.id === depId);
+        return dep && dep.status === 'approved';
+      });
+    }
+
     function fmtTime(ts) {
       if (!ts) return '-';
       const d = new Date(ts);
@@ -1128,15 +1141,11 @@
         }
 
         // Per-task action buttons based on status
-        const depsOk = !t.depends?.length || t.depends.every(depId => {
-          const dep = plan.tasks.find(d => d.id === depId);
-          return dep && dep.status === 'approved';
-        });
-        const isDispatchable = (t.status === 'pending' || t.status === 'dispatched') && depsOk;
+        const isDispatchable = isTaskDispatchable(t, plan.tasks);
 
         let actionsHtml = '<div class="task-actions">';
         if (t.status === 'pending' || t.status === 'dispatched') {
-          if (depsOk) {
+          if (isDispatchable) {
             actionsHtml += `<button class="t-btn dispatch" onclick="dispatchSingleTask('${t.id}')">▶ 派發</button>`;
           } else {
             actionsHtml += `<span class="t-btn-disabled">⏳ 等待依賴</span>`;
@@ -1227,12 +1236,7 @@
       // Clean up selections for tasks that are no longer dispatchable
       for (const id of [...state.selectedTasks]) {
         const t = plan.tasks.find(tk => tk.id === id);
-        if (!t) { state.selectedTasks.delete(id); continue; }
-        const dOk = !t.depends?.length || t.depends.every(depId => {
-          const dep = plan.tasks.find(d => d.id === depId);
-          return dep && dep.status === 'approved';
-        });
-        if (!((t.status === 'pending' || t.status === 'dispatched') && dOk)) {
+        if (!t || !isTaskDispatchable(t, plan.tasks)) {
           state.selectedTasks.delete(id);
         }
       }
@@ -1292,21 +1296,15 @@
     function getDispatchableTasks() {
       const plan = state.board?.taskPlan;
       if (!plan?.tasks) return [];
-      return plan.tasks.filter(t => {
-        if (t.status !== 'pending' && t.status !== 'dispatched') return false;
-        const dOk = !t.depends?.length || t.depends.every(depId => {
-          const dep = plan.tasks.find(d => d.id === depId);
-          return dep && dep.status === 'approved';
-        });
-        return dOk;
-      });
+      return plan.tasks.filter(t => isTaskDispatchable(t, plan.tasks));
     }
 
     function updateBatchBar() {
       const bar = el('batch-bar');
       const count = state.selectedTasks.size;
+      const hasSummary = !!el('batch-progress').textContent;
       el('batch-count').textContent = `${count} selected`;
-      bar.classList.toggle('visible', count > 0 || state.batchDispatching);
+      bar.classList.toggle('visible', count > 0 || state.batchDispatching || hasSummary);
     }
 
     window.batchSelectAll = function () {
@@ -1351,7 +1349,7 @@
         ? `Dispatched ${ok}/${ids.length}. ${fail} failed.`
         : `Dispatched ${ok} task(s).`;
       progressEl.textContent = summary;
-      setTimeout(() => { progressEl.textContent = ''; }, 5000);
+      setTimeout(() => { progressEl.textContent = ''; updateBatchBar(); }, 5000);
 
       await loadBoard();
     };
@@ -1551,7 +1549,7 @@
           }
           renderParticipants();
           renderTimeline();
-          renderTaskBoard();
+          if (!state.batchDispatching) renderTaskBoard();
           renderEvolution(state.board);
         } catch (err) {
           console.error('SSE parse error:', err);
