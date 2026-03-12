@@ -109,6 +109,8 @@ function readLogLines(runId, stepId) {
   }
 }
 
+const MAX_READ_CHUNK = 1024 * 1024; // 1MB 上限，防止大 log burst 造成記憶體尖峰
+
 function watchLog(runId, stepId, callback) {
   const filePath = logPath(runId, stepId);
   let lastSize = 0;
@@ -121,21 +123,27 @@ function watchLog(runId, stepId, callback) {
     try {
       const stat = fs.statSync(filePath);
       if (stat.size > lastSize) {
+        const chunkSize = Math.min(stat.size - lastSize, MAX_READ_CHUNK);
         const fd = fs.openSync(filePath, 'r');
-        const buffer = Buffer.alloc(stat.size - lastSize);
+        const buffer = Buffer.alloc(chunkSize);
         fs.readSync(fd, buffer, 0, buffer.length, lastSize);
         fs.closeSync(fd);
         const newContent = buffer.toString('utf8');
-        lastSize = stat.size;
+        lastSize = lastSize + chunkSize;
         for (const line of newContent.split('\n')) {
           const trimmed = line.trim();
           if (!trimmed) continue;
           try {
             callback(JSON.parse(trimmed));
-          } catch { }
+          } catch { /* malformed JSONL line — skip */ }
         }
       }
-    } catch { }
+    } catch (err) {
+      if (err.code !== 'ENOENT') {
+        console.error(`[artifact-store] watchLog error for ${runId}/${stepId}:`, err.message);
+        clearInterval(interval);
+      }
+    }
   }, 500);
 
   return () => clearInterval(interval);
