@@ -769,6 +769,7 @@ module.exports = function tasksRoutes(req, res, helpers, deps) {
 
   const taskUpdateMatch = req.url.match(/^\/api\/tasks\/([^/]+)\/update$/);
   if (req.method === 'POST' && taskUpdateMatch) {
+    if (requireRole(req, res, 'operator')) return;
     const taskId = decodeURIComponent(taskUpdateMatch[1]);
     helpers.parseBody(req).then(payload => {
         const board = helpers.readBoard();
@@ -940,6 +941,7 @@ module.exports = function tasksRoutes(req, res, helpers, deps) {
 
   const unblockMatch = req.url.match(/^\/api\/tasks\/([^/]+)\/unblock$/);
   if (req.method === 'POST' && unblockMatch) {
+    if (requireRole(req, res, 'operator')) return;
     const taskId = decodeURIComponent(unblockMatch[1]);
     helpers.parseBody(req).then(payload => {
         const message = String(payload.message || '').trim();
@@ -995,6 +997,7 @@ module.exports = function tasksRoutes(req, res, helpers, deps) {
 
   const reopenMatch = req.url.match(/^\/api\/tasks\/([^/]+)\/reopen$/);
   if (req.method === 'POST' && reopenMatch) {
+    if (requireRole(req, res, 'operator')) return;
     const taskId = decodeURIComponent(reopenMatch[1]);
     helpers.parseBody(req).then(payload => {
         const message = String(payload.message || '').trim();

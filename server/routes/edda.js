@@ -9,6 +9,7 @@
  */
 const bb = require('../blackboard-server');
 const { json } = bb;
+const { requireRole } = require('./_shared');
 
 const HIGH_RISK_KEYS = ['auto_dispatch', 'auto_review', 'auto_redispatch', 'auto_apply_insights'];
 const THRESHOLD_KEYS = ['quality_threshold', 'review_timeout_sec', 'max_review_attempts', 'max_concurrent_tasks'];
@@ -59,6 +60,7 @@ module.exports = function eddaRoutes(req, res, helpers, deps) {
   const { mgmt } = deps;
 
   if (req.method === 'POST' && req.url === '/api/edda/propose-controls') {
+    if (requireRole(req, res, 'admin')) return;
     helpers.parseBody(req).then(payload => {
       const patch = payload.patch;
       const reasoning = String(payload.reasoning || '').trim();

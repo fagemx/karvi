@@ -8,7 +8,7 @@
  */
 const bb = require('../blackboard-server');
 const { json } = bb;
-const { pushMessage } = require('./_shared');
+const { pushMessage, requireRole } = require('./_shared');
 
 module.exports = function jiraRoutes(req, res, helpers, deps) {
   const { jiraIntegration, mgmt, push, ctx, PUSH_TOKENS_PATH } = deps;
@@ -218,6 +218,7 @@ module.exports = function jiraRoutes(req, res, helpers, deps) {
 
   // POST /api/integrations/jira — update Jira config
   if (req.method === 'POST' && req.url === '/api/integrations/jira') {
+    if (requireRole(req, res, 'admin')) return;
     helpers.parseBody(req).then(payload => {
       const board = helpers.readBoard();
       board.integrations = board.integrations || {};
