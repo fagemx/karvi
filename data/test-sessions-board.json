@@ -1,0 +1,33 @@
+{
+  "taskPlan": {
+    "tasks": [
+      {
+        "id": "T-SESSION-TEST",
+        "title": "Session Test Task",
+        "status": "in_progress",
+        "steps": [],
+        "sessions": [
+          {
+            "sessionId": "sess-001",
+            "runtime": "claude",
+            "startedAt": "2026-03-12T10:00:00Z",
+            "endedAt": "2026-03-12T10:30:00Z",
+            "stepsCompleted": 2
+          },
+          {
+            "sessionId": "sess-002",
+            "runtime": "codex",
+            "startedAt": "2026-03-12T11:00:00Z",
+            "endedAt": null,
+            "stepsCompleted": 1
+          }
+        ]
+      }
+    ]
+  },
+  "meta": {
+    "boardType": "test",
+    "version": 1,
+    "updatedAt": "2026-03-12T20:13:01.817Z"
+  }
+}
