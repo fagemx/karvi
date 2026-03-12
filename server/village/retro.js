@@ -1,8 +1,9 @@
 /**
- * retro.js — Cycle Retrospective Signal Generator
+ * retro.js — Cycle Retrospective Signal & Lesson Generator
  *
- * When all execution tasks in a cycle complete, generate retro signals
- * that feed into Karvi's evolution loop (insights → lessons).
+ * When all execution tasks in a cycle complete:
+ * 1. Generate retro signals for Karvi's evolution loop
+ * 2. Generate lessons for next cycle's department prompts
  */
 
 /**
@@ -16,7 +17,6 @@
 function generateRetroSignals(board, cycleId, helpers) {
   const allTasks = board.taskPlan?.tasks || [];
 
-  // Find execution tasks for this cycle
   const execTasks = allTasks.filter(t =>
     t.source?.type === 'village_plan' && t.source?.cycleId === cycleId
   );
@@ -26,7 +26,6 @@ function generateRetroSignals(board, cycleId, helpers) {
   const signals = [];
   const now = helpers.nowIso();
 
-  // 1. Per-task performance signal
   for (const task of execTasks) {
     signals.push({
       id: helpers.uid('sig'),
@@ -41,13 +40,11 @@ function generateRetroSignals(board, cycleId, helpers) {
         department: task.department || null,
         status: task.status,
         title: task.title,
-        // Include cost/time if available
         completedAt: task.completedAt || null,
       },
     });
   }
 
-  // 2. Cycle summary signal
   const completed = execTasks.filter(t => t.status === 'approved').length;
   const blocked = execTasks.filter(t => t.status === 'blocked').length;
   const total = execTasks.length;
@@ -71,4 +68,96 @@ function generateRetroSignals(board, cycleId, helpers) {
   return signals;
 }
 
-module.exports = { generateRetroSignals };
+/**
+ * Generate lessons from cycle completion results.
+ * Lessons are injected into next meeting's department prompts via matchLessonsForTask.
+ *
+ * @param {object} board - The board object (mutated: board.lessons updated)
+ * @param {string} cycleId - The cycle identifier
+ * @param {object} helpers - { nowIso, uid }
+ * @returns {object[]} Array of lessons added to board.lessons
+ */
+function generateRetroLessons(board, cycleId, helpers) {
+  const allTasks = board.taskPlan?.tasks || [];
+
+  const execTasks = allTasks.filter(t =>
+    t.source?.type === 'village_plan' && t.source?.cycleId === cycleId
+  );
+
+  if (execTasks.length === 0) return [];
+
+  const lessons = [];
+  const now = helpers.nowIso();
+  const existingLessons = board.lessons || [];
+
+  const completed = execTasks.filter(t => t.status === 'approved');
+  const blocked = execTasks.filter(t => t.status === 'blocked');
+  const total = execTasks.length;
+  const successRate = total > 0 ? completed.length / total : 0;
+
+  const byDept = {};
+  for (const t of execTasks) {
+    const dept = t.department || 'unknown';
+    if (!byDept[dept]) byDept[dept] = { total: 0, completed: 0, blocked: 0 };
+    byDept[dept].total++;
+    if (t.status === 'approved') byDept[dept].completed++;
+    if (t.status === 'blocked') byDept[dept].blocked++;
+  }
+
+  if (successRate < 0.5 && total >= 3) {
+    const rule = `Cycle ${cycleId} success rate ${Math.round(successRate * 100)}% — review planning quality or reduce scope`;
+    const exists = existingLessons.some(l => l.rule === rule && l.status !== 'invalidated');
+    if (!exists) {
+      lessons.push({
+        id: helpers.uid('lesson'),
+        ts: now,
+        by: 'village-retro',
+        rule,
+        scope: { cycleId },
+        status: 'active',
+      });
+    }
+  }
+
+  for (const [dept, stats] of Object.entries(byDept)) {
+    if (stats.total >= 2 && stats.blocked >= stats.total * 0.5) {
+      const rule = `Department ${dept} had ${stats.blocked}/${stats.total} blocked tasks in ${cycleId} — check dependencies or reduce workload`;
+      const exists = existingLessons.some(l => l.rule === rule && l.status !== 'invalidated');
+      if (!exists) {
+        lessons.push({
+          id: helpers.uid('lesson'),
+          ts: now,
+          by: 'village-retro',
+          rule,
+          scope: { cycleId, department: dept },
+          status: 'active',
+        });
+      }
+    }
+  }
+
+  if (blocked.length >= 2 && blocked.length / total >= 0.3) {
+    const blockedReasons = blocked.map(t => t.blocker?.reason || 'unknown').slice(0, 3);
+    const rule = `High block rate (${blocked.length}/${total}) in ${cycleId} — common issues: ${blockedReasons.join(', ')}`;
+    const exists = existingLessons.some(l => l.rule === rule && l.status !== 'invalidated');
+    if (!exists) {
+      lessons.push({
+        id: helpers.uid('lesson'),
+        ts: now,
+        by: 'village-retro',
+        rule,
+        scope: { cycleId },
+        status: 'active',
+      });
+    }
+  }
+
+  if (lessons.length > 0) {
+    board.lessons = board.lessons || [];
+    board.lessons.push(...lessons);
+  }
+
+  return lessons;
+}
+
+module.exports = { generateRetroSignals, generateRetroLessons };
