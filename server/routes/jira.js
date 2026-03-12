@@ -1,23 +1,138 @@
 /**
  * routes/jira.js — Jira Integration Routes
  *
- * POST /api/webhooks/jira — receive Jira webhook
+ * POST /api/webhooks/jira — receive Jira webhook (issue_created, issue_updated, comment_created)
  * GET  /api/integrations/jira — read Jira config
  * POST /api/integrations/jira — update Jira config
  * POST /api/integrations/jira/test — test Jira connection
  */
 const bb = require('../blackboard-server');
 const { json } = bb;
-const { pushMessage, requireRole } = require('./_shared');
+const { pushMessage, requireRole, createSignal } = require('./_shared');
 
 module.exports = function jiraRoutes(req, res, helpers, deps) {
-  const { jiraIntegration, mgmt, push, ctx, PUSH_TOKENS_PATH } = deps;
+  const { jiraIntegration, mgmt, push, ctx, PUSH_TOKENS_PATH, vault } = deps;
 
   // POST /api/webhooks/jira — receive Jira webhook
   if (req.method === 'POST' && req.url.startsWith('/api/webhooks/jira')) {
     if (!jiraIntegration) { json(res, 404, { error: 'Jira integration not available' }); return; }
-    helpers.parseBody(req).then(payload => {
+
+    // Manual body read with size guard (needs raw string for HMAC verification)
+    let body = '';
+    let received = 0;
+    req.on('data', c => {
+      received += c.length;
+      if (received > 1048576) { req.destroy(); return; }
+      body += c;
+    });
+    req.on('end', () => {
+      if (received > 1048576) return json(res, 413, { error: 'Payload too large' });
+      try {
+        // HMAC verification — secret from vault, not board
+        const secretBuf = vault && vault.has('default', 'jira_webhook_secret')
+          ? vault.retrieve('default', 'jira_webhook_secret')
+          : null;
+        const secret = secretBuf ? secretBuf.toString('utf8') : null;
+        if (secretBuf) secretBuf.fill(0);
+
+        const sig = req.headers['x-hub-signature-256'] || req.headers['x-jira-signature'] || '';
+        if (!jiraIntegration.verifyHmacSignature(body, sig, secret)) {
+          // Fallback: try URL token verification for backward compat
+          if (!jiraIntegration.verifyWebhookToken(req.url)) {
+            json(res, 401, { error: 'Invalid webhook signature or token' });
+            return;
+          }
+        }
+
+        const payload = JSON.parse(body || '{}');
         const board = helpers.readBoard();
+        const config = board.integrations?.jira || { enabled: false };
+
+        // Route by Jira webhook event type
+        const webhookEvent = payload.webhookEvent;
+
+        // --- comment_created events: @karvi mention triggers ---
+        if (webhookEvent === 'comment_created') {
+          const result = jiraIntegration.handleMentionWebhook(board, payload, config);
+
+          if (result.action === 'skipped') {
+            json(res, 200, { ok: true, skipped: true, reason: result.error });
+            return;
+          }
+
+          // Helper: reply on Jira issue via API
+          const replyOnIssue = (issueKey, commentBody) => {
+            jiraIntegration.jiraRequest('POST', `/rest/api/3/issue/${issueKey}/comment`, {
+              body: { type: 'doc', version: 1, content: [
+                { type: 'paragraph', content: [{ type: 'text', text: commentBody }] },
+              ]},
+            }).catch(err => console.error('[jira-webhook] reply failed:', err.message));
+          };
+
+          if (result.action === 'status_reply') {
+            const t = result.existingTask;
+            const replyBody = t
+              ? `Task **${t.id}** is currently **${t.status}**.`
+              : `No task found for this issue.`;
+            replyOnIssue(result.issueKey, replyBody);
+            json(res, 200, { ok: true, action: 'status_reply', taskId: t?.id || null, status: t?.status || null });
+            return;
+          }
+
+          if (result.action === 'already_exists') {
+            const t = result.existingTask;
+            const replyBody = `Task **${t.id}** already exists (status: **${t.status}**).`;
+            replyOnIssue(result.issueKey, replyBody);
+            json(res, 200, { ok: true, action: 'already_exists', taskId: t.id, status: t.status });
+            return;
+          }
+
+          if (result.action === 'create_task' && result.task) {
+            board.taskPlan = board.taskPlan || { tasks: [] };
+            board.taskPlan.tasks = board.taskPlan.tasks || [];
+            board.taskPlan.tasks.push(result.task);
+            helpers.writeBoard(board);
+            helpers.appendLog({
+              ts: helpers.nowIso(),
+              event: 'jira_mention_task_created',
+              taskId: result.task.id,
+              jiraKey: result.issueKey,
+              command: result.command,
+              source: 'jira-mention',
+            });
+
+            // Auto-dispatch via step pipeline
+            const willDispatch = result.task.status === 'dispatched' && deps.tryAutoDispatch;
+            if (willDispatch) {
+              setImmediate(() => deps.tryAutoDispatch(result.task.id));
+            }
+
+            // Reply on Jira issue — reflect actual dispatch state
+            const replyBody = willDispatch
+              ? `Task **${result.task.id}** created and dispatched.`
+              : `Task **${result.task.id}** created (status: ${result.task.status}).`;
+            replyOnIssue(result.issueKey, replyBody);
+
+            // Emit signal
+            mgmt.ensureEvolutionFields(board);
+            board.signals.push(createSignal({
+              by: 'jira-mention', type: 'mention_task_created',
+              content: `@karvi mention → ${result.task.id} created from Jira ${result.issueKey}`,
+              refs: [result.task.id],
+              data: { taskId: result.task.id, jiraKey: result.issueKey, command: result.command },
+            }, req, helpers));
+            mgmt.trimSignals(board, helpers.signalArchivePath);
+            helpers.writeBoard(board);
+
+            json(res, 201, { ok: true, action: 'create_task', taskId: result.task.id, jiraKey: result.issueKey });
+            return;
+          }
+
+          json(res, 200, { ok: true, action: result.action });
+          return;
+        }
+
+        // --- issue_created / issue_updated events: existing behavior ---
         const result = jiraIntegration.handleWebhook(board, payload, req.url);
 
         if (result.action === 'rejected') {
@@ -122,7 +237,7 @@ module.exports = function jiraRoutes(req, res, helpers, deps) {
           }
 
           // Push notification for in-progress tasks
-          if (task.status === 'in_progress' || task.status === 'dispatched') {
+          if (push && PUSH_TOKENS_PATH && (task.status === 'in_progress' || task.status === 'dispatched')) {
             push.notifyTaskEvent(PUSH_TOKENS_PATH, task, 'task.ac_changed')
               .catch(err => console.error('[push] ac_changed notify failed:', err.message));
           }
@@ -204,7 +319,10 @@ module.exports = function jiraRoutes(req, res, helpers, deps) {
           return;
         }
         json(res, 200, { ok: true, action: result.action });
-    }).catch(err => json(res, err.statusCode === 413 ? 413 : 400, { error: err.message }));
+      } catch (err) {
+        json(res, 400, { error: err.message });
+      }
+    });
     return;
   }
 
