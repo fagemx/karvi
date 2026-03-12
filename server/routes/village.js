@@ -421,7 +421,7 @@ module.exports = function villageRoutes(req, res, helpers, deps) {
 
   // ── POST /api/village/config — update village-level config ──
   if (req.method === 'POST' && pathname === '/api/village/config') {
-    if (requireRole(req, res, 'operator')) return;
+    if (requireRole(req, res, 'admin')) return;
     helpers.parseBody(req).then(body => {
       try {
         const board = helpers.readBoard();
