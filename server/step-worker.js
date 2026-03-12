@@ -255,6 +255,11 @@ function createStepWorker(deps) {
 
     emitWebhookEvent(board, 'step_started', { taskId: envelope.task_id, stepId: envelope.step_id, stepType: envelope.step_type }, helpers);
 
+    // Hook system: emit step_started
+    if (deps.hookSystem) {
+      deps.hookSystem.emit('step_started', { taskId: envelope.task_id, stepId: envelope.step_id, stepType: envelope.step_type });
+    }
+
     // 3. Per-step runtime selection (envelope.runtime_hint takes precedence)
     //    With fallback chain: on PROVIDER errors, try next runtime in chain
     const step = task.steps?.find(s => s.step_id === envelope.step_id);
@@ -810,6 +815,11 @@ function createStepWorker(deps) {
       helpers.writeBoard(latestBoard);
       helpers.appendLog({ ts: helpers.nowIso(), event: signalType, taskId: envelope.task_id, stepId: envelope.step_id, from: 'running', to: latestStep.state });
       emitWebhookEvent(latestBoard, signalType, { taskId: envelope.task_id, stepId: envelope.step_id, state: latestStep.state }, helpers);
+
+      // Hook system: emit step_completed
+      if (deps.hookSystem && signalType === 'step_completed') {
+        deps.hookSystem.emit('step_completed', { taskId: envelope.task_id, stepId: envelope.step_id, state: latestStep.state });
+      }
 
       // 8. Trigger kernel for terminal states (via setImmediate to avoid deep recursion)
       const newSignal = {

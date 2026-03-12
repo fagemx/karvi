@@ -460,6 +460,11 @@ function createKernel(deps) {
 
         helpers.writeBoard(latestBoard);
 
+        // Hook system: emit task_completed
+        if (deps.hookSystem) {
+          deps.hookSystem.emit('task_completed', { taskId, task: latestTask });
+        }
+
         if (push && PUSH_TOKENS_PATH && latestTask) {
           push.notifyTaskEvent(PUSH_TOKENS_PATH, latestTask, 'task.completed')
             .catch(async err => {
