@@ -298,6 +298,108 @@ function test_current_month_format() {
   assert(/^\d{4}-\d{2}$/.test(month), `currentMonth should match YYYY-MM, got ${month}`);
 }
 
+// --- Test 13: enforceUsageLimits blocks when dispatches exceed limit ---
+function test_enforce_limits_blocks_dispatches() {
+  console.log('\nTest 13: enforceUsageLimits blocks when dispatches exceed limit');
+  const freshDir = fs.mkdtempSync(path.join(os.tmpdir(), 'karvi-usage-enforce-'));
+  usage.init({
+    dataDir: freshDir,
+    broadcastSSE: () => {},
+    readBoard: () => ({
+      controls: {
+        usage_limits: { dispatches_per_month: 2 },
+      },
+    }),
+  });
+
+  // Before any dispatches — allowed
+  let result = usage.enforceUsageLimits('enforceuser');
+  assert(result.allowed, 'should be allowed before any dispatches');
+
+  // Record 2 dispatches (reaching the limit)
+  usage.record('enforceuser', 'dispatch', { taskId: 'E1' });
+  usage.record('enforceuser', 'dispatch', { taskId: 'E2' });
+
+  // Now should be blocked
+  result = usage.enforceUsageLimits('enforceuser');
+  assert(!result.allowed, 'should be blocked after reaching limit');
+  assertEqual(result.code, 'USAGE_LIMIT_EXCEEDED', 'code should be USAGE_LIMIT_EXCEEDED');
+  assertEqual(result.metric, 'dispatches', 'metric should be dispatches');
+  assertEqual(result.used, 2, 'used should be 2');
+  assertEqual(result.limit, 2, 'limit should be 2');
+
+  try { fs.rmSync(freshDir, { recursive: true, force: true }); } catch {}
+}
+
+// --- Test 14: enforceUsageLimits allows when no limits configured ---
+function test_enforce_limits_allows_no_config() {
+  console.log('\nTest 14: enforceUsageLimits allows when no limits configured');
+  const freshDir = fs.mkdtempSync(path.join(os.tmpdir(), 'karvi-usage-enforce2-'));
+  usage.init({
+    dataDir: freshDir,
+    broadcastSSE: () => {},
+    readBoard: () => ({ controls: {} }),
+  });
+
+  usage.record('noconfig', 'dispatch', { taskId: 'N1' });
+  const result = usage.enforceUsageLimits('noconfig');
+  assert(result.allowed, 'should be allowed when no limits configured');
+
+  try { fs.rmSync(freshDir, { recursive: true, force: true }); } catch {}
+}
+
+// --- Test 15: enforceUsageLimits blocks on runtime_sec limit ---
+function test_enforce_limits_blocks_runtime() {
+  console.log('\nTest 15: enforceUsageLimits blocks on runtime_sec limit');
+  const freshDir = fs.mkdtempSync(path.join(os.tmpdir(), 'karvi-usage-enforce3-'));
+  usage.init({
+    dataDir: freshDir,
+    broadcastSSE: () => {},
+    readBoard: () => ({
+      controls: {
+        usage_limits: { runtime_sec_per_month: 100 },
+      },
+    }),
+  });
+
+  usage.record('rtuser', 'agent.runtime', { durationSec: 60 });
+  let result = usage.enforceUsageLimits('rtuser');
+  assert(result.allowed, 'should be allowed at 60/100');
+
+  usage.record('rtuser', 'agent.runtime', { durationSec: 50 });
+  result = usage.enforceUsageLimits('rtuser');
+  assert(!result.allowed, 'should be blocked at 110/100');
+  assertEqual(result.metric, 'runtimeSec', 'metric should be runtimeSec');
+
+  try { fs.rmSync(freshDir, { recursive: true, force: true }); } catch {}
+}
+
+// --- Test 16: enforceUsageLimits blocks on tokens limit ---
+function test_enforce_limits_blocks_tokens() {
+  console.log('\nTest 16: enforceUsageLimits blocks on tokens limit');
+  const freshDir = fs.mkdtempSync(path.join(os.tmpdir(), 'karvi-usage-enforce4-'));
+  usage.init({
+    dataDir: freshDir,
+    broadcastSSE: () => {},
+    readBoard: () => ({
+      controls: {
+        usage_limits: { tokens_per_month: 5000 },
+      },
+    }),
+  });
+
+  usage.record('tokuser', 'api.tokens', { input: 3000, output: 1000 });
+  let result = usage.enforceUsageLimits('tokuser');
+  assert(result.allowed, 'should be allowed at 4000/5000');
+
+  usage.record('tokuser', 'api.tokens', { input: 1000, output: 500 });
+  result = usage.enforceUsageLimits('tokuser');
+  assert(!result.allowed, 'should be blocked at 5500/5000');
+  assertEqual(result.metric, 'tokens', 'metric should be tokens');
+
+  try { fs.rmSync(freshDir, { recursive: true, force: true }); } catch {}
+}
+
 // --- Run all tests ---
 function main() {
   console.log('=== Usage Tracking Tests ===');
@@ -316,6 +418,10 @@ function main() {
     test_sse_connect();
     test_query_with_limits();
     test_current_month_format();
+    test_enforce_limits_blocks_dispatches();
+    test_enforce_limits_allows_no_config();
+    test_enforce_limits_blocks_runtime();
+    test_enforce_limits_blocks_tokens();
   } finally {
     teardown();
   }
