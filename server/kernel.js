@@ -14,6 +14,7 @@ const villageHooks = require('./village-hooks');
 const { verifyContract } = require('./village/deliverable-contracts');
 const worktreeHelper = require('./worktree');
 const { resolveRepoRoot } = require('./repo-resolver');
+const { createSignal } = require('./signal');
 const path = require('path');
 
 /**
@@ -121,13 +122,11 @@ function createKernel(deps) {
     const latestTask = (latestBoard.taskPlan?.tasks || []).find(t => t.id === taskId);
     if (latestTask) latestTask.budget = task.budget;
     mgmt.ensureEvolutionFields(latestBoard);
-    latestBoard.signals.push({
-      id: helpers.uid('sig'), ts: helpers.nowIso(), by: 'kernel',
-      type: 'route_decision',
+    latestBoard.signals.push(createSignal({
+      by: 'kernel', type: 'route_decision',
       content: `${taskId} ${stepId} → ${decision.action} (${decision.rule})`,
-      refs: [taskId],
-      data: { taskId, stepId, decision },
-    });
+      refs: [taskId], data: { taskId, stepId, decision },
+    }, helpers));
     mgmt.trimSignals(latestBoard, helpers.signalArchivePath);
 
     // Village hook deps (used by multiple cases)
@@ -232,13 +231,11 @@ function createKernel(deps) {
         if (latestTask) {
           latestTask.blocker = { reason: decision.human_review?.reason || 'Kernel escalated to human', askedAt: helpers.nowIso() };
         }
-        latestBoard.signals.push({
-          id: helpers.uid('sig'), ts: helpers.nowIso(), by: 'kernel',
-          type: 'human_review_needed',
+        latestBoard.signals.push(createSignal({
+          by: 'kernel', type: 'human_review_needed',
           content: `${taskId} needs human review: ${decision.human_review?.reason || ''}`,
-          refs: [taskId],
-          data: { taskId, stepId, reason: decision.human_review?.reason },
-        });
+          refs: [taskId], data: { taskId, stepId, reason: decision.human_review?.reason },
+        }, helpers));
         // Village: cycle stall detection for meeting tasks
         if (villageHooks.onTaskBlocked(latestBoard, taskId, latestTask, helpers, villageDeps)) {
           return;
@@ -249,13 +246,11 @@ function createKernel(deps) {
           push.notifyTaskEvent(PUSH_TOKENS_PATH, latestTask, 'task.blocked')
             .catch(err => {
               console.error(`[kernel] push error for task ${taskId}, event task.blocked:`, err.message);
-              latestBoard.signals.push({
-                id: helpers.uid('sig'), ts: helpers.nowIso(), by: 'kernel',
-                type: 'push_failed',
+              latestBoard.signals.push(createSignal({
+                by: 'kernel', type: 'push_failed',
                 content: `Push notification failed for ${taskId}: ${err.message}`,
-                refs: [taskId],
-                data: { taskId, eventType: 'task.blocked', error: err.message },
-              });
+                refs: [taskId], data: { taskId, eventType: 'task.blocked', error: err.message },
+              }, helpers));
               mgmt.trimSignals(latestBoard, helpers.signalArchivePath);
             });
         }
@@ -274,13 +269,11 @@ function createKernel(deps) {
           // committed yet. Deleting it permanently loses work. Worktree will be cleaned
           // up when the task is manually cancelled/deleted or re-dispatched. (GH-325)
         }
-        latestBoard.signals.push({
-          id: helpers.uid('sig'), ts: helpers.nowIso(), by: 'kernel',
-          type: 'task_dead_letter',
+        latestBoard.signals.push(createSignal({
+          by: 'kernel', type: 'task_dead_letter',
           content: `${taskId} dead-lettered: ${decision.rule}`,
-          refs: [taskId],
-          data: { taskId, stepId, rule: decision.rule },
-        });
+          refs: [taskId], data: { taskId, stepId, rule: decision.rule },
+        }, helpers));
         // Village: cycle stall detection for meeting tasks
         if (villageHooks.onTaskBlocked(latestBoard, taskId, latestTask, helpers, villageDeps)) {
           return;
@@ -290,13 +283,11 @@ function createKernel(deps) {
           push.notifyTaskEvent(PUSH_TOKENS_PATH, latestTask, 'task.blocked')
             .catch(err => {
               console.error(`[kernel] push error for task ${taskId}, event task.blocked:`, err.message);
-              latestBoard.signals.push({
-                id: helpers.uid('sig'), ts: helpers.nowIso(), by: 'kernel',
-                type: 'push_failed',
+              latestBoard.signals.push(createSignal({
+                by: 'kernel', type: 'push_failed',
                 content: `Push notification failed for ${taskId}: ${err.message}`,
-                refs: [taskId],
-                data: { taskId, eventType: 'task.blocked', error: err.message },
-              });
+                refs: [taskId], data: { taskId, eventType: 'task.blocked', error: err.message },
+              }, helpers));
               mgmt.trimSignals(latestBoard, helpers.signalArchivePath);
             });
         }
@@ -317,13 +308,11 @@ function createKernel(deps) {
 
               // Signal + push (match dead_letter side-effects)
               mgmt.ensureEvolutionFields(latestBoard);
-              latestBoard.signals.push({
-                id: helpers.uid('sig'), ts: helpers.nowIso(), by: 'kernel',
-                type: 'contract_failed',
+              latestBoard.signals.push(createSignal({
+                by: 'kernel', type: 'contract_failed',
                 content: `${taskId} contract verification failed: ${cv.reason}`,
-                refs: [taskId],
-                data: { taskId, kind: latestTask.contract.kind, reason: cv.reason },
-              });
+                refs: [taskId], data: { taskId, kind: latestTask.contract.kind, reason: cv.reason },
+              }, helpers));
               mgmt.trimSignals(latestBoard, helpers.signalArchivePath);
 
               if (push && PUSH_TOKENS_PATH) {
@@ -412,13 +401,11 @@ function createKernel(deps) {
                 .catch(err => {
                   console.error(`[kernel] auto-merge failed for PR #${number}:`, err.message);
                   const freshBoard = helpers.readBoard();
-                  freshBoard.signals.push({
-                    id: helpers.uid('sig'), ts: helpers.nowIso(), by: 'kernel',
-                    type: 'auto_merge_failed',
+                  freshBoard.signals.push(createSignal({
+                    by: 'kernel', type: 'auto_merge_failed',
                     content: `Auto-merge failed for ${taskId} PR #${number}: ${err.message}`,
-                    refs: [taskId],
-                    data: { taskId, prNumber: number, error: err.message },
-                  });
+                    refs: [taskId], data: { taskId, prNumber: number, error: err.message },
+                  }, helpers));
                   mgmt.trimSignals(freshBoard, helpers.signalArchivePath);
                   helpers.writeBoard(freshBoard);
                 });
@@ -448,13 +435,11 @@ function createKernel(deps) {
           push.notifyTaskEvent(PUSH_TOKENS_PATH, latestTask, 'task.completed')
             .catch(err => {
               console.error(`[kernel] push error for task ${taskId}, event task.completed:`, err.message);
-              latestBoard.signals.push({
-                id: helpers.uid('sig'), ts: helpers.nowIso(), by: 'kernel',
-                type: 'push_failed',
+              latestBoard.signals.push(createSignal({
+                by: 'kernel', type: 'push_failed',
                 content: `Push notification failed for ${taskId}: ${err.message}`,
-                refs: [taskId],
-                data: { taskId, eventType: 'task.completed', error: err.message },
-              });
+                refs: [taskId], data: { taskId, eventType: 'task.completed', error: err.message },
+              }, helpers));
               mgmt.trimSignals(latestBoard, helpers.signalArchivePath);
             });
         }

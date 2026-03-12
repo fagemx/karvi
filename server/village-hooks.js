@@ -11,6 +11,7 @@
  */
 const planDispatcher = require('./village/plan-dispatcher');
 const cycleWatchdog = require('./village/cycle-watchdog');
+const { createSignal } = require('./signal');
 
 /**
  * Check if a blocked/reviewed meeting task has stalled the cycle.
@@ -168,13 +169,11 @@ function _pushTaskEvent(board, task, taskId, eventType, helpers, deps) {
 }
 
 function _pushFailedSignal(board, taskId, eventType, err, helpers, deps) {
-  board.signals.push({
-    id: helpers.uid('sig'), ts: helpers.nowIso(), by: 'kernel',
-    type: 'push_failed',
+  board.signals.push(createSignal({
+    by: 'kernel', type: 'push_failed',
     content: `Push notification failed for ${taskId || eventType}: ${err.message}`,
-    refs: taskId ? [taskId] : [],
-    data: { taskId: taskId || null, eventType, error: err.message },
-  });
+    refs: taskId ? [taskId] : [], data: { taskId: taskId || null, eventType, error: err.message },
+  }, helpers));
   deps.mgmt.trimSignals(board, helpers.signalArchivePath);
 }
 

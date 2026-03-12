@@ -15,6 +15,7 @@ const { uid, nowIso } = bb;
 const mgmt = require('../management');
 const { retryOnConflict } = require('../helpers/retry');
 const { buildContract } = require('./deliverable-contracts');
+const { createSignal } = require('../signal');
 
 /**
  * Extract plan data from a synthesis step's output artifact.
@@ -170,21 +171,16 @@ async function parsePlanAndDispatch(board, planData, helpers, deps, synthesisTas
     // Emit signal
     if (deps.mgmt) deps.mgmt.ensureEvolutionFields(latestBoard);
     if (!Array.isArray(latestBoard.signals)) latestBoard.signals = [];
-    latestBoard.signals.push({
-      id: helpers.uid('sig'),
-      ts: now,
-      by: 'plan-dispatcher',
-      type: 'village_plan_dispatched',
+    latestBoard.signals.push(createSignal({
+      by: 'plan-dispatcher', type: 'village_plan_dispatched',
       content: `Plan dispatched: ${createdTaskIds.length} tasks from ${cycleId}`,
       refs: createdTaskIds,
       data: {
-        cycleId,
-        taskCount: createdTaskIds.length,
-        taskIds: createdTaskIds,
+        cycleId, taskCount: createdTaskIds.length, taskIds: createdTaskIds,
         conflictsResolved: planData.conflicts_resolved || [],
         deferred: planData.deferred || [],
       },
-    });
+    }, helpers));
     mgmt.trimSignals(latestBoard, helpers.signalArchivePath);
 
     // Write board + broadcast
