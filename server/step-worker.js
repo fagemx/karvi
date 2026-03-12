@@ -20,28 +20,7 @@ const { retryOnConflict } = require('./helpers/retry');
 const LOCK_GRACE_MS = 30_000; // 30s grace on top of step timeout
 const HEARTBEAT_DEBOUNCE_MS = 10_000; // Debounce heartbeat writes to 10s interval
 
-function updateTaskSession(task, opts) {
-  const { sessionId, runtime, startedAt, endedAt, stepCompleted } = opts;
-  if (!task) return;
-  task.sessions = task.sessions || [];
-  if (sessionId) {
-    let session = task.sessions.find(s => s.sessionId === sessionId);
-    if (!session && startedAt) {
-      session = {
-        sessionId,
-        runtime: runtime || 'unknown',
-        startedAt,
-        endedAt: null,
-        stepsCompleted: 0,
-      };
-      task.sessions.push(session);
-    }
-    if (session) {
-      if (endedAt) session.endedAt = endedAt;
-      if (stepCompleted) session.stepsCompleted = (session.stepsCompleted || 0) + 1;
-    }
-  }
-}
+const MAX_SESSIONS = 50;
 
 // --- Webhook event emission (#333/#443/#444) — Thyra-aligned envelope + retry ---
 
@@ -310,17 +289,21 @@ function createStepWorker(deps) {
       lockStep.locked_by = 'step-worker';
       // Initialize session tracking for this step
       const sessionStartedAt = new Date().toISOString();
+      const stepSessionId = helpers.uid('session');
       lockTask.sessions = lockTask.sessions || [];
-      const existingSession = lockTask.sessions.find(s => s.sessionId && s.startedAt && !s.endedAt && s.runtime === stepRuntimeHint);
-      if (!existingSession) {
-        lockTask.sessions.push({
-          sessionId: `session-${helpers.uid('sess')}`,
-          runtime: stepRuntimeHint || 'unknown',
-          startedAt: sessionStartedAt,
-          endedAt: null,
-          stepsCompleted: 0,
-        });
+      lockTask.sessions.push({
+        sessionId: stepSessionId,
+        runtime: stepRuntimeHint || 'unknown',
+        startedAt: sessionStartedAt,
+        endedAt: null,
+        stepsCompleted: 0,
+      });
+      // Cap sessions to prevent unbounded growth
+      if (lockTask.sessions.length > MAX_SESSIONS) {
+        lockTask.sessions.splice(0, lockTask.sessions.length - MAX_SESSIONS);
       }
+      // Store sessionId on the step for precise matching at end-of-step
+      lockStep.sessionId = stepSessionId;
       helpers.writeBoard(lockBoard);
     }
 
@@ -863,9 +846,9 @@ function createStepWorker(deps) {
     }
 
     // Update session tracking: mark ended and increment steps completed
-    if (latestTask) {
+    if (latestTask && latestStep?.sessionId) {
       latestTask.sessions = latestTask.sessions || [];
-      const activeSession = latestTask.sessions.find(s => s.runtime === activeRuntimeHint && !s.endedAt);
+      const activeSession = latestTask.sessions.find(s => s.sessionId === latestStep.sessionId);
       if (activeSession) {
         activeSession.endedAt = new Date().toISOString();
         activeSession.stepsCompleted = (activeSession.stepsCompleted || 0) + 1;
