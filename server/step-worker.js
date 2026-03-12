@@ -20,7 +20,7 @@ const { retryOnConflict } = require('./helpers/retry');
 const LOCK_GRACE_MS = 30_000; // 30s grace on top of step timeout
 const HEARTBEAT_DEBOUNCE_MS = 10_000; // Debounce heartbeat writes to 10s interval
 
-// --- Webhook event emission (#333/#443) — Thyra-aligned Event Envelope ---
+// --- Webhook event emission (#333/#443/#444) — Thyra-aligned envelope + retry ---
 
 // Map internal signal types to Thyra event_type values
 function mapEventType(type) {
@@ -42,7 +42,10 @@ function computeStepIndex(board, taskId, stepId) {
   return idx >= 0 ? idx : -1;
 }
 
-function emitWebhookEvent(board, eventType, payload) {
+const WEBHOOK_MAX_RETRIES = 3;
+const WEBHOOK_BACKOFF_MS = [1000, 2000, 4000]; // 1s, 2s, 4s exponential backoff
+
+function emitWebhookEvent(board, eventType, payload, helpers = null) {
   const url = mgmt.getControls(board).event_webhook_url;
   if (!url) return;
 
@@ -81,13 +84,68 @@ function emitWebhookEvent(board, eventType, payload) {
   const body = JSON.stringify(envelope);
   const mod = parsed.protocol === 'https:' ? require('https') : require('http');
 
-  const req = mod.request(parsed, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body) },
-    timeout: 5000,
-  });
-  req.on('error', err => console.error(`[webhook] ${eventType} POST failed:`, err.message));
-  req.end(body);
+  // Non-blocking async retry loop
+  (async () => {
+    let lastError = null;
+    for (let attempt = 0; attempt < WEBHOOK_MAX_RETRIES; attempt++) {
+      try {
+        const result = await new Promise((resolve, reject) => {
+          const req = mod.request(parsed, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body) },
+            timeout: 5000,
+          }, (res) => {
+            if (res.statusCode >= 500) {
+              reject(new Error(`HTTP ${res.statusCode}`));
+            } else if (res.statusCode >= 400) {
+              console.error(`[webhook] ${eventType} POST failed: HTTP ${res.statusCode} (not retrying)`);
+              resolve({ ok: false, retryable: false });
+            } else {
+              resolve({ ok: true });
+            }
+          });
+          req.on('error', reject);
+          req.on('timeout', () => {
+            req.destroy();
+            reject(new Error('timeout'));
+          });
+          req.end(body);
+        });
+
+        if (result.ok) return; // Success
+        if (!result.retryable) return; // 4xx, stop retrying
+      } catch (err) {
+        lastError = err;
+        if (attempt < WEBHOOK_MAX_RETRIES - 1) {
+          const delay = WEBHOOK_BACKOFF_MS[attempt];
+          console.error(`[webhook] ${eventType} attempt ${attempt + 1}/${WEBHOOK_MAX_RETRIES} failed: ${err.message}, retrying in ${delay}ms`);
+          await new Promise(r => setTimeout(r, delay));
+        }
+      }
+    }
+
+    // Total failure after all retries
+    console.error(`[webhook] ${eventType} POST failed after ${WEBHOOK_MAX_RETRIES} retries:`, lastError?.message || 'unknown error');
+
+    // Write signal to board if helpers available
+    if (helpers && helpers.readBoard && helpers.writeBoard) {
+      try {
+        const failBoard = helpers.readBoard();
+        failBoard.signals = failBoard.signals || [];
+        failBoard.signals.push(createSignal({
+          by: 'webhook',
+          type: 'webhook_delivery_failed',
+          content: `Webhook delivery failed for ${eventType}: ${lastError?.message || 'unknown error'}`,
+          refs: payload.taskId ? [payload.taskId] : [],
+          data: { event_type: eventType, error: lastError?.message, attempts: WEBHOOK_MAX_RETRIES },
+        }, helpers));
+        mgmt.trimSignals(failBoard, helpers.signalArchivePath);
+        helpers.writeBoard(failBoard);
+      } catch (signalErr) {
+        console.error(`[webhook] failed to write failure signal:`, signalErr.message);
+      }
+    }
+  })();
 }
 
 // Strip <think>...</think> blocks from model output (some providers leak reasoning tokens)
@@ -229,7 +287,12 @@ function createStepWorker(deps) {
       helpers.writeBoard(lockBoard);
     }
 
-    emitWebhookEvent(board, 'step_started', { taskId: envelope.task_id, stepId: envelope.step_id, stepType: envelope.step_type });
+    emitWebhookEvent(board, 'step_started', { taskId: envelope.task_id, stepId: envelope.step_id, stepType: envelope.step_type }, helpers);
+
+    // Hook system: emit step_started
+    if (deps.hookSystem) {
+      deps.hookSystem.emit('step_started', { taskId: envelope.task_id, stepId: envelope.step_id, stepType: envelope.step_type });
+    }
 
     // 3. Per-step runtime selection (envelope.runtime_hint takes precedence)
     //    With fallback chain: on PROVIDER errors, try next runtime in chain
@@ -477,7 +540,7 @@ function createStepWorker(deps) {
 
             helpers.writeBoard(failBoard);
             helpers.appendLog({ ts: helpers.nowIso(), event: 'step_killed', taskId: envelope.task_id, stepId: envelope.step_id, duration_ms: dispatchDurationMs });
-            emitWebhookEvent(failBoard, 'step_cancelled', { taskId: envelope.task_id, stepId: envelope.step_id, state: 'cancelled' });
+            emitWebhookEvent(failBoard, 'step_cancelled', { taskId: envelope.task_id, stepId: envelope.step_id, state: 'cancelled' }, helpers);
             throw dispatchErr;
           }
           const errorKind = classifyError(dispatchErr, null);
@@ -498,7 +561,7 @@ function createStepWorker(deps) {
 
           helpers.writeBoard(failBoard);
           helpers.appendLog({ ts: helpers.nowIso(), event: 'step_dispatch_error', taskId: envelope.task_id, stepId: envelope.step_id, error: dispatchErr.message, duration_ms: dispatchDurationMs });
-          emitWebhookEvent(failBoard, signalType, { taskId: envelope.task_id, stepId: envelope.step_id, state: failStep.state, error: dispatchErr.message });
+          emitWebhookEvent(failBoard, signalType, { taskId: envelope.task_id, stepId: envelope.step_id, state: failStep.state, error: dispatchErr.message }, helpers);
 
           // Log diagnostic for dead steps
           if (failStep.state === 'dead') {
@@ -785,7 +848,12 @@ function createStepWorker(deps) {
       mgmt.trimSignals(latestBoard, helpers.signalArchivePath);
       helpers.writeBoard(latestBoard);
       helpers.appendLog({ ts: helpers.nowIso(), event: signalType, taskId: envelope.task_id, stepId: envelope.step_id, from: 'running', to: latestStep.state });
-      emitWebhookEvent(latestBoard, signalType, { taskId: envelope.task_id, stepId: envelope.step_id, state: latestStep.state });
+      emitWebhookEvent(latestBoard, signalType, { taskId: envelope.task_id, stepId: envelope.step_id, state: latestStep.state }, helpers);
+
+      // Hook system: emit step_completed
+      if (deps.hookSystem && signalType === 'step_completed') {
+        deps.hookSystem.emit('step_completed', { taskId: envelope.task_id, stepId: envelope.step_id, state: latestStep.state });
+      }
 
       // 8. Trigger kernel for terminal states (via setImmediate to avoid deep recursion)
       const newSignal = {
