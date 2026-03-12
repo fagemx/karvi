@@ -174,9 +174,9 @@ function dispatchTask(task, board, deps, helpers, opts = {}) {
   }
 
   // Usage limits gate
+  const ownerId = usage ? mgmt.resolveOwnerId(board) : null;
   if (usage) {
-    const userId = mgmt.resolveOwnerId(board);
-    const usageCheck = usage.enforceUsageLimits(userId);
+    const usageCheck = usage.enforceUsageLimits(ownerId, board);
     if (!usageCheck.allowed) {
       _dispatchLocks.delete(taskId);
       console.log(`[dispatchTask:${taskId}] skip: usage limit exceeded (${usageCheck.metric}: ${usageCheck.used}/${usageCheck.limit})`);
@@ -308,6 +308,10 @@ function dispatchTask(task, board, deps, helpers, opts = {}) {
       helpers.appendLog({ ts: helpers.nowIso(), event: 'step_pipeline_started', taskId, runId, firstStep: firstStep.step_id, source });
       deps.stepWorker.executeStep(envelope, helpers.readBoard(), helpers).catch(err =>
         console.error(`[dispatchTask:${taskId}] step execution error:`, err.message));
+      // Record dispatch usage event only on successful envelope build
+      if (usage) {
+        usage.record(ownerId, 'dispatch', { taskId, source, runtime: ctrl.preferred_runtime || 'openclaw' });
+      }
     } else {
       if (firstStep.state === 'queued') {
         deps.stepSchema.transitionStep(firstStep, 'running', { locked_by: source });
@@ -317,11 +321,6 @@ function dispatchTask(task, board, deps, helpers, opts = {}) {
       helpers.appendLog({ ts: helpers.nowIso(), event: 'dispatch_envelope_failed', taskId, source });
       console.error(`[dispatchTask:${taskId}] failed to build envelope for first step`);
     }
-  // Record dispatch usage event
-  if (usage) {
-    const userId = mgmt.resolveOwnerId(board);
-    usage.record(userId, 'dispatch', { taskId, source, runtime: ctrl.preferred_runtime || 'openclaw' });
-  }
 
   _dispatchLocks.delete(taskId);
   return { dispatched: true, mode: 'step-pipeline', runId };
@@ -348,9 +347,10 @@ function tryAutoDispatch(taskId, deps, helpers) {
   // Usage limits gate
   if (usage) {
     const userId = mgmt.resolveOwnerId(board);
-    const usageCheck = usage.enforceUsageLimits(userId);
+    const usageCheck = usage.enforceUsageLimits(userId, board);
     if (!usageCheck.allowed) {
       console.log(`[auto-dispatch:${taskId}] skip: usage limit exceeded (${usageCheck.metric}: ${usageCheck.used}/${usageCheck.limit})`);
+      helpers.appendLog({ ts: helpers.nowIso(), event: 'dispatch_blocked', taskId, source: 'auto-dispatch', code: 'USAGE_LIMIT_EXCEEDED', metric: usageCheck.metric, used: usageCheck.used, limit: usageCheck.limit });
       return;
     }
   }

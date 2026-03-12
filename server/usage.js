@@ -484,14 +484,15 @@ function checkLimits(userId) {
  * @param {string} userId
  * @returns {{ allowed: boolean, code?: string, metric?: string, used?: number, limit?: number }}
  */
-function enforceUsageLimits(userId) {
+function enforceUsageLimits(userId, board) {
   if (!config) return { allowed: true };
 
-  let board;
-  try {
-    board = config.readBoard();
-  } catch {
-    return { allowed: true };
+  if (!board) {
+    try {
+      board = config.readBoard();
+    } catch {
+      return { allowed: true };
+    }
   }
 
   const limits = board.controls?.usage_limits;
