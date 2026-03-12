@@ -14,6 +14,7 @@ const bb = require('../blackboard-server');
 const { uid, nowIso } = bb;
 const mgmt = require('../management');
 const { retryOnConflict } = require('../helpers/retry');
+const { buildContract } = require('./deliverable-contracts');
 
 /**
  * Extract plan data from a synthesis step's output artifact.
@@ -120,6 +121,9 @@ async function parsePlanAndDispatch(board, planData, helpers, deps, synthesisTas
       // Resolve depends: plan-internal refs + explicit cross-task deps
       const resolvedDepends = resolveDependencies(pt.depends, titleToId);
 
+      // Build deliverable contract from kind (if chief provided it)
+      const contract = buildContract(pt.kind, pt.acceptance);
+
       const task = {
         id: taskId,
         title: pt.title || `Task ${i + 1}`,
@@ -140,6 +144,17 @@ async function parsePlanAndDispatch(board, planData, helpers, deps, synthesisTas
           reason: `village_plan:${cycleId}`,
         }],
       };
+
+      // Attach contract if kind is known; unknown kind → needs_input
+      if (pt.kind) {
+        if (contract) {
+          task.contract = contract;
+        } else {
+          task.status = 'blocked';
+          task.blocker = { type: 'unknown_kind', reason: `Unknown deliverable kind: ${pt.kind}` };
+          console.warn(`[village:plan-dispatcher] unknown kind "${pt.kind}" for task "${pt.title}", marking blocked`);
+        }
+      }
 
       latestBoard.taskPlan.tasks.push(task);
       createdTaskIds.push(taskId);
