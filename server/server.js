@@ -11,27 +11,7 @@ const path = require('path');
 const bb = require('./blackboard-server');
 const mgmt = require('./management');
 const runtime = require('./runtime-openclaw');
-
-let runtimeCodex = null;
-try { runtimeCodex = require('./runtime-codex'); } catch { /* codex not installed, skip */ }
-
-let runtimeClaude = null;
-try { runtimeClaude = require('./runtime-claude'); } catch { /* claude not installed, skip */ }
-
-let jiraIntegration = null;
-try { jiraIntegration = require('./integration-jira'); } catch { /* jira integration not available, skip */ }
-
-let githubIntegration = null;
-try { githubIntegration = require('./integration-github'); } catch { /* github integration not available, skip */ }
-
-let digestTask = null;
-try { digestTask = require('./digest-task'); } catch { /* digest-task not available, skip */ }
-
-let timelineTask = null;
-try { timelineTask = require('./timeline-task'); } catch { /* timeline-task not available, skip */ }
-
-let confidenceEngine = null;
-try { confidenceEngine = require('./confidence-engine'); } catch { /* confidence-engine not available, skip */ }
+const { loadModules } = require('./module-loader');
 
 const telemetry = require('./telemetry');
 const push = require('./push');
@@ -41,12 +21,21 @@ const usage = require('./usage');
 
 const vault = require('./vault').createVault({ vaultDir: path.join(__dirname, 'vaults') });
 
-// Claude API runtime — factory pattern, injects vault for per-user API key retrieval
-let runtimeClaudeApi = null;
-try { runtimeClaudeApi = require('./runtime-claude-api').create({ vault }); } catch { /* claude-api not configured, skip */ }
+const opt = loadModules([
+  { name: 'runtimeCodex',     path: './runtime-codex',       optional: true },
+  { name: 'runtimeClaude',    path: './runtime-claude',      optional: true },
+  { name: 'jiraIntegration',  path: './integration-jira',    optional: true },
+  { name: 'githubIntegration', path: './integration-github', optional: true },
+  { name: 'digestTask',       path: './digest-task',         optional: true },
+  { name: 'timelineTask',     path: './timeline-task',       optional: true },
+  { name: 'confidenceEngine', path: './confidence-engine',   optional: true },
+  { name: 'runtimeClaudeApi', path: './runtime-claude-api',  optional: true, factory: mod => mod.create({ vault }) },
+  { name: 'runtimeOpencode',  path: './runtime-opencode',    optional: true },
+]);
 
-let runtimeOpencode = null;
-try { runtimeOpencode = require('./runtime-opencode'); } catch { /* opencode not installed, skip */ }
+const { runtimeCodex, runtimeClaude, jiraIntegration, githubIntegration,
+        digestTask, timelineTask, confidenceEngine, runtimeClaudeApi,
+        runtimeOpencode } = opt;
 
 const { validateAllRuntimes } = require('./runtime-contract');
 const { migrateBoard } = require('./board-migration');
