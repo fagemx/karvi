@@ -383,7 +383,7 @@ function dispatchTask(task, board, deps, helpers, opts = {}) {
     board.signals.push(createSignal({
       by: source, type: 'steps_created', content: `${taskId} steps created (${task.steps.length})`,
       refs: [taskId], data: { taskId, runId, count: task.steps.length },
-    }, req, helpers));
+    }, null, helpers));
     mgmt.trimSignals(board, helpers.signalArchivePath);
 
     const firstStep = task.steps[0];
