@@ -175,10 +175,6 @@ function decideNext(agentOutput, runState) {
 
   // 4. Succeeded (or needs_revision — review completed but wants changes) → find next step
   if (agentOutput.status === 'succeeded' || agentOutput.status === 'needs_revision') {
-    const stepTypes = steps.map(s => s.type);
-    const currentIdx = stepTypes.indexOf(fromStep?.type);
-    const nextIdx = currentIdx + 1;
-
     // Revision cycle: if a step with revision_target found actionable findings,
     // loop back to the target step for a fix pass.
     // Guard: limit revision cycles to avoid infinite loops.
@@ -199,12 +195,36 @@ function decideNext(agentOutput, runState) {
       }
     }
 
-    // More steps in pipeline?
-    if (nextIdx < steps.length) {
-      const nextStep = steps[nextIdx];
+    // Group-aware progression: find the current step's group, check if all
+    // siblings in the group are terminal, then advance to the next group.
+    const currentGroup = resolveStepGroup(fromStep, steps);
+    const siblings = steps.filter(s => resolveStepGroup(s, steps) === currentGroup);
+    const siblingsPending = siblings.some(s =>
+      s.state !== 'succeeded' && s.state !== 'dead' && s.state !== 'cancelled'
+    );
+
+    if (siblingsPending) {
+      // Group not yet complete — wait (no action, kernel will be called again when next sibling finishes)
+      return { ...base, action: 'wait_group', rule: 'parallel_group_pending', confidence: 1.0,
+        next_step: null, retry: null, human_review: null };
+    }
+
+    // All siblings done — check if any failed fatally (dead) in this group
+    const deadSiblings = siblings.filter(s => s.state === 'dead');
+    if (deadSiblings.length > 0) {
+      return { ...base, action: 'dead_letter', rule: 'parallel_group_has_dead', confidence: 0.9,
+        next_step: null, retry: null, human_review: null };
+    }
+
+    // Find next group's first queued step
+    const nextGroupSteps = findNextGroupSteps(currentGroup, steps);
+    if (nextGroupSteps.length > 0) {
+      const nextStep = nextGroupSteps[0];
       return { ...base, action: 'next_step', rule: 'pipeline_advance', confidence: 1.0,
         retry: null, human_review: null,
-        next_step: { step_id: nextStep.step_id, step_type: nextStep.type, priority: 0 } };
+        next_step: { step_id: nextStep.step_id, step_type: nextStep.type, priority: 0 },
+        // Signal parallel siblings so kernel can dispatch them too
+        parallel_siblings: nextGroupSteps.slice(1).map(s => ({ step_id: s.step_id, step_type: s.type })) };
     }
 
     // All done
@@ -218,6 +238,32 @@ function decideNext(agentOutput, runState) {
     human_review: { reason: `Unknown output status: ${agentOutput.status}` } };
 }
 
+// --- Parallel group helpers ---
+
+/**
+ * Resolve a step's group index. If the step has no explicit group,
+ * fall back to its array position (backward compat: each step = own group).
+ */
+function resolveStepGroup(step, steps) {
+  if (step.group != null) return step.group;
+  return steps.indexOf(step);
+}
+
+/**
+ * Find all queued steps in the next group after the given group index.
+ */
+function findNextGroupSteps(currentGroup, steps) {
+  // Collect all distinct group indices > currentGroup, sorted
+  const groups = new Set();
+  for (const s of steps) {
+    const g = resolveStepGroup(s, steps);
+    if (g > currentGroup) groups.add(g);
+  }
+  if (groups.size === 0) return [];
+  const nextGroup = Math.min(...groups);
+  return steps.filter(s => resolveStepGroup(s, steps) === nextGroup && s.state === 'queued');
+}
+
 module.exports = {
   FAILURE_MODES,
   BUDGET_DEFAULTS,
@@ -228,4 +274,6 @@ module.exports = {
   isCostBudgetExceeded,
   needsRevision,
   decideNext,
+  resolveStepGroup,
+  findNextGroupSteps,
 };

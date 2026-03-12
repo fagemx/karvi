@@ -135,9 +135,16 @@ function createKernel(deps) {
 
     // Execute decision
     switch (decision.action) {
+      case 'wait_group': {
+        // Parallel group has pending siblings — persist budget update and wait
+        console.log(`[kernel] ${taskId} parallel group pending, waiting for siblings`);
+        helpers.writeBoard(latestBoard);
+        return;
+      }
+
       case 'next_step': {
         const nextStepType = decision.next_step?.step_type;
-        
+
         // Per-step-type concurrency check
         const ctrl = mgmt.getControls(latestBoard);
         const limit = ctrl.max_concurrent_by_type?.[nextStepType];
@@ -154,7 +161,7 @@ function createKernel(deps) {
             return;
           }
         }
-        
+
         const envelope = contextCompiler.buildEnvelope(decision, runState, deps);
         if (!envelope) break;
         // Write input artifact
@@ -173,6 +180,46 @@ function createKernel(deps) {
         // Dispatch async via StepWorker (fire-and-forget, errors logged)
         deps.stepWorker.executeStep(envelope, latestBoard, helpers).catch(err =>
           console.error(`[kernel] executeStep error for ${envelope.step_id}:`, err.message));
+
+        // Dispatch parallel siblings (if any) — same group, different steps
+        if (Array.isArray(decision.parallel_siblings) && decision.parallel_siblings.length > 0) {
+          for (const sibling of decision.parallel_siblings) {
+            const sibDecision = { action: 'next_step', next_step: { step_id: sibling.step_id, step_type: sibling.step_type } };
+            const sibEnvelope = contextCompiler.buildEnvelope(sibDecision, runState, deps);
+            if (!sibEnvelope) continue;
+
+            // Check concurrency limit for sibling's type
+            const sibLimit = ctrl.max_concurrent_by_type?.[sibling.step_type];
+            if (sibLimit) {
+              let sibRunning = 0;
+              const freshBoard = helpers.readBoard();
+              for (const t of (freshBoard.taskPlan?.tasks || [])) {
+                for (const s of (t.steps || [])) {
+                  if (s.type === sibling.step_type && s.state === 'running') sibRunning++;
+                }
+              }
+              if (sibRunning >= sibLimit) {
+                console.log(`[kernel] ${sibling.step_type} concurrency limit reached for parallel sibling, skipping`);
+                continue;
+              }
+            }
+
+            artifactStore.writeArtifact(sibEnvelope.run_id, sibEnvelope.step_id, 'input', sibEnvelope);
+            const sibBoard = helpers.readBoard();
+            const sibTask = (sibBoard.taskPlan?.tasks || []).find(t => t.id === taskId);
+            const sibStep = sibTask?.steps?.find(s => s.step_id === sibling.step_id);
+            if (sibStep && sibStep.state === 'queued') {
+              stepSchema.transitionStep(sibStep, 'running', {
+                locked_by: 'kernel-parallel',
+                input_ref: artifactStore.artifactPath(sibEnvelope.run_id, sibEnvelope.step_id, 'input'),
+              });
+              helpers.writeBoard(sibBoard);
+            }
+            deps.stepWorker.executeStep(sibEnvelope, helpers.readBoard(), helpers).catch(err =>
+              console.error(`[kernel] parallel executeStep error for ${sibEnvelope.step_id}:`, err.message));
+          }
+        }
+
         return;  // writeBoard already called
       }
 

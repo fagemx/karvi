@@ -564,6 +564,14 @@ const BUILT_IN_TEMPLATES = {
     { type: 'implement' },
     { type: 'review', revision_target: 'implement' },
   ],
+  'parallel-review': [
+    { type: 'plan' },
+    { type: 'implement' },
+    { parallel: [
+      { type: 'review', instruction: 'Code quality and correctness review', revision_target: 'implement' },
+      { type: 'review', instruction: 'Security and performance review', revision_target: 'implement' },
+    ]},
+  ],
   'research': [
     { type: 'plan', instruction: 'Research and analyze the problem space thoroughly' },
     { type: 'plan', instruction: 'Propose solution options with trade-offs' },
@@ -576,6 +584,12 @@ function normalizePipelineEntry(entry) {
   if (typeof entry === 'string') {
     const type = entry.trim();
     return type ? { type } : null;
+  }
+  // Parallel group: { parallel: [stepDef, stepDef, ...] }
+  if (entry && typeof entry === 'object' && Array.isArray(entry.parallel)) {
+    const children = entry.parallel.map(normalizePipelineEntry).filter(Boolean);
+    if (children.length === 0) return null;
+    return { _parallel: children };
   }
   if (entry && typeof entry === 'object' && typeof entry.type === 'string') {
     const type = entry.type.trim();
@@ -612,20 +626,49 @@ function generateStepsForTask(task, runId, pipeline, board) {
 
   const normalized = source.map(normalizePipelineEntry).filter(Boolean);
   if (normalized.length === 0) {
-    return DEFAULT_STEP_PIPELINE.map(type => stepSchema.createStep(task.id, runId, type));
+    return DEFAULT_STEP_PIPELINE.map((type, i) => stepSchema.createStep(task.id, runId, type, { group: i }));
   }
 
-  return normalized.map(stepDef => {
-    const opts = {};
-    if (stepDef.instruction) opts.instruction = stepDef.instruction;
-    if (stepDef.skill) opts.skill = stepDef.skill;
-    if (stepDef.runtime_hint) opts.runtime_hint = stepDef.runtime_hint;
-    else if (task.runtimeHint) opts.runtime_hint = task.runtimeHint;
-    if (stepDef.retry_policy) opts.retry_policy = stepDef.retry_policy;
-    if (stepDef.revision_target) opts.revision_target = stepDef.revision_target;
-    if (stepDef.max_revision_cycles != null) opts.max_revision_cycles = stepDef.max_revision_cycles;
-    return stepSchema.createStep(task.id, runId, stepDef.type, opts);
-  });
+  // Flatten parallel groups and assign group indices.
+  // Each top-level entry = one group. { _parallel: [...] } entries share the same group.
+  const steps = [];
+  let groupIdx = 0;
+  // Track how many steps of each type have been generated (for unique step_id suffixes)
+  const typeCounts = {};
+
+  for (const entry of normalized) {
+    if (entry._parallel) {
+      for (const child of entry._parallel) {
+        const step = buildStepFromDef(task, runId, child, groupIdx, typeCounts);
+        steps.push(step);
+      }
+    } else {
+      const step = buildStepFromDef(task, runId, entry, groupIdx, typeCounts);
+      steps.push(step);
+    }
+    groupIdx++;
+  }
+
+  return steps;
+}
+
+function buildStepFromDef(task, runId, stepDef, group, typeCounts) {
+  const opts = { group };
+  if (stepDef.instruction) opts.instruction = stepDef.instruction;
+  if (stepDef.skill) opts.skill = stepDef.skill;
+  if (stepDef.runtime_hint) opts.runtime_hint = stepDef.runtime_hint;
+  else if (task.runtimeHint) opts.runtime_hint = task.runtimeHint;
+  if (stepDef.retry_policy) opts.retry_policy = stepDef.retry_policy;
+  if (stepDef.revision_target) opts.revision_target = stepDef.revision_target;
+  if (stepDef.max_revision_cycles != null) opts.max_revision_cycles = stepDef.max_revision_cycles;
+
+  // Generate unique step_id: for duplicate types, append suffix (e.g. T1:review:1)
+  typeCounts[stepDef.type] = (typeCounts[stepDef.type] || 0) + 1;
+  if (typeCounts[stepDef.type] > 1) {
+    opts.stepIdSuffix = typeCounts[stepDef.type] - 1;
+  }
+
+  return stepSchema.createStep(task.id, runId, stepDef.type, opts);
 }
 
 // --- Task scheduling helpers ---

@@ -264,7 +264,7 @@ function computeBackoff(kindConfig, step) {
 
 
 function createStep(taskId, runId, type, opts = {}) {
-  const stepId = `${taskId}:${type}`;
+  const stepId = opts.stepIdSuffix != null ? `${taskId}:${type}:${opts.stepIdSuffix}` : `${taskId}:${type}`;
   const retry = { ...DEFAULT_RETRY_POLICY, ...(opts.retry_policy || {}) };
   return {
     step_id: stepId,
@@ -280,6 +280,9 @@ function createStep(taskId, runId, type, opts = {}) {
     idempotency_key: null,
     input_ref: null,
     output_ref: null,
+    // Parallel group index — steps with the same group run concurrently.
+    // null = auto-assigned sequential group (backward compat).
+    group: opts.group ?? null,
     // Semantic step metadata (task-specific behavior lives in data, not hard-coded maps)
     instruction: opts.instruction || null,
     skill: opts.skill || null,
