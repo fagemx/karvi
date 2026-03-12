@@ -300,6 +300,60 @@ async function testCORS() {
   assert(r1.status === 204, 'OPTIONS returns 204');
 }
 
+async function testXffValidation() {
+  console.log('\n--- X-Forwarded-For Validation ---');
+
+  // Valid XFF should be preserved (we test via proxy behavior — the header reaches backend)
+  // We test the validation functions directly since proxy target may not be running
+  const proxy = require('./gateway-proxy');
+
+  // Unit-level: test isValidXff and isValidHost via proxyRequest header construction
+  // Since we can't easily intercept proxy headers, test the module's exported internal
+  // by constructing a mock scenario and checking what gateway-proxy produces.
+
+  // Instead, test via the gateway: requests with spoofed XFF should still work
+  // (gateway doesn't block, but proxy validates before forwarding)
+
+  // Test 1: Login with valid XFF header — should work normally
+  const r1 = await request('POST', '/auth/login', {
+    body: { username: 'testuser1', password: 'password123' },
+    headers: { 'x-forwarded-for': '10.0.0.1, 192.168.1.1' },
+  });
+  assert(r1.status === 200, 'Request with valid XFF succeeds');
+
+  // Test 2: Login with spoofed/invalid XFF — should still work (validation is in proxy, not auth)
+  const r2 = await request('POST', '/auth/login', {
+    body: { username: 'testuser1', password: 'password123' },
+    headers: { 'x-forwarded-for': '../../injection, admin-ip' },
+  });
+  assert(r2.status === 200, 'Request with invalid XFF still reaches gateway auth');
+
+  // Test 3: Verify validation functions directly
+  const { isValidXff, isValidHost } = proxy;
+
+  // Valid XFF values
+  assert(isValidXff('10.0.0.1') === true, 'isValidXff: single IPv4');
+  assert(isValidXff('10.0.0.1, 192.168.1.1') === true, 'isValidXff: multiple IPv4');
+  assert(isValidXff('::1') === true, 'isValidXff: IPv6 loopback');
+  assert(isValidXff('2001:db8::1, 10.0.0.1') === true, 'isValidXff: mixed IPv4+IPv6');
+
+  // Invalid XFF values (path traversal, injection, garbage)
+  assert(isValidXff('../../injection') === false, 'isValidXff: path traversal rejected');
+  assert(isValidXff('admin-ip') === false, 'isValidXff: non-IP string rejected');
+  assert(isValidXff('10.0.0.1, ../../etc/passwd') === false, 'isValidXff: mixed valid+invalid rejected');
+  assert(isValidXff('123.456.789.999, admin-ip') === false, 'isValidXff: example from issue rejected');
+
+  // Valid hosts
+  assert(isValidHost('example.com') === true, 'isValidHost: domain');
+  assert(isValidHost('example.com:8080') === true, 'isValidHost: domain with port');
+  assert(isValidHost('localhost') === true, 'isValidHost: localhost');
+
+  // Invalid hosts
+  assert(isValidHost('example.com/../../etc') === false, 'isValidHost: path traversal rejected');
+  assert(isValidHost('example.com:8080/admin') === false, 'isValidHost: path injection rejected');
+  assert(isValidHost('') === false, 'isValidHost: empty rejected');
+}
+
 // --- Test Runner ---
 
 async function runTests() {
@@ -317,6 +371,7 @@ async function runTests() {
     await testSessionExpiry();
     await testPathRouting();
     await testCORS();
+    await testXffValidation();
     await testLogout(loginToken);
   } catch (err) {
     console.error('\n  ERROR:', err.message);

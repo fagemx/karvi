@@ -22,6 +22,19 @@ const HOP_BY_HOP = new Set([
 // Timeout for connecting to backend (ms)
 const CONNECT_TIMEOUT_MS = 10000;
 
+// IPv4: 1.2.3.4 | IPv6: ::1, fe80::1, 2001:db8::1
+const IP_RE = /^(?:\d{1,3}\.){3}\d{1,3}$|^[0-9a-fA-F:]+$/;
+
+/** Validate X-Forwarded-For: comma-separated list of IPs */
+function isValidXff(xff) {
+  return xff.split(',').every(part => IP_RE.test(part.trim()));
+}
+
+/** Validate host header: hostname or hostname:port, no path traversal */
+function isValidHost(host) {
+  return /^[a-zA-Z0-9._-]+(:\d+)?$/.test(host);
+}
+
 /**
  * Proxy an HTTP request to a target instance port.
  *
@@ -59,12 +72,19 @@ function proxyRequest(req, res, port, opts = {}) {
     headers['x-karvi-user'] = opts.injectUser;
   }
 
-  // Forward client IP
+  // Forward client IP — validate existing X-Forwarded-For to prevent IP spoofing
   const clientIp = req.socket.remoteAddress || '';
-  headers['x-forwarded-for'] = req.headers['x-forwarded-for']
-    ? `${req.headers['x-forwarded-for']}, ${clientIp}`
-    : clientIp;
+  const upstreamXff = req.headers['x-forwarded-for'];
+  if (upstreamXff && isValidXff(upstreamXff)) {
+    headers['x-forwarded-for'] = `${upstreamXff}, ${clientIp}`;
+  } else {
+    headers['x-forwarded-for'] = clientIp;
+  }
   headers['x-forwarded-proto'] = req.headers['x-forwarded-proto'] || 'http';
+  // Validate X-Forwarded-Host to prevent host header injection
+  if (req.headers['x-forwarded-host'] && !isValidHost(req.headers['x-forwarded-host'])) {
+    delete headers['x-forwarded-host'];
+  }
 
   const proxyReq = http.request({
     hostname: '127.0.0.1',
@@ -120,4 +140,4 @@ function proxyRequest(req, res, port, opts = {}) {
   req.pipe(proxyReq);
 }
 
-module.exports = { proxyRequest };
+module.exports = { proxyRequest, isValidXff, isValidHost };
