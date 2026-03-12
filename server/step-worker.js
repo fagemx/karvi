@@ -95,6 +95,7 @@ function emitWebhookEvent(board, eventType, payload, helpers = null) {
             headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body) },
             timeout: 5000,
           }, (res) => {
+            res.resume(); // drain response body to free socket
             if (res.statusCode >= 500) {
               reject(new Error(`HTTP ${res.statusCode}`));
             } else if (res.statusCode >= 400) {

@@ -80,7 +80,6 @@ function listMarketplaceSkills() {
       author: manifest.author,
       dependencies: manifest.dependencies,
       installed: false,
-      path: skillPath,
     });
   }
 
@@ -89,7 +88,12 @@ function listMarketplaceSkills() {
   return _cache;
 }
 
+function isSafeSkillId(skillId) {
+  return skillId && /^[a-zA-Z0-9_-]+$/.test(skillId);
+}
+
 function getSkillDetail(skillId) {
+  if (!isSafeSkillId(skillId)) return null;
   const skillDir = path.join(MARKETPLACE_DIR, skillId);
   if (!fs.existsSync(skillDir)) return null;
 
@@ -130,6 +134,9 @@ function getSkillDetail(skillId) {
 }
 
 function installSkill(skillId, projectRoot) {
+  if (!isSafeSkillId(skillId)) {
+    return { ok: false, error: 'invalid_skill_id', message: 'Skill ID must be alphanumeric, hyphens, or underscores only' };
+  }
   const skillDir = path.join(MARKETPLACE_DIR, skillId);
   if (!fs.existsSync(skillDir)) {
     return { ok: false, error: 'skill_not_found', message: `Skill "${skillId}" not found in marketplace` };

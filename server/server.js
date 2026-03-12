@@ -202,8 +202,11 @@ const server = bb.createServer(ctx, (req, res, helpers) => {
     return json(res, 200, serviceManager.status());
   }
 
-  // GET /api/hooks — list registered hooks
+  // GET /api/hooks — list registered hooks (operator+)
   if (req.method === 'GET' && req.url === '/api/hooks') {
+    if (req.karviRole && req.karviRole !== 'admin' && req.karviRole !== 'operator') {
+      return json(res, 403, { error: 'forbidden', requiredRole: 'operator' });
+    }
     return json(res, 200, {
       supportedEvents: hookSystem.getSupportedEvents(),
       hooks: hookSystem.listHooks(),
