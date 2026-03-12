@@ -20,6 +20,8 @@ const { retryOnConflict } = require('./helpers/retry');
 const LOCK_GRACE_MS = 30_000; // 30s grace on top of step timeout
 const HEARTBEAT_DEBOUNCE_MS = 10_000; // Debounce heartbeat writes to 10s interval
 
+const MAX_SESSIONS = 50;
+
 // --- Webhook event emission (#333/#443/#444) — Thyra-aligned envelope + retry ---
 
 // Map internal signal types to Thyra event_type values
@@ -288,6 +290,23 @@ function createStepWorker(deps) {
     if (lockStep && lockStep.state === 'running') {
       lockStep.lock_expires_at = new Date(Date.now() + timeoutMs + LOCK_GRACE_MS).toISOString();
       lockStep.locked_by = 'step-worker';
+      // Initialize session tracking for this step
+      const sessionStartedAt = new Date().toISOString();
+      const stepSessionId = helpers.uid('session');
+      lockTask.sessions = lockTask.sessions || [];
+      lockTask.sessions.push({
+        sessionId: stepSessionId,
+        runtime: stepRuntimeHint || 'unknown',
+        startedAt: sessionStartedAt,
+        endedAt: null,
+        stepsCompleted: 0,
+      });
+      // Cap sessions to prevent unbounded growth
+      if (lockTask.sessions.length > MAX_SESSIONS) {
+        lockTask.sessions.splice(0, lockTask.sessions.length - MAX_SESSIONS);
+      }
+      // Store sessionId on the step for precise matching at end-of-step
+      lockStep.sessionId = stepSessionId;
       helpers.writeBoard(lockBoard);
     }
 
@@ -846,6 +865,16 @@ function createStepWorker(deps) {
     // Persist session ID on task for subsequent steps / follow-up resume
     if (sessionId && latestTask) {
       latestTask.childSessionKey = sessionId;
+    }
+
+    // Update session tracking: mark ended and increment steps completed
+    if (latestTask && latestStep?.sessionId) {
+      latestTask.sessions = latestTask.sessions || [];
+      const activeSession = latestTask.sessions.find(s => s.sessionId === latestStep.sessionId);
+      if (activeSession) {
+        activeSession.endedAt = new Date().toISOString();
+        activeSession.stepsCompleted = (activeSession.stepsCompleted || 0) + 1;
+      }
     }
 
     if (latestStep && latestStep.state === 'running') {

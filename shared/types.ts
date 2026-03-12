@@ -44,6 +44,14 @@ export type RuntimeName = 'openclaw' | 'codex' | 'claude';
 
 export type TaskPlanPhase = 'idle' | 'planning' | 'executing' | 'done';
 
+export interface TaskSession {
+  sessionId: string;
+  runtime: RuntimeName | string;
+  startedAt: string;
+  endedAt: string | null;
+  stepsCompleted: number;
+}
+
 // ---------------------------------------------------------------------------
 // Core Types
 // ---------------------------------------------------------------------------
@@ -168,6 +176,7 @@ export interface Task {
   review?: ReviewResult;
   blocker?: { reason: string; askedAt: string } | null;
   history?: HistoryEntry[];
+  sessions?: TaskSession[];
   jiraKey?: string;
   jiraUrl?: string;
   source?: string;
