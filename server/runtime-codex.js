@@ -184,7 +184,7 @@ function dispatch(plan) {
       plan.signal.addEventListener('abort', () => {
         killTree(child.pid, { signal: 'SIGTERM' });
         // Hard kill fallback after grace period
-        setTimeout(() => killTree(child.pid), 5000);
+        setTimeout(() => killTree(child.pid), 5000).unref();
       }, { once: true });
     }
 
