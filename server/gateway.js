@@ -33,6 +33,7 @@ const path = require('path');
 const store = require('./gateway-store');
 const proxy = require('./gateway-proxy');
 const mgr = require('./instance-manager');
+const { createLimiter } = require('./rate-limiter');
 
 // --- Configuration ---
 const PORT = Number(process.env.GATEWAY_PORT || 3460);
@@ -44,6 +45,18 @@ const SESSION_CLEANUP_INTERVAL_MS = 3600000; // 1 hour
 
 // CORS origin 白名單 — comma-separated，未設定時開發模式 fallback 到 *
 const ALLOWED_ORIGINS = (process.env.KARVI_CORS_ORIGINS || '').split(',').map(s => s.trim()).filter(Boolean);
+
+// --- Login Rate Limiter ---
+// 5 attempts per minute per IP to prevent brute force attacks
+const loginLimiter = createLimiter({ capacity: 5, refillRate: 5 / 60 });
+
+function getClientIP(req) {
+  const xff = req.headers['x-forwarded-for'];
+  if (xff) return xff.split(',')[0].trim();
+  const cfIP = req.headers['cf-connecting-ip'];
+  if (cfIP) return cfIP.trim();
+  return req.socket.remoteAddress || '127.0.0.1';
+}
 
 // --- Helpers ---
 
@@ -230,6 +243,16 @@ async function handleRegister(req, res) {
 }
 
 async function handleLogin(req, res) {
+  // Rate limit: 5 attempts per minute per IP
+  const clientIP = getClientIP(req);
+  const rateResult = loginLimiter.consume(clientIP);
+  res.setHeader('X-LoginRateLimit-Limit', rateResult.limit);
+  res.setHeader('X-LoginRateLimit-Remaining', rateResult.remaining);
+  if (!rateResult.allowed) {
+    res.setHeader('Retry-After', rateResult.retryAfter);
+    return json(res, 429, { error: 'Too many login attempts', retryAfter: rateResult.retryAfter });
+  }
+
   let body;
   try { body = await parseBody(req); } catch (e) { return json(res, e.statusCode || 400, { error: e.statusCode === 413 ? 'Request body too large' : 'Invalid JSON' }); }
 
@@ -242,6 +265,9 @@ async function handleLogin(req, res) {
   if (!user) {
     return json(res, 401, { error: 'Invalid username or password' });
   }
+
+  // Reset rate limiter on successful login
+  loginLimiter.reset(clientIP);
 
   const session = store.createSession(user.userId, user.username);
 

@@ -1,0 +1,39 @@
+{
+  "meta": {
+    "updatedAt": "2026-03-12T08:12:45.151Z"
+  },
+  "instances": {
+    "inst-testuser1": {
+      "instanceId": "inst-testuser1",
+      "userId": "testuser1",
+      "port": 14000,
+      "pid": 286920,
+      "status": "running",
+      "dataDir": "C:\\ai_agent\\karvi\\.claude\\worktrees\\GH-422\\.test-gateway-data-1773303157563\\users\\testuser1",
+      "memoryLimitMB": 128,
+      "envExtra": {
+        "KARVI_API_TOKEN": "9c572d9a545b262f6b42a25423e4b54087b923ec67c36ff24aa9ec095309649a"
+      },
+      "createdAt": "2026-03-12T08:12:38.207Z",
+      "lastHealthCheck": null,
+      "healthFailCount": 0,
+      "restartHistory": []
+    },
+    "inst-testuser3": {
+      "instanceId": "inst-testuser3",
+      "userId": "testuser3",
+      "port": 14001,
+      "pid": null,
+      "status": "stopped",
+      "dataDir": "C:\\ai_agent\\karvi\\.claude\\worktrees\\GH-422\\.test-gateway-data-1773303157563\\users\\testuser3",
+      "memoryLimitMB": 128,
+      "envExtra": {
+        "KARVI_API_TOKEN": "7ccf7dc94285738b281e1f34be2dd2b67a10699f5aa2c668811cea01ba8a0fa7"
+      },
+      "createdAt": "2026-03-12T08:12:39.249Z",
+      "lastHealthCheck": null,
+      "healthFailCount": 0,
+      "restartHistory": []
+    }
+  }
+}

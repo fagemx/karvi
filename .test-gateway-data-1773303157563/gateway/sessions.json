@@ -1,0 +1,17 @@
+{
+  "updatedAt": "2026-03-12T08:12:45.154Z",
+  "sessions": {
+    "f926227db78e1903e6b5ae35a04f169770b818f1ef1cd057d89e243fc4df8b6a": {
+      "userId": "testuser1",
+      "username": "testuser1",
+      "createdAt": "2026-03-12T08:12:38.992Z",
+      "expiresAt": "2026-03-12T09:12:38.992Z"
+    },
+    "3ed0f8673491788334d82716ed85d5b8cb5684e33149370ba28a98a7af42f9d9": {
+      "userId": "testuser1",
+      "username": "testuser1",
+      "createdAt": "2026-03-12T08:12:39.155Z",
+      "expiresAt": "2026-03-12T09:12:39.155Z"
+    }
+  }
+}

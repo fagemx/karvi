@@ -1,0 +1,15 @@
+{
+  "updatedAt": "2026-03-12T08:12:45.153Z",
+  "users": {
+    "testuser1": {
+      "userId": "testuser1",
+      "username": "testuser1",
+      "email": "test1@example.com",
+      "passwordHash": "02f0ce3d9f4c25fbd700cfd707529775d13afea1fc025dce8d23b7a1e2eea7cb196a126e159f4eca51abea691e99f5ec19c8a223b4d2702cd1d39a7b4b47f413",
+      "salt": "23e39a60c9811febb24422ecd1e54e41",
+      "plan": "free",
+      "createdAt": "2026-03-12T08:12:38.193Z",
+      "updatedAt": "2026-03-12T08:12:38.193Z"
+    }
+  }
+}
