@@ -323,13 +323,17 @@ function createStepWorker(deps) {
       plan.signal = ac.signal;
 
       // hooks_before_run — agent 啟動前執行使用者定義的 shell command
+      // Fatal: 失敗時擋住 agent，因為 preflight 失敗不該繼續執行
       if (controls.hooks_before_run) {
         const hookCwd = plan.workingDir || plan.cwd || process.cwd();
-        await runHook('hooks_before_run', controls.hooks_before_run, hookCwd, {
+        const hookResult = await runHook('hooks_before_run', controls.hooks_before_run, hookCwd, {
           KARVI_TASK_ID: envelope.task_id,
           KARVI_STEP_ID: envelope.step_id,
           KARVI_WORKTREE_DIR: task.worktreeDir || '',
         });
+        if (!hookResult.ok) {
+          throw new Error(`hooks_before_run failed: ${hookResult.stderr || hookResult.stdout || 'exit ' + hookResult.code}`.slice(0, 500));
+        }
       }
 
       // Fallback loop: 嘗試主 runtime，PROVIDER 錯誤時依序嘗試 fallback chain 中的下一個

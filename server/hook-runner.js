@@ -21,6 +21,7 @@ function runHook(hookName, command, cwd, env, timeoutMs = 30_000) {
     return Promise.resolve({ ok: true, stdout: '', stderr: '', code: 0, timedOut: false });
   }
 
+  const t0 = Date.now();
   return new Promise((resolve) => {
     const mergedEnv = { ...process.env, ...env };
     const child = spawn('cmd.exe', ['/d', '/s', '/c', command], {
@@ -51,7 +52,7 @@ function runHook(hookName, command, cwd, env, timeoutMs = 30_000) {
       if (!ok) {
         console.warn(`[hook] ${hookName} ${timedOut ? 'timed out' : `exited ${code}`}: ${stderr.slice(0, 300) || stdout.slice(0, 300)}`);
       } else {
-        console.log(`[hook] ${hookName} ok (${Math.round(Date.now())})`);
+        console.log(`[hook] ${hookName} ok (${Date.now() - t0}ms)`);
       }
       resolve({ ok, stdout, stderr, code, timedOut });
     });
