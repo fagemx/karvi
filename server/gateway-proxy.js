@@ -22,12 +22,70 @@ const HOP_BY_HOP = new Set([
 // Timeout for connecting to backend (ms)
 const CONNECT_TIMEOUT_MS = 10000;
 
-// IPv4: 1.2.3.4 | IPv6: ::1, fe80::1, 2001:db8::1
-const IP_RE = /^(?:\d{1,3}\.){3}\d{1,3}$|^[0-9a-fA-F:]+$/;
+// Trusted proxies — comma-separated IPs/CIDRs from env
+// When set, only trust X-Forwarded-For if request comes from trusted proxy
+const TRUSTED_PROXIES = (process.env.KARVI_TRUSTED_PROXIES || '')
+  .split(',')
+  .map(s => s.trim())
+  .filter(Boolean);
 
-/** Validate X-Forwarded-For: comma-separated list of IPs */
-function isValidXff(xff) {
-  return xff.split(',').every(part => IP_RE.test(part.trim()));
+// IPv4 regex — matches valid IPv4 addresses (0-255 in each octet)
+const IPV4_REGEX = /^(?:(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)$/;
+
+// IPv6 regex — matches full and abbreviated IPv6 addresses
+const IPV6_REGEX = /^(?:[A-Fa-f0-9]{1,4}:){7}[A-Fa-f0-9]{1,4}$|^(?:[A-Fa-f0-9]{1,4}:){1,7}:$|^(?:[A-Fa-f0-9]{1,4}:){1,6}:[A-Fa-f0-9]{1,4}$|^(?:[A-Fa-f0-9]{1,4}:){1,5}(?::[A-Fa-f0-9]{1,4}){1,2}$|^(?:[A-Fa-f0-9]{1,4}:){1,4}(?::[A-Fa-f0-9]{1,4}){1,3}$|^(?:[A-Fa-f0-9]{1,4}:){1,3}(?::[A-Fa-f0-9]{1,4}){1,4}$|^(?:[A-Fa-f0-9]{1,4}:){1,2}(?::[A-Fa-f0-9]{1,4}){1,5}$|^[A-Fa-f0-9]{1,4}:(?::[A-Fa-f0-9]{1,4}){1,6}$|^:(?::[A-Fa-f0-9]{1,4}){1,7}$|^::(?:[Ff]{4}:)?(?:(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)$|^(?:[A-Fa-f0-9]{1,4}:){1,4}:(?:(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)$/;
+
+function isValidIP(ip) {
+  if (!ip || typeof ip !== 'string') return false;
+  const trimmed = ip.trim();
+  if (!trimmed) return false;
+  return IPV4_REGEX.test(trimmed) || IPV6_REGEX.test(trimmed);
+}
+
+function ipMatchesCIDR(ip, cidr) {
+  if (!cidr.includes('/')) return ip === cidr;
+  const [network, prefixStr] = cidr.split('/');
+  const prefix = parseInt(prefixStr, 10);
+  if (!isValidIP(ip) || !isValidIP(network) || isNaN(prefix)) return false;
+
+  const isIPv4 = IPV4_REGEX.test(ip);
+  if (isIPv4 !== IPV4_REGEX.test(network)) return false;
+
+  if (isIPv4) {
+    const ipNum = ip.split('.').reduce((acc, octet) => (acc << 8) + parseInt(octet, 10), 0) >>> 0;
+    const netNum = network.split('.').reduce((acc, octet) => (acc << 8) + parseInt(octet, 10), 0) >>> 0;
+    const mask = prefix === 0 ? 0 : (~0 << (32 - prefix)) >>> 0;
+    return (ipNum & mask) === (netNum & mask);
+  }
+  return false;
+}
+
+function isTrustedProxy(clientIP) {
+  if (TRUSTED_PROXIES.length === 0) return false;
+  return TRUSTED_PROXIES.some(trusted => ipMatchesCIDR(clientIP, trusted));
+}
+
+function sanitizeXForwardedFor(xff, clientIP) {
+  if (!xff) return clientIP;
+
+  const ips = xff.split(',').map(s => s.trim()).filter(Boolean);
+  const validIPs = ips.filter(isValidIP);
+
+  if (validIPs.length === 0) return clientIP;
+  return `${validIPs.join(', ')}, ${clientIP}`;
+}
+
+function buildForwardedFor(req) {
+  const clientIP = req.socket.remoteAddress || '';
+  const xff = req.headers['x-forwarded-for'];
+
+  if (!xff) return clientIP;
+
+  if (TRUSTED_PROXIES.length === 0 || !isTrustedProxy(clientIP)) {
+    return clientIP;
+  }
+
+  return sanitizeXForwardedFor(xff, clientIP);
 }
 
 /** Validate host header: hostname or hostname:port, no path traversal */
@@ -72,14 +130,8 @@ function proxyRequest(req, res, port, opts = {}) {
     headers['x-karvi-user'] = opts.injectUser;
   }
 
-  // Forward client IP — validate existing X-Forwarded-For to prevent IP spoofing
-  const clientIp = req.socket.remoteAddress || '';
-  const upstreamXff = req.headers['x-forwarded-for'];
-  if (upstreamXff && isValidXff(upstreamXff)) {
-    headers['x-forwarded-for'] = `${upstreamXff}, ${clientIp}`;
-  } else {
-    headers['x-forwarded-for'] = clientIp;
-  }
+  // Forward client IP (with spoofing protection)
+  headers['x-forwarded-for'] = buildForwardedFor(req);
   headers['x-forwarded-proto'] = req.headers['x-forwarded-proto'] || 'http';
   // Validate X-Forwarded-Host to prevent host header injection
   if (req.headers['x-forwarded-host'] && !isValidHost(req.headers['x-forwarded-host'])) {
@@ -140,4 +192,11 @@ function proxyRequest(req, res, port, opts = {}) {
   req.pipe(proxyReq);
 }
 
-module.exports = { proxyRequest, isValidXff, isValidHost };
+module.exports = {
+  proxyRequest,
+  isValidIP,
+  isValidHost,
+  sanitizeXForwardedFor,
+  buildForwardedFor,
+  isTrustedProxy,
+};

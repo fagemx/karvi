@@ -300,55 +300,64 @@ async function testCORS() {
   assert(r1.status === 204, 'OPTIONS returns 204');
 }
 
-async function testXffValidation() {
+async function testXForwardedForValidation() {
   console.log('\n--- X-Forwarded-For Validation ---');
 
-  // Valid XFF should be preserved (we test via proxy behavior — the header reaches backend)
-  // We test the validation functions directly since proxy target may not be running
-  const proxy = require('./gateway-proxy');
+  const { isValidIP, isValidHost, sanitizeXForwardedFor } = require('./gateway-proxy');
 
-  // Unit-level: test isValidXff and isValidHost via proxyRequest header construction
-  // Since we can't easily intercept proxy headers, test the module's exported internal
-  // by constructing a mock scenario and checking what gateway-proxy produces.
+  // IPv4 validation
+  assert(isValidIP('192.168.1.1') === true, 'Valid IPv4 accepted');
+  assert(isValidIP('0.0.0.0') === true, 'Valid IPv4 0.0.0.0 accepted');
+  assert(isValidIP('255.255.255.255') === true, 'Valid IPv4 max accepted');
+  assert(isValidIP('256.1.1.1') === false, 'Invalid IPv4 (256) rejected');
+  assert(isValidIP('1.2.3') === false, 'Invalid IPv4 (3 octets) rejected');
+  assert(isValidIP('1.2.3.4.5') === false, 'Invalid IPv4 (5 octets) rejected');
 
-  // Instead, test via the gateway: requests with spoofed XFF should still work
-  // (gateway doesn't block, but proxy validates before forwarding)
+  // IPv6 validation
+  assert(isValidIP('::1') === true, 'Valid IPv6 loopback accepted');
+  assert(isValidIP('2001:db8::1') === true, 'Valid IPv6 abbreviated accepted');
+  assert(isValidIP('fe80::1') === true, 'Valid IPv6 link-local accepted');
+  assert(isValidIP('::ffff:192.168.1.1') === true, 'Valid IPv6-mapped IPv4 accepted');
 
-  // Test 1: Login with valid XFF header — should work normally
-  const r1 = await request('POST', '/auth/login', {
-    body: { username: 'testuser1', password: 'password123' },
-    headers: { 'x-forwarded-for': '10.0.0.1, 192.168.1.1' },
-  });
-  assert(r1.status === 200, 'Request with valid XFF succeeds');
+  // Invalid formats
+  assert(isValidIP('') === false, 'Empty string rejected');
+  assert(isValidIP(null) === false, 'Null rejected');
+  assert(isValidIP(undefined) === false, 'Undefined rejected');
+  assert(isValidIP('not-an-ip') === false, 'Non-IP string rejected');
+  assert(isValidIP('../../etc/passwd') === false, 'Path injection rejected');
+  assert(isValidIP('123.456.789.999') === false, 'Invalid numeric IP rejected');
 
-  // Test 2: Login with spoofed/invalid XFF — should still work (validation is in proxy, not auth)
-  const r2 = await request('POST', '/auth/login', {
-    body: { username: 'testuser1', password: 'password123' },
-    headers: { 'x-forwarded-for': '../../injection, admin-ip' },
-  });
-  assert(r2.status === 200, 'Request with invalid XFF still reaches gateway auth');
+  // Sanitization tests
+  const clientIP = '10.0.0.1';
 
-  // Test 3: Verify validation functions directly
-  const { isValidXff, isValidHost } = proxy;
+  // Valid IPs should be preserved
+  const s1 = sanitizeXForwardedFor('192.168.1.1, 172.16.0.1', clientIP);
+  assert(s1 === '192.168.1.1, 172.16.0.1, 10.0.0.1', 'Valid IPs preserved');
 
-  // Valid XFF values
-  assert(isValidXff('10.0.0.1') === true, 'isValidXff: single IPv4');
-  assert(isValidXff('10.0.0.1, 192.168.1.1') === true, 'isValidXff: multiple IPv4');
-  assert(isValidXff('::1') === true, 'isValidXff: IPv6 loopback');
-  assert(isValidXff('2001:db8::1, 10.0.0.1') === true, 'isValidXff: mixed IPv4+IPv6');
+  // Invalid IPs should be stripped
+  const s2 = sanitizeXForwardedFor('192.168.1.1, invalid-ip, 172.16.0.1', clientIP);
+  assert(s2 === '192.168.1.1, 172.16.0.1, 10.0.0.1', 'Invalid IP stripped from middle');
 
-  // Invalid XFF values (path traversal, injection, garbage)
-  assert(isValidXff('../../injection') === false, 'isValidXff: path traversal rejected');
-  assert(isValidXff('admin-ip') === false, 'isValidXff: non-IP string rejected');
-  assert(isValidXff('10.0.0.1, ../../etc/passwd') === false, 'isValidXff: mixed valid+invalid rejected');
-  assert(isValidXff('123.456.789.999, admin-ip') === false, 'isValidXff: example from issue rejected');
+  // All invalid IPs — only clientIP
+  const s3 = sanitizeXForwardedFor('not-an-ip, also-invalid', clientIP);
+  assert(s3 === clientIP, 'All invalid IPs replaced with clientIP');
 
-  // Valid hosts
+  // Empty XFF — just clientIP
+  const s4 = sanitizeXForwardedFor('', clientIP);
+  assert(s4 === clientIP, 'Empty XFF returns clientIP');
+
+  // Null XFF — just clientIP
+  const s5 = sanitizeXForwardedFor(null, clientIP);
+  assert(s5 === clientIP, 'Null XFF returns clientIP');
+
+  // Spoofing attempt with injection patterns
+  const s6 = sanitizeXForwardedFor('192.168.1.1, ../../injection, 172.16.0.1', clientIP);
+  assert(s6 === '192.168.1.1, 172.16.0.1, 10.0.0.1', 'Injection attempt stripped');
+
+  // X-Forwarded-Host validation
   assert(isValidHost('example.com') === true, 'isValidHost: domain');
   assert(isValidHost('example.com:8080') === true, 'isValidHost: domain with port');
   assert(isValidHost('localhost') === true, 'isValidHost: localhost');
-
-  // Invalid hosts
   assert(isValidHost('example.com/../../etc') === false, 'isValidHost: path traversal rejected');
   assert(isValidHost('example.com:8080/admin') === false, 'isValidHost: path injection rejected');
   assert(isValidHost('') === false, 'isValidHost: empty rejected');
@@ -363,6 +372,7 @@ async function runTests() {
 
   try {
     await testHealth();
+    await testXForwardedForValidation();
     const regToken = await testRegistration();
     const loginToken = await testLogin(regToken);
     await testMe(loginToken);
@@ -371,7 +381,6 @@ async function runTests() {
     await testSessionExpiry();
     await testPathRouting();
     await testCORS();
-    await testXffValidation();
     await testLogout(loginToken);
   } catch (err) {
     console.error('\n  ERROR:', err.message);
