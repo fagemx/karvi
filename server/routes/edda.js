@@ -59,13 +59,7 @@ module.exports = function eddaRoutes(req, res, helpers, deps) {
   const { mgmt } = deps;
 
   if (req.method === 'POST' && req.url === '/api/edda/propose-controls') {
-    let body = '';
-    req.on('data', c => (body += c));
-    req.on('end', () => {
-      let payload;
-      try { payload = JSON.parse(body || '{}'); }
-      catch { return json(res, 400, { error: 'Invalid JSON' }); }
-
+    helpers.parseBody(req).then(payload => {
       const patch = payload.patch;
       const reasoning = String(payload.reasoning || '').trim();
       const by = String(payload.by || 'edda').trim();
@@ -119,7 +113,7 @@ module.exports = function eddaRoutes(req, res, helpers, deps) {
         insight,
         autoApplied: insight.status === 'applied',
       });
-    });
+    }).catch(error => json(res, error.statusCode === 413 ? 413 : 400, { error: error.message }));
     return;
   }
 

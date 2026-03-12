@@ -128,11 +128,7 @@ module.exports = function projectsRoutes(req, res, helpers, deps) {
     if (req.url === '/api/project') {
       helpers.appendLog({ ts: helpers.nowIso(), event: 'deprecated_api', endpoint: '/api/project', message: 'Use POST /api/projects instead' });
     }
-    let body = '';
-    req.on('data', c => (body += c));
-    req.on('end', () => {
-      try {
-        const input = JSON.parse(body || '{}');
+    helpers.parseBody(req).then(input => {
         const { title, repo, concurrency, completionTrigger, autoStart } = input;
         const rawTasks = input.tasks;
 
@@ -311,10 +307,7 @@ module.exports = function projectsRoutes(req, res, helpers, deps) {
         }
 
         json(res, 201, result);
-      } catch (error) {
-        json(res, 400, { error: error.message });
-      }
-    });
+    }).catch(error => json(res, error.statusCode === 413 ? 413 : 400, { error: error.message }));
     return;
   }
 

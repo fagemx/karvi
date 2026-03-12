@@ -34,9 +34,16 @@ module.exports = function githubRoutes(req, res, helpers, deps) {
   // =========================================================================
   if (req.method === 'POST' && req.url === '/api/webhooks/github') {
     if (!githubIntegration) { json(res, 404, { error: 'GitHub integration not available' }); return; }
+    // Manual body read with size guard (needs raw string for HMAC verification)
     let body = '';
-    req.on('data', c => (body += c));
+    let received = 0;
+    req.on('data', c => {
+      received += c.length;
+      if (received > 1048576) { req.destroy(); return; }
+      body += c;
+    });
     req.on('end', () => {
+      if (received > 1048576) return json(res, 413, { error: 'Payload too large' });
       try {
         // HMAC verification — secret from vault, not board
         const secretBuf = vault.has('default', 'github_webhook_secret')
@@ -316,27 +323,19 @@ module.exports = function githubRoutes(req, res, helpers, deps) {
   // PUT /api/integrations/github — update GitHub integration config
   // =========================================================================
   if (req.method === 'PUT' && req.url === '/api/integrations/github') {
-    let body = '';
-    req.on('data', c => (body += c));
-    req.on('end', () => {
-      try {
-        const payload = JSON.parse(body || '{}');
-
-        // Webhook secret → vault (never stored in board.json)
-        if (payload.webhookSecret) {
-          vault.store('default', 'github_webhook_secret', payload.webhookSecret);
-          delete payload.webhookSecret;
-        }
-
-        const board = helpers.readBoard();
-        board.integrations = board.integrations || {};
-        board.integrations.github = { ...(board.integrations.github || {}), ...payload };
-        helpers.writeBoard(board);
-        json(res, 200, { ...board.integrations.github, webhookSecretConfigured: vault.has('default', 'github_webhook_secret') });
-      } catch (err) {
-        json(res, 400, { error: err.message });
+    helpers.parseBody(req).then(payload => {
+      // Webhook secret → vault (never stored in board.json)
+      if (payload.webhookSecret) {
+        vault.store('default', 'github_webhook_secret', payload.webhookSecret);
+        delete payload.webhookSecret;
       }
-    });
+
+      const board = helpers.readBoard();
+      board.integrations = board.integrations || {};
+      board.integrations.github = { ...(board.integrations.github || {}), ...payload };
+      helpers.writeBoard(board);
+      json(res, 200, { ...board.integrations.github, webhookSecretConfigured: vault.has('default', 'github_webhook_secret') });
+    }).catch(err => json(res, err.statusCode === 413 ? 413 : 400, { error: err.message }));
     return;
   }
 
