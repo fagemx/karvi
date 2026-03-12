@@ -1,7 +1,7 @@
 /**
  * routes/logs.js — Audit Log Query API
  *
- * GET /api/logs — 結構化查詢 task-log.jsonl
+ * GET /api/logs — 結構化查詢 task-log.jsonl（stream 逐行讀取，不載入整檔）
  *
  * 查詢參數:
  *   taskId  — 過濾 taskId（精確匹配 entry.taskId 或 entry.data.taskId）
@@ -9,33 +9,45 @@
  *   user    — 過濾使用者（精確匹配 entry.user）
  *   from    — 起始時間 ISO string（>=）
  *   to      — 結束時間 ISO string（<=）
- *   limit   — 每頁筆數，預設 100，上限 1000
+ *   limit   — 每頁筆數，預設 5000，上限 10000
  *   offset  — 跳過筆數，預設 0
  *   sort    — asc|desc，預設 desc
  *   format  — json|jsonl，預設 json
  */
 const fs = require('fs');
+const readline = require('readline');
 const bb = require('../blackboard-server');
 const { json } = bb;
 
-const MAX_LIMIT = 1000;
-const DEFAULT_LIMIT = 100;
+const MAX_LIMIT = 10000;
+const DEFAULT_LIMIT = 5000;
 
-function readLogEntries(logPath) {
-  // NOTE: reads entire file into memory — adequate for single-server JSON file storage.
-  // If task-log.jsonl grows beyond ~100 MB, switch to streaming (readline) or pagination at the FS layer.
-  const raw = fs.readFileSync(logPath, 'utf8');
-  const entries = [];
-  for (const line of raw.split('\n')) {
-    const trimmed = line.trim();
-    if (!trimmed) continue;
-    try {
-      entries.push(JSON.parse(trimmed));
-    } catch (err) {
-      console.warn(`[logs] skipping unparseable JSONL line: ${err.message}`);
-    }
-  }
-  return entries;
+/**
+ * 逐行 stream 讀取 JSONL，邊讀邊 filter，收集到記憶體的只有匹配的 entries。
+ * 回傳 Promise<Entry[]>。
+ */
+function readFilteredEntries(logPath, filters) {
+  return new Promise((resolve, reject) => {
+    const entries = [];
+    const rl = readline.createInterface({
+      input: fs.createReadStream(logPath, { encoding: 'utf8' }),
+      crlfDelay: Infinity,
+    });
+    rl.on('line', (line) => {
+      const trimmed = line.trim();
+      if (!trimmed) return;
+      try {
+        const entry = JSON.parse(trimmed);
+        if (matchEntry(entry, filters)) {
+          entries.push(entry);
+        }
+      } catch (err) {
+        console.warn(`[logs] skipping unparseable JSONL line: ${err.message}`);
+      }
+    });
+    rl.on('close', () => resolve(entries));
+    rl.on('error', reject);
+  });
 }
 
 function matchEntry(entry, filters) {
@@ -73,24 +85,29 @@ module.exports = function logsRoutes(req, res, helpers, deps) {
 
   const filters = { taskId, event, user, from, to };
 
-  const allEntries = readLogEntries(deps.ctx.logPath);
-  const filtered = allEntries.filter(e => matchEntry(e, filters));
+  // 非同步 stream 讀取 — 回傳 true 表示已接管 response
+  readFilteredEntries(deps.ctx.logPath, filters).then((filtered) => {
+    // 排序
+    filtered.sort((a, b) => {
+      const cmp = (a.ts || '').localeCompare(b.ts || '');
+      return sort === 'asc' ? cmp : -cmp;
+    });
 
-  // 排序
-  filtered.sort((a, b) => {
-    const cmp = (a.ts || '').localeCompare(b.ts || '');
-    return sort === 'asc' ? cmp : -cmp;
+    const total = filtered.length;
+    const entries = filtered.slice(offset, offset + limit);
+
+    if (format === 'jsonl') {
+      const body = entries.map(e => JSON.stringify(e)).join('\n') + (entries.length ? '\n' : '');
+      res.writeHead(200, { 'Content-Type': 'application/x-ndjson; charset=utf-8' });
+      res.end(body);
+      return;
+    }
+
+    json(res, 200, { total, limit, offset, entries });
+  }).catch((err) => {
+    console.error('[logs] failed to read log file:', err.message);
+    json(res, 500, { error: 'failed to read log file' });
   });
 
-  const total = filtered.length;
-  const entries = filtered.slice(offset, offset + limit);
-
-  if (format === 'jsonl') {
-    const body = entries.map(e => JSON.stringify(e)).join('\n') + (entries.length ? '\n' : '');
-    res.writeHead(200, { 'Content-Type': 'application/x-ndjson; charset=utf-8' });
-    res.end(body);
-    return;
-  }
-
-  return json(res, 200, { total, limit, offset, entries });
+  return true; // 告訴 router 此 route 已接管 response（非同步）
 };
