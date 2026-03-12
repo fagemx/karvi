@@ -149,8 +149,7 @@ async function runTests() {
     if (dispatchRes.ok || dispatchRes.dispatched) {
       ok('Task dispatch accepted');
     } else {
-      // Dispatch may fail if runtime not available, but brief should still be generated
-      ok('Dispatch attempted: ' + JSON.stringify(dispatchRes).slice(0, 80));
+      fail('Task dispatch', 'dispatch not accepted: ' + JSON.stringify(dispatchRes).slice(0, 80));
     }
 
     // Check if brief was generated in the data dir or briefs dir
@@ -165,20 +164,20 @@ async function runTests() {
         if (briefContent.includes('Coding Standards') || briefContent.includes('coding_standards')) {
           ok('Brief contains skill context section');
         } else {
-          ok('Brief generated (skill context format may vary)');
+          console.warn('  ⚠ Brief generated but skill context format not matched');
         }
 
         // Verify completion criteria section
         if (briefContent.includes('Completion Criteria') || briefContent.includes('node -c') || briefContent.includes('Re-read')) {
           ok('Brief contains completion criteria section');
         } else {
-          ok('Brief generated (completion criteria format may vary)');
+          console.warn('  ⚠ Brief generated but completion criteria format not matched');
         }
       } else {
-        ok('Briefs directory exists but brief may use different naming');
+        fail('Brief file', 'briefs directory exists but no matching brief for T-SECTION-TEST');
       }
     } else {
-      ok('Brief written to alternative location (step-worker handles brief)');
+      console.warn('  ⚠ Briefs directory not found (brief may be written by step-worker)');
     }
   }
 

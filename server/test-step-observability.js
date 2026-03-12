@@ -238,12 +238,12 @@ async function testStepProgressOnDispatch() {
     if (planStep.progress && planStep.progress.dispatched_at) {
       ok('Step progress has dispatched_at after dispatch');
     } else {
-      // Progress may be on the step or in the step-worker output
-      ok('Step transitioned to running/completed after dispatch (progress written by step-worker)');
+      console.warn('  ⚠ Step transitioned but progress.dispatched_at not set (set by step-worker)');
     }
+  } else if (planStep.state === 'queued') {
+    fail('Step dispatch', 'step still queued after dispatch — expected running or beyond');
   } else {
-    // queued is ok if dispatch hasn't fully processed yet
-    ok('Step in expected state after dispatch: ' + planStep.state);
+    fail('Step dispatch', `unexpected state: ${planStep.state}`);
   }
 }
 
@@ -292,8 +292,7 @@ async function testDeadLetterViaStepTransition() {
   if (deadSignals.length >= 1) {
     ok('Dead letter signal emitted');
   } else {
-    // step_dead signal may not be emitted by transition — acceptable
-    ok('Dead state reached (signal may be emitted by step-worker only)');
+    console.warn('  ⚠ No step_dead signal found (emitted by step-worker, not transition API)');
   }
 }
 
@@ -326,8 +325,7 @@ async function testActivityAwareLockRenewalViaAPI() {
     if (step.lock_expires_at) {
       ok('Step has lock_expires_at after running transition');
     } else {
-      // Lock expiry may be set by step-worker, not transition
-      ok('Step running (lock_expires_at set by step-worker)');
+      console.warn('  ⚠ lock_expires_at not set by transition (set by step-worker at runtime)');
     }
   } else {
     fail('Step transition to running', JSON.stringify(patchRes));

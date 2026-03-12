@@ -179,11 +179,10 @@ async function runTests() {
       } else if (planResult && planResult.status === 'dispatched') {
         fail('Concurrency gate', 'plan step dispatched despite limit of 1');
       } else {
-        ok('Batch dispatch returned result: ' + JSON.stringify(planResult));
+        fail('Concurrency gate', 'unexpected batch result: ' + JSON.stringify(planResult));
       }
     } else {
-      // If batch dispatch is not available, try auto-dispatch approach
-      ok('Batch dispatch result: ' + JSON.stringify(res).slice(0, 100));
+      fail('Batch dispatch', 'unexpected response: ' + JSON.stringify(res).slice(0, 100));
     }
   }
 
@@ -200,10 +199,10 @@ async function runTests() {
       if (planResult && (planResult.status === 'dispatched' || planResult.status === 'skipped')) {
         ok('Task B plan dispatchable after A completed (status: ' + planResult.status + ')');
       } else {
-        ok('Batch dispatch completed: ' + JSON.stringify(planResult));
+        fail('Concurrency slot freed', 'unexpected plan result: ' + JSON.stringify(planResult));
       }
     } else {
-      ok('Batch dispatch result: ' + JSON.stringify(res).slice(0, 100));
+      fail('Batch dispatch after completion', 'unexpected response: ' + JSON.stringify(res).slice(0, 100));
     }
   }
 

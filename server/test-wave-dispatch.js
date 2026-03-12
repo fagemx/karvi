@@ -160,9 +160,10 @@ async function runTests() {
     const w2 = tasks.find(t => t.id === 'T-WAVE-2');
     if (w2 && w2.status === 'dispatched') {
       ok('Wave 2 task NOT auto-dispatched when active_wave=1');
+    } else if (w2 && w2.status === 'in_progress') {
+      fail('Wave filter', `wave-2 task was dispatched (status: ${w2.status}) despite active_wave=1`);
     } else {
-      // It may have been dispatched if wave filter is not working — still report
-      ok(`Wave 2 task status: ${w2?.status} (wave filter applied)`);
+      fail('Wave filter', `unexpected wave-2 task status: ${w2?.status}`);
     }
   }
 
