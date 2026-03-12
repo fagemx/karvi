@@ -3,6 +3,7 @@
  *
  * POST   /api/tasks/:id/steps — create step pipeline
  * GET    /api/tasks/:id/steps — list steps
+ * GET    /api/tasks/:id/sessions — list session history
  * PATCH  /api/tasks/:id/steps/:stepId — update step state
  * POST   /api/tasks/:id/steps/:stepId/kill — kill running step
  * POST   /api/tasks/:id/steps/:stepId/reset — reset dead/failed step to queued
@@ -51,6 +52,17 @@ function tasksStepsRoutes(req, res, helpers, deps, internals) {
     const task = (board.taskPlan?.tasks || []).find(t => t.id === taskId);
     if (!task) return json(res, 404, { error: `Task ${taskId} not found` });
     json(res, 200, { ok: true, taskId, steps: task.steps || [] });
+    return;
+  }
+
+  // GET /api/tasks/:id/sessions — list session history for a task
+  const sessionsMatch = req.url.match(/^\/api\/tasks\/([^/]+)\/sessions$/);
+  if (req.method === 'GET' && sessionsMatch) {
+    const taskId = decodeURIComponent(sessionsMatch[1]);
+    const board = helpers.readBoard();
+    const task = (board.taskPlan?.tasks || []).find(t => t.id === taskId);
+    if (!task) return json(res, 404, { error: `Task ${taskId} not found` });
+    json(res, 200, { ok: true, taskId, sessions: task.sessions || [] });
     return;
   }
 

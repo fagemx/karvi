@@ -20,6 +20,29 @@ const { retryOnConflict } = require('./helpers/retry');
 const LOCK_GRACE_MS = 30_000; // 30s grace on top of step timeout
 const HEARTBEAT_DEBOUNCE_MS = 10_000; // Debounce heartbeat writes to 10s interval
 
+function updateTaskSession(task, opts) {
+  const { sessionId, runtime, startedAt, endedAt, stepCompleted } = opts;
+  if (!task) return;
+  task.sessions = task.sessions || [];
+  if (sessionId) {
+    let session = task.sessions.find(s => s.sessionId === sessionId);
+    if (!session && startedAt) {
+      session = {
+        sessionId,
+        runtime: runtime || 'unknown',
+        startedAt,
+        endedAt: null,
+        stepsCompleted: 0,
+      };
+      task.sessions.push(session);
+    }
+    if (session) {
+      if (endedAt) session.endedAt = endedAt;
+      if (stepCompleted) session.stepsCompleted = (session.stepsCompleted || 0) + 1;
+    }
+  }
+}
+
 // --- Webhook event emission (#333/#443/#444) — Thyra-aligned envelope + retry ---
 
 // Map internal signal types to Thyra event_type values
@@ -285,6 +308,19 @@ function createStepWorker(deps) {
     if (lockStep && lockStep.state === 'running') {
       lockStep.lock_expires_at = new Date(Date.now() + timeoutMs + LOCK_GRACE_MS).toISOString();
       lockStep.locked_by = 'step-worker';
+      // Initialize session tracking for this step
+      const sessionStartedAt = new Date().toISOString();
+      lockTask.sessions = lockTask.sessions || [];
+      const existingSession = lockTask.sessions.find(s => s.sessionId && s.startedAt && !s.endedAt && s.runtime === stepRuntimeHint);
+      if (!existingSession) {
+        lockTask.sessions.push({
+          sessionId: `session-${helpers.uid('sess')}`,
+          runtime: stepRuntimeHint || 'unknown',
+          startedAt: sessionStartedAt,
+          endedAt: null,
+          stepsCompleted: 0,
+        });
+      }
       helpers.writeBoard(lockBoard);
     }
 
@@ -824,6 +860,16 @@ function createStepWorker(deps) {
     // Persist session ID on task for subsequent steps / follow-up resume
     if (sessionId && latestTask) {
       latestTask.childSessionKey = sessionId;
+    }
+
+    // Update session tracking: mark ended and increment steps completed
+    if (latestTask) {
+      latestTask.sessions = latestTask.sessions || [];
+      const activeSession = latestTask.sessions.find(s => s.runtime === activeRuntimeHint && !s.endedAt);
+      if (activeSession) {
+        activeSession.endedAt = new Date().toISOString();
+        activeSession.stepsCompleted = (activeSession.stepsCompleted || 0) + 1;
+      }
     }
 
     if (latestStep && latestStep.state === 'running') {

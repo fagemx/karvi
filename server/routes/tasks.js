@@ -417,8 +417,8 @@ module.exports = function tasksRoutes(req, res, helpers, deps) {
     if (handled !== false) return;
   }
 
-  // Step-level endpoints
-  if (req.url.includes('/steps')) {
+  // Step-level endpoints + sessions
+  if (req.url.includes('/steps') || req.url.includes('/sessions')) {
     const handled = tasksStepsRoutes(req, res, helpers, deps, internals);
     if (handled !== false) return;
   }
