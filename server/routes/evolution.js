@@ -7,8 +7,8 @@
  * GET/POST /api/lessons
  * POST /api/lessons/:id/status
  */
-const fs = require('fs');
 const bb = require('../blackboard-server');
+const storage = require('../storage');
 const { json } = bb;
 const { createSignal } = require('./_shared');
 
@@ -36,21 +36,16 @@ module.exports = function evolutionRoutes(req, res, helpers, deps) {
   // --- Signal Archive ---
   if (req.method === 'GET' && (req.url === '/api/signals/archive' || req.url.startsWith('/api/signals/archive?'))) {
     const archivePath = helpers.signalArchivePath;
-    if (!archivePath || !fs.existsSync(archivePath)) {
-      const parsedUrl0 = new URL(req.url, 'http://localhost');
-      const limit0 = Math.min(1000, Math.max(1, Number(parsedUrl0.searchParams.get('limit')) || 100));
-      return json(res, 200, { total: 0, offset: 0, limit: limit0, signals: [] });
-    }
     const parsedUrl = new URL(req.url, 'http://localhost');
     const limit = Math.min(1000, Math.max(1, Number(parsedUrl.searchParams.get('limit')) || 100));
     const offset = Math.max(0, Number(parsedUrl.searchParams.get('offset')) || 0);
-    const lines = fs.readFileSync(archivePath, 'utf8').split('\n').filter(Boolean);
-    const signals = [];
-    const end = Math.min(offset + limit, lines.length);
-    for (let i = offset; i < end; i++) {
-      signals.push(JSON.parse(lines[i]));
+
+    if (!archivePath) {
+      return json(res, 200, { total: 0, offset: 0, limit, signals: [] });
     }
-    return json(res, 200, { total: lines.length, offset, limit, signals });
+
+    const result = storage.readArchiveEntries(archivePath, { offset, limit });
+    return json(res, 200, { total: result.total, offset, limit, signals: result.entries });
   }
 
   if (req.method === 'POST' && req.url === '/api/signals') {

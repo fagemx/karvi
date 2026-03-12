@@ -34,11 +34,21 @@ function ensureLogFile(/* logPath */) {
   throw new Error(NOT_IMPLEMENTED);
 }
 
+function readLogEntries(/* logPath, filters */) {
+  throw new Error(NOT_IMPLEMENTED);
+}
+
+function readArchiveEntries(/* archivePath, opts */) {
+  throw new Error(NOT_IMPLEMENTED);
+}
+
 module.exports = {
   name: 'sqlite',
   readBoard,
   writeBoard,
   appendLog,
+  readLogEntries,
+  readArchiveEntries,
   boardExists,
   ensureLogFile,
 };

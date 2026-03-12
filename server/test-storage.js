@@ -284,7 +284,7 @@ function test_sqliteInterfaceShape() {
 function test_factoryApiShape() {
   test('19. Default storage export provides expected API shape', () => {
     const storage = require('./storage');
-    const requiredMethods = ['readBoard', 'writeBoard', 'appendLog', 'boardExists', 'ensureLogFile'];
+    const requiredMethods = ['readBoard', 'writeBoard', 'appendLog', 'readLogEntries', 'readArchiveEntries', 'boardExists', 'ensureLogFile'];
     for (const m of requiredMethods) {
       assert.strictEqual(typeof storage[m], 'function', `storage.${m} should be a function`);
     }
@@ -378,10 +378,86 @@ function test_backwardCompatibility() {
 }
 
 // =============================================================================
+// readLogEntries tests
+// =============================================================================
+
+async function test_readLogEntries_basic() {
+  const lp = logPath('read-log.jsonl');
+  storageJson.appendLog(lp, { event: 'create', taskId: 'T1', ts: '2026-01-01T00:00:00Z' });
+  storageJson.appendLog(lp, { event: 'update', taskId: 'T2', ts: '2026-01-02T00:00:00Z' });
+  storageJson.appendLog(lp, { event: 'create', taskId: 'T3', ts: '2026-01-03T00:00:00Z' });
+
+  const all = await storageJson.readLogEntries(lp, {});
+  assert.strictEqual(all.length, 3, 'should return all 3 entries');
+
+  const filtered = await storageJson.readLogEntries(lp, { taskId: 'T2' });
+  assert.strictEqual(filtered.length, 1, 'should return 1 entry for T2');
+  assert.strictEqual(filtered[0].taskId, 'T2');
+
+  const byEvent = await storageJson.readLogEntries(lp, { event: 'create' });
+  assert.strictEqual(byEvent.length, 2, 'should return 2 create events');
+
+  console.log('  PASS  21. readLogEntries basic filtering');
+  passed++;
+}
+
+async function test_readLogEntries_time_filter() {
+  const lp = logPath('read-log-time.jsonl');
+  storageJson.appendLog(lp, { event: 'a', ts: '2026-01-01T00:00:00Z' });
+  storageJson.appendLog(lp, { event: 'b', ts: '2026-01-05T00:00:00Z' });
+  storageJson.appendLog(lp, { event: 'c', ts: '2026-01-10T00:00:00Z' });
+
+  const result = await storageJson.readLogEntries(lp, {
+    from: '2026-01-03T00:00:00Z',
+    to: '2026-01-07T00:00:00Z',
+  });
+  assert.strictEqual(result.length, 1, 'should return 1 entry in time range');
+  assert.strictEqual(result[0].event, 'b');
+
+  console.log('  PASS  22. readLogEntries time range filtering');
+  passed++;
+}
+
+async function test_readLogEntries_missing_file() {
+  const lp = logPath('nonexistent-log.jsonl');
+  const result = await storageJson.readLogEntries(lp, {});
+  assert.strictEqual(result.length, 0, 'should return empty array for missing file');
+
+  console.log('  PASS  23. readLogEntries returns empty for missing file');
+  passed++;
+}
+
+function test_readArchiveEntries_basic() {
+  test('24. readArchiveEntries basic pagination', () => {
+    const ap = logPath('archive.jsonl');
+    for (let i = 0; i < 10; i++) {
+      fs.appendFileSync(ap, JSON.stringify({ id: `sig-${i}`, ts: `2026-01-${String(i + 1).padStart(2, '0')}` }) + '\n');
+    }
+
+    const page1 = storageJson.readArchiveEntries(ap, { offset: 0, limit: 3 });
+    assert.strictEqual(page1.total, 10, 'total should be 10');
+    assert.strictEqual(page1.entries.length, 3, 'first page should have 3 entries');
+    assert.strictEqual(page1.entries[0].id, 'sig-0');
+
+    const page2 = storageJson.readArchiveEntries(ap, { offset: 8, limit: 5 });
+    assert.strictEqual(page2.entries.length, 2, 'last page should have 2 entries');
+    assert.strictEqual(page2.entries[0].id, 'sig-8');
+  });
+}
+
+function test_readArchiveEntries_missing() {
+  test('25. readArchiveEntries returns empty for missing file', () => {
+    const result = storageJson.readArchiveEntries(logPath('nonexistent-archive.jsonl'), {});
+    assert.strictEqual(result.total, 0);
+    assert.strictEqual(result.entries.length, 0);
+  });
+}
+
+// =============================================================================
 // Run all tests
 // =============================================================================
 
-function main() {
+async function main() {
   console.log('=== Storage Tests ===');
   setup();
 
@@ -409,6 +485,14 @@ function main() {
     test_versionIncrement();
     test_conflictDetection();
     test_backwardCompatibility();
+
+    // readLogEntries / readArchiveEntries tests
+    console.log('\n--- readLogEntries / readArchiveEntries ---\n');
+    await test_readLogEntries_basic();
+    await test_readLogEntries_time_filter();
+    await test_readLogEntries_missing_file();
+    test_readArchiveEntries_basic();
+    test_readArchiveEntries_missing();
 
     // storage-sqlite.js
     console.log('\n--- storage-sqlite.js ---\n');

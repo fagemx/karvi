@@ -1,7 +1,7 @@
 /**
  * routes/logs.js — Audit Log Query API
  *
- * GET /api/logs — 結構化查詢 task-log.jsonl（stream 逐行讀取，不載入整檔）
+ * GET /api/logs — 結構化查詢 task-log.jsonl（透過 storage layer stream 逐行讀取）
  *
  * 查詢參數:
  *   taskId  — 過濾 taskId（精確匹配 entry.taskId 或 entry.data.taskId）
@@ -14,53 +14,12 @@
  *   sort    — asc|desc，預設 desc
  *   format  — json|jsonl，預設 json
  */
-const fs = require('fs');
-const readline = require('readline');
 const bb = require('../blackboard-server');
+const storage = require('../storage');
 const { json } = bb;
 
 const MAX_LIMIT = 10000;
 const DEFAULT_LIMIT = 5000;
-
-/**
- * 逐行 stream 讀取 JSONL，邊讀邊 filter，收集到記憶體的只有匹配的 entries。
- * 回傳 Promise<Entry[]>。
- */
-function readFilteredEntries(logPath, filters) {
-  return new Promise((resolve, reject) => {
-    const entries = [];
-    const rl = readline.createInterface({
-      input: fs.createReadStream(logPath, { encoding: 'utf8' }),
-      crlfDelay: Infinity,
-    });
-    rl.on('line', (line) => {
-      const trimmed = line.trim();
-      if (!trimmed) return;
-      try {
-        const entry = JSON.parse(trimmed);
-        if (matchEntry(entry, filters)) {
-          entries.push(entry);
-        }
-      } catch (err) {
-        console.warn(`[logs] skipping unparseable JSONL line: ${err.message}`);
-      }
-    });
-    rl.on('close', () => resolve(entries));
-    rl.on('error', reject);
-  });
-}
-
-function matchEntry(entry, filters) {
-  if (filters.taskId) {
-    const entryTaskId = entry.taskId || entry.data?.taskId || null;
-    if (entryTaskId !== filters.taskId) return false;
-  }
-  if (filters.event && entry.event !== filters.event) return false;
-  if (filters.user && entry.user !== filters.user) return false;
-  if (filters.from && entry.ts < filters.from) return false;
-  if (filters.to && entry.ts > filters.to) return false;
-  return true;
-}
 
 module.exports = function logsRoutes(req, res, helpers, deps) {
   if (req.method !== 'GET') return false;
@@ -85,8 +44,8 @@ module.exports = function logsRoutes(req, res, helpers, deps) {
 
   const filters = { taskId, event, user, from, to };
 
-  // 非同步 stream 讀取 — 回傳 true 表示已接管 response
-  readFilteredEntries(deps.ctx.logPath, filters).then((filtered) => {
+  // 透過 storage layer 非同步 stream 讀取
+  storage.readLogEntries(deps.ctx.logPath, filters).then((filtered) => {
     // 排序
     filtered.sort((a, b) => {
       const cmp = (a.ts || '').localeCompare(b.ts || '');
