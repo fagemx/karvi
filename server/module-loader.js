@@ -17,7 +17,12 @@ function loadModules(manifest) {
     if (!mod && !entry.optional) {
       throw new Error(`Required module failed to load: ${entry.name} (${entry.path})`);
     }
-    result[entry.name] = mod ? (entry.factory ? entry.factory(mod) : mod) : null;
+    if (mod && entry.factory) {
+      try { result[entry.name] = entry.factory(mod); }
+      catch { result[entry.name] = null; }
+    } else {
+      result[entry.name] = mod || null;
+    }
   }
   return result;
 }
