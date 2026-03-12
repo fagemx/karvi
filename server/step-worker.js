@@ -179,6 +179,9 @@ const ERROR_PATTERNS = [
   { pattern: /ENOENT/i, kind: 'CONFIG' },
   { pattern: /EACCES/i, kind: 'CONFIG' },
 
+  // Timeout enforcement — step exceeded step_timeout_sec
+  { pattern: /step timeout exceeded/i, kind: 'TIMEOUT' },
+
   // Dispatch error patterns (from err.message)
   { pattern: /idle for \d+s/i, kind: 'TEMPORARY' },
   { pattern: /exited with code/i, kind: 'PROVIDER' },
@@ -444,6 +447,14 @@ function createStepWorker(deps) {
       });
       plan.signal = ac.signal;
 
+      // Enforce step_timeout_sec: abort the runtime after timeoutMs
+      let timedOut = false;
+      const timeoutTimer = setTimeout(() => {
+        timedOut = true;
+        console.log(`[step-worker] timeout: ${envelope.step_id} exceeded ${timeoutSec}s, aborting`);
+        ac.abort();
+      }, timeoutMs);
+
       // hooks_before_run — agent 啟動前執行使用者定義的 shell command
       // Fatal: 失敗時擋住 agent，因為 preflight 失敗不該繼續執行
       if (controls.hooks_before_run) {
@@ -488,6 +499,14 @@ function createStepWorker(deps) {
           }
           break; // 非 PROVIDER 錯誤或已用完所有候選
         }
+      }
+
+      // Dispatch done (success or error) — cancel the timeout timer
+      clearTimeout(timeoutTimer);
+
+      // Replace error with timeout-specific message so classifyError returns TIMEOUT
+      if (dispatchErr && timedOut) {
+        dispatchErr = new Error(`step timeout exceeded: ${envelope.step_id} (${timeoutSec}s)`);
       }
 
       if (dispatchErr) {

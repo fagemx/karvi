@@ -51,6 +51,7 @@ const ERROR_KINDS = {
   PROTECTED:         { retryable: false, backoff: null },
   CONFIG:            { retryable: false, backoff: null },
   SCOPE_VIOLATION:   { retryable: true,  backoff: 'linear' },
+  TIMEOUT:           { retryable: false, backoff: null },
   UNKNOWN:           { retryable: true,  backoff: 'exponential' },
 };
 

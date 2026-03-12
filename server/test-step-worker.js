@@ -651,6 +651,62 @@ function createMockEnvelope(overrides = {}) {
     assert.strictEqual(errorKind.backoff, 'linear');
   });
 
+  // Test: step_timeout_sec enforcement — step killed and marked failed with TIMEOUT
+  await test('step_timeout_sec enforcement aborts step after timeout', async () => {
+    // Runtime that hangs for 2s (will be killed by 100ms timeout)
+    const mockRt = createMockRuntime({
+      dispatch: async (plan) => {
+        return new Promise((resolve, reject) => {
+          const timer = setTimeout(() => resolve({ code: 0, stdout: '', stderr: '' }), 2000);
+          // Listen for abort signal to reject promptly
+          if (plan.signal) {
+            plan.signal.addEventListener('abort', () => {
+              clearTimeout(timer);
+              reject(new Error('aborted'));
+            }, { once: true });
+          }
+        });
+      },
+    });
+    const deps = {
+      artifactStore, stepSchema, mgmt,
+      getRuntime: () => mockRt,
+      kernel: null,
+    };
+    const worker = createStepWorker(deps);
+
+    const board = createMockBoard();
+    board.controls = { step_timeout_sec: { plan: 300, default: 300 } };
+    const helpers = createMockHelpers(board);
+    const planStep = currentBoard.taskPlan.tasks[0].steps[0];
+    stepSchema.transitionStep(planStep, 'running');
+
+    // Use a very short timeout (100ms) to trigger quickly
+    const envelope = createMockEnvelope({ timeout_ms: 100 });
+    let threw = false;
+    try {
+      await worker.executeStep(envelope, currentBoard, helpers);
+    } catch (err) {
+      threw = true;
+      assert.ok(err.message.includes('step timeout exceeded'), `error should mention timeout, got: ${err.message}`);
+    }
+    assert.ok(threw, 'executeStep should throw on timeout');
+
+    // Verify step was marked failed with TIMEOUT errorKind
+    const step = currentBoard.taskPlan.tasks[0].steps[0];
+    assert.ok(step.state === 'failed' || step.state === 'dead', `step state should be failed or dead, got: ${step.state}`);
+    assert.ok(step.error && step.error.includes('step timeout exceeded'), `step error should mention timeout, got: ${step.error}`);
+    assert.strictEqual(step.errorKind, 'TIMEOUT', `errorKind should be TIMEOUT, got: ${step.errorKind}`);
+  });
+
+  await test('TIMEOUT is registered as non-retryable in ERROR_KINDS', async () => {
+    const stepSchemaModule = require('./step-schema');
+    const errorKind = stepSchemaModule.ERROR_KINDS?.TIMEOUT;
+    assert.ok(errorKind, 'TIMEOUT should be registered in ERROR_KINDS');
+    assert.strictEqual(errorKind.retryable, false);
+    assert.strictEqual(errorKind.backoff, null);
+  });
+
   // Cleanup
   try {
     fs.rmSync(path.join(artifactStore.ARTIFACT_DIR, testRunId), { recursive: true, force: true });
