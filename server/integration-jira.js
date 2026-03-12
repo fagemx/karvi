@@ -289,7 +289,7 @@ function handleMentionWebhook(board, payload, config) {
 
   // Build task from the issue context
   const task = buildTaskFromMention(issue, commentBody, parsed, config);
-  task.status = 'dispatched'; // Auto-dispatch on mention
+  // status is already 'dispatched' from buildTaskFromMention
 
   return { action: 'create_task', task, issueKey, command: parsed.command };
 }
@@ -475,19 +475,16 @@ function verifyHmacSignature(rawBody, signatureHeader, secret) {
 // ---------------------------------------------------------------------------
 
 /**
- * handleWebhook(board, payload, url)
+ * handleWebhook(board, payload)
+ *
+ * Auth is handled by the route layer before calling this function.
  *
  * @param {object} board  — current board state
  * @param {object} payload — Jira webhook JSON body
- * @param {string} url    — request URL (for token verification)
  * @returns {{ action, task?, karviStatus?, error? }}
  */
-function handleWebhook(board, payload, url) {
-  // 1. Verify token
-  if (!verifyWebhookToken(url)) {
-    return { action: 'rejected', error: 'Invalid webhook token' };
-  }
-
+function handleWebhook(board, payload) {
+  // Auth is handled by the route layer (HMAC / URL token) before calling this.
   const config = getConfig(board);
   if (!config?.enabled) {
     return { action: 'skipped', error: 'Jira integration disabled' };
@@ -875,7 +872,7 @@ if (require.main === module) {
         fields: { summary: 'New feature', priority: { name: 'Medium' } },
       },
     };
-    const result = handleWebhook(board, payload, 'http://localhost/api/webhooks/jira');
+    const result = handleWebhook(board, payload);
     if (result.action !== 'create_task') throw new Error(`action: ${result.action}`);
     if (result.task.id !== 'PROJ-1') throw new Error(`task.id: ${result.task.id}`);
     if (result.issueKey !== 'PROJ-1') throw new Error(`issueKey: ${result.issueKey}`);
@@ -895,7 +892,7 @@ if (require.main === module) {
         fields: { summary: 'Duplicate' },
       },
     };
-    const result = handleWebhook(board, payload, 'http://localhost/api/webhooks/jira');
+    const result = handleWebhook(board, payload);
     if (result.action !== 'skipped') throw new Error(`action: ${result.action}`);
     if (!result.error.includes('already exists')) throw new Error(`error: ${result.error}`);
     ok('handleWebhook: dedup → skipped');
@@ -912,7 +909,7 @@ if (require.main === module) {
       issue: { key: 'REG-1' },
       changelog: { items: [{ field: 'status', toString: 'Done' }] },
     };
-    const result = handleWebhook(board, payload, 'http://localhost/api/webhooks/jira');
+    const result = handleWebhook(board, payload);
     if (result.action !== 'status_change') throw new Error(`action: ${result.action}`);
     if (result.karviStatus !== 'completed') throw new Error(`karviStatus: ${result.karviStatus}`);
     ok('handleWebhook: issue_updated regression → status_change');
@@ -975,7 +972,7 @@ if (require.main === module) {
         ],
       },
     };
-    const result = handleWebhook(board, payload, 'http://localhost/api/webhooks/jira');
+    const result = handleWebhook(board, payload);
     if (result.action !== 'fields_updated') throw new Error(`action: ${result.action}`);
     if (result.changes.length !== 2) throw new Error(`changes: ${result.changes.length}`);
     if (result.updatedFields.title !== 'New Title') throw new Error(`title: ${result.updatedFields.title}`);
@@ -993,11 +990,11 @@ if (require.main === module) {
       issue: { key: 'DUP-1', fields: { summary: 'New' } },
       changelog: { items: [{ field: 'summary', fromString: 'Title', toString: 'New' }] },
     };
-    const r1 = handleWebhook(board, payload, 'http://localhost/api/webhooks/jira');
+    const r1 = handleWebhook(board, payload);
     if (r1.action !== 'fields_updated') throw new Error(`first call: ${r1.action}`);
     // Simulate applying the hash
     board.taskPlan.tasks[0]._lastChangeHash = r1.changeHash;
-    const r2 = handleWebhook(board, payload, 'http://localhost/api/webhooks/jira');
+    const r2 = handleWebhook(board, payload);
     if (r2.action !== 'skipped') throw new Error(`second call: ${r2.action}`);
     ok('handleWebhook: dedup via change hash');
   } catch (e) { fail('handleWebhook: dedup via change hash', e.message); }
@@ -1016,7 +1013,7 @@ if (require.main === module) {
         { field: 'Sprint', fromString: 'Sprint 1', toString: 'Sprint 2' },
       ]},
     };
-    const result = handleWebhook(board, payload, 'http://localhost/api/webhooks/jira');
+    const result = handleWebhook(board, payload);
     if (result.action !== 'skipped') throw new Error(`action: ${result.action}`);
     ok('handleWebhook: ignores non-substantive fields');
   } catch (e) { fail('handleWebhook: ignores non-substantive', e.message); }

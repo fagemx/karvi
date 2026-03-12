@@ -91,7 +91,18 @@ module.exports = function jiraRoutes(req, res, helpers, deps) {
             board.taskPlan = board.taskPlan || { tasks: [] };
             board.taskPlan.tasks = board.taskPlan.tasks || [];
             board.taskPlan.tasks.push(result.task);
+
+            // Emit signal before writeBoard so both task + signal are persisted atomically
+            mgmt.ensureEvolutionFields(board);
+            board.signals.push(createSignal({
+              by: 'jira-mention', type: 'mention_task_created',
+              content: `@karvi mention → ${result.task.id} created from Jira ${result.issueKey}`,
+              refs: [result.task.id],
+              data: { taskId: result.task.id, jiraKey: result.issueKey, command: result.command },
+            }, req, helpers));
+            mgmt.trimSignals(board, helpers.signalArchivePath);
             helpers.writeBoard(board);
+
             helpers.appendLog({
               ts: helpers.nowIso(),
               event: 'jira_mention_task_created',
@@ -113,17 +124,6 @@ module.exports = function jiraRoutes(req, res, helpers, deps) {
               : `Task **${result.task.id}** created (status: ${result.task.status}).`;
             replyOnIssue(result.issueKey, replyBody);
 
-            // Emit signal
-            mgmt.ensureEvolutionFields(board);
-            board.signals.push(createSignal({
-              by: 'jira-mention', type: 'mention_task_created',
-              content: `@karvi mention → ${result.task.id} created from Jira ${result.issueKey}`,
-              refs: [result.task.id],
-              data: { taskId: result.task.id, jiraKey: result.issueKey, command: result.command },
-            }, req, helpers));
-            mgmt.trimSignals(board, helpers.signalArchivePath);
-            helpers.writeBoard(board);
-
             json(res, 201, { ok: true, action: 'create_task', taskId: result.task.id, jiraKey: result.issueKey });
             return;
           }
@@ -133,7 +133,7 @@ module.exports = function jiraRoutes(req, res, helpers, deps) {
         }
 
         // --- issue_created / issue_updated events: existing behavior ---
-        const result = jiraIntegration.handleWebhook(board, payload, req.url);
+        const result = jiraIntegration.handleWebhook(board, payload);
 
         if (result.action === 'rejected') {
           json(res, 401, { error: result.error });
