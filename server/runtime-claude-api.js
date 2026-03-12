@@ -11,7 +11,7 @@
 const https = require('https');
 const fs = require('fs');
 const path = require('path');
-const { execSync } = require('child_process');
+const { execSync, execFileSync } = require('child_process');
 
 // --- Constants ---
 const API_HOST = 'api.anthropic.com';
@@ -210,18 +210,18 @@ function executeToolCall(toolName, toolInput, workingDir) {
 
       case 'bash': {
         const cmd = toolInput.command;
-        // Windows-first: use cmd.exe /d /s /c wrapping (see runtime-openclaw.js)
-        const shellCmd = process.platform === 'win32'
-          ? `cmd.exe /d /s /c "${cmd}"`
-          : cmd;
-        const result = execSync(shellCmd, {
+        // Windows-first: use execFileSync with array args to prevent injection
+        // (LLM-generated cmd may contain crafted double quotes)
+        const execOpts = {
           cwd: workingDir,
           timeout: TOOL_EXEC_TIMEOUT_MS,
           encoding: 'utf8',
           maxBuffer: 1024 * 1024, // 1MB
           windowsHide: true,
-          shell: process.platform !== 'win32', // Unix: use shell; Windows: already wrapped
-        });
+        };
+        const result = process.platform === 'win32'
+          ? execFileSync('cmd.exe', ['/d', '/s', '/c', cmd], execOpts)
+          : execSync(cmd, { ...execOpts, shell: true });
         return result || '(no output)';
       }
 
