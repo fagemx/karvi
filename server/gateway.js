@@ -46,9 +46,10 @@ const SESSION_CLEANUP_INTERVAL_MS = 3600000; // 1 hour
 // CORS origin 白名單 — comma-separated，未設定時開發模式 fallback 到 *
 const ALLOWED_ORIGINS = (process.env.KARVI_CORS_ORIGINS || '').split(',').map(s => s.trim()).filter(Boolean);
 
-// --- Login Rate Limiter ---
-// 5 attempts per minute per IP to prevent brute force attacks
-const loginLimiter = createLimiter({ capacity: 5, refillRate: 5 / 60 });
+// --- Auth Rate Limiters ---
+// 10 attempts per minute per IP to prevent brute force attacks
+const loginLimiter = createLimiter({ capacity: 10, refillRate: 10 / 60 });
+const registerLimiter = createLimiter({ capacity: 10, refillRate: 10 / 60 });
 
 function getClientIP(req) {
   const xff = req.headers['x-forwarded-for'];
@@ -206,6 +207,16 @@ async function recoverRunningInstances() {
 // --- Route Handlers ---
 
 async function handleRegister(req, res) {
+  // Rate limit: 10 attempts per minute per IP
+  const clientIP = getClientIP(req);
+  const rateResult = registerLimiter.consume(clientIP);
+  res.setHeader('X-RegisterRateLimit-Limit', rateResult.limit);
+  res.setHeader('X-RegisterRateLimit-Remaining', rateResult.remaining);
+  if (!rateResult.allowed) {
+    res.setHeader('Retry-After', rateResult.retryAfter);
+    return json(res, 429, { error: 'Too many registration attempts', retryAfter: rateResult.retryAfter });
+  }
+
   let body;
   try { body = await parseBody(req); } catch (e) { return json(res, e.statusCode || 400, { error: e.statusCode === 413 ? 'Request body too large' : 'Invalid JSON' }); }
 
@@ -243,7 +254,7 @@ async function handleRegister(req, res) {
 }
 
 async function handleLogin(req, res) {
-  // Rate limit: 5 attempts per minute per IP
+  // Rate limit: 10 attempts per minute per IP
   const clientIP = getClientIP(req);
   const rateResult = loginLimiter.consume(clientIP);
   res.setHeader('X-LoginRateLimit-Limit', rateResult.limit);
