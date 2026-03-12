@@ -181,6 +181,13 @@ const routes = [
 const { json } = bb;
 
 const server = bb.createServer(ctx, (req, res, helpers) => {
+  inFlightRequests++;
+  const originalEnd = res.end.bind(res);
+  res.end = (...args) => {
+    inFlightRequests--;
+    return originalEnd(...args);
+  };
+
   for (const route of routes) {
     const result = route(req, res, helpers, deps);
     if (result !== false) return;
@@ -432,7 +439,10 @@ try {
   console.warn(`[village-scheduler] init failed, continuing without scheduler: ${err.message}`);
 }
 
-// --- Graceful Shutdown ---
+// --- Graceful Shutdown with Request Draining ---
+let inFlightRequests = 0;
+const DRAIN_TIMEOUT_MS = 30000;
+
 function gracefulShutdown() {
   console.log('[server] shutting down...');
   clearInterval(retryPoller);
@@ -440,8 +450,25 @@ function gracefulShutdown() {
   villageScheduler?.stop();
   telemetryHandle?.stop();
   usageHandle?.stop();
-  server.close(() => process.exit(0));
-  setTimeout(() => process.exit(1), 5000);
+
+  if (inFlightRequests === 0) {
+    server.close(() => process.exit(0));
+  } else {
+    console.log(`[server] draining ${inFlightRequests} in-flight request(s)...`);
+    const drainDeadline = setTimeout(() => {
+      console.log('[server] drain timeout, forcing exit');
+      process.exit(1);
+    }, DRAIN_TIMEOUT_MS);
+
+    const checkDrain = setInterval(() => {
+      if (inFlightRequests === 0) {
+        clearInterval(checkDrain);
+        clearTimeout(drainDeadline);
+        server.close(() => process.exit(0));
+      }
+    }, 100);
+  }
+  setTimeout(() => process.exit(1), DRAIN_TIMEOUT_MS + 1000);
 }
 process.on('SIGTERM', gracefulShutdown);
 process.on('SIGINT', gracefulShutdown);
