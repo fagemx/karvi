@@ -35,6 +35,7 @@ function resolveClaudePath() {
 const CLAUDE_EXE = resolveClaudePath();
 
 const killTree = require('./kill-tree');
+const { createIdleController } = require('./runtime-utils');
 
 /**
  * Extract all text from a Claude assistant message content array.
@@ -104,7 +105,7 @@ function dispatch(plan) {
       plan.signal.addEventListener('abort', () => {
         killTree(child.pid, { signal: 'SIGTERM' });
         // Hard kill fallback after grace period
-        setTimeout(() => killTree(child.pid), 5000);
+        setTimeout(() => killTree(child.pid), 5000).unref();
       }, { once: true });
     }
 
@@ -117,13 +118,6 @@ function dispatch(plan) {
 
     child.stdout.setEncoding('utf8');
     child.stderr.setEncoding('utf8');
-
-    function settle(err, result) {
-      if (settled) return;
-      settled = true;
-      clearTimeout(inactivityTimer);
-      if (err) reject(err); else resolve(result);
-    }
 
     // Heartbeat: notify caller that runtime is alive (for lock renewal)
     let lastHeartbeat = 0;
@@ -140,19 +134,33 @@ function dispatch(plan) {
       }
     }
 
-    // --- Inactivity timeout: resets on every stream event ---
-    let inactivityTimer = null;
-    function resetInactivityTimer() {
-      if (settled) return;
-      clearTimeout(inactivityTimer);
-      inactivityTimer = setTimeout(() => {
-        console.log('[claude-rt] idle for %ds (no stream events), killing',
-          Math.round(timeoutMs / 1000));
-        settle(new Error(`claude idle for ${Math.round(timeoutMs / 1000)}s (no stream events)`));
+    // Periodic heartbeat: refresh step lock even during silent tool execution
+    const heartbeatInterval = setInterval(() => heartbeat(), HEARTBEAT_INTERVAL_MS);
+
+    const IDLE_TIMEOUT_MS = Math.min(timeoutMs, 120_000);
+    const TOOL_TIMEOUT_MS = timeoutMs;
+
+    const idleController = createIdleController({
+      idleTimeoutMs: IDLE_TIMEOUT_MS,
+      toolTimeoutMs: TOOL_TIMEOUT_MS,
+      logPrefix: '[claude-rt]',
+      onTimeout: (timeoutMsVal, depth) => {
+        console.log('[claude-rt] idle for %ds (depth=%d), killing',
+          Math.round(timeoutMsVal / 1000), depth);
+        settle(new Error(`claude idle for ${Math.round(timeoutMsVal / 1000)}s`));
         killTree(child.pid);
-      }, timeoutMs);
+      }
+    });
+
+    function settle(err, result) {
+      if (settled) return;
+      settled = true;
+      idleController.dispose();
+      clearInterval(heartbeatInterval);
+      if (err) reject(err); else resolve(result);
     }
-    resetInactivityTimer();
+
+    idleController.touch();
 
     function buildResult(text) {
       return {
@@ -172,7 +180,7 @@ function dispatch(plan) {
     // --- NDJSON parsing: one complete JSON object per line ---
     child.stdout.on('data', chunk => {
       lineBuf += chunk;
-      resetInactivityTimer();
+      idleController.touch();
       heartbeat();
 
       const lines = lineBuf.split('\n');
@@ -204,6 +212,8 @@ function dispatch(plan) {
         if (obj.type === 'assistant') {
           const text = extractTextFromContent(obj.message?.content || obj.content);
           if (text) lastAssistantText = text;
+          // assistant message after tool execution — reset depth
+          idleController.forceResetDepth('assistant');
 
           const m = STEP_RESULT_RE.exec(text);
           if (m) {
@@ -213,12 +223,22 @@ function dispatch(plan) {
             return;
           }
         }
+
+        // --- (3) tool use: switch to tool timeout ---
+        if (obj.type === 'tool_use') {
+          idleController.enterToolExecution();
+        }
+
+        // --- (4) tool result: return to idle timeout ---
+        if (obj.type === 'tool_result') {
+          idleController.exitToolExecution();
+        }
       }
     });
 
     child.stderr.on('data', chunk => {
       stderr += chunk;
-      resetInactivityTimer();
+      idleController.touch();
       if (stderr.length <= 1000) {
         console.log('[claude-rt] stderr:', chunk.slice(0, 200));
       }
