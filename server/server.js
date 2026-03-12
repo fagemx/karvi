@@ -148,6 +148,7 @@ const artifactsRoutes = require('./routes/artifacts');
 const logsRoutes = require('./routes/logs');
 const eddaRoutes = require('./routes/edda');
 const executionsRoutes = require('./routes/executions');
+const marketplaceRoutes = require('./routes/marketplace');
 
 const postmortem = require('./postmortem');
 
@@ -177,6 +178,7 @@ const routes = [
   logsRoutes,
   eddaRoutes,
   executionsRoutes,
+  marketplaceRoutes,
 ];
 
 const { json } = bb;

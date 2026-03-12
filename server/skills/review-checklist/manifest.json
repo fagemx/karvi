@@ -1,0 +1,7 @@
+{
+  "name": "review-checklist",
+  "version": "1.0.0",
+  "description": "任何 agent 都可以用這份 checklist 審查交付成果。包含 deterministic pre-checks 和 LLM score-based review。",
+  "tags": ["review", "quality", "checklist"],
+  "author": "karvi"
+}

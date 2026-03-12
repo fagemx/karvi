@@ -1,0 +1,7 @@
+{
+  "name": "lead-playbook",
+  "version": "1.0.0",
+  "description": "Lead playbook — 包含規劃、審查和決策的標準流程。",
+  "tags": ["lead", "planning", "review", "playbook"],
+  "author": "karvi"
+}

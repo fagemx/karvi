@@ -1,0 +1,7 @@
+{
+  "name": "blackboard-basics",
+  "version": "1.0.0",
+  "description": "Blackboard server 基礎知識 — 如何使用 bb.createServer、writeBoard、SSE 等。",
+  "tags": ["blackboard", "server", "basics"],
+  "author": "karvi"
+}

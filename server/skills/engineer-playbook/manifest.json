@@ -1,0 +1,7 @@
+{
+  "name": "engineer-playbook",
+  "version": "1.0.0",
+  "description": "工程師 playbook — 包含實作任務的標準流程、coding standards 和最佳實踐。",
+  "tags": ["engineer", "implementation", "playbook"],
+  "author": "karvi"
+}
