@@ -233,14 +233,17 @@ module.exports = function githubRoutes(req, res, helpers, deps) {
               source: 'github-mention',
             });
 
-            // Reply on issue
-            const replyBody = `Task **${result.task.id}** created and dispatched.`;
-            replyOnIssue(result.issueNumber, result.repo, replyBody);
-
             // Auto-dispatch via step pipeline
-            if (result.task.status === 'dispatched' && deps.tryAutoDispatch) {
+            const willDispatch = result.task.status === 'dispatched' && deps.tryAutoDispatch;
+            if (willDispatch) {
               setImmediate(() => deps.tryAutoDispatch(result.task.id));
             }
+
+            // Reply on issue — reflect actual dispatch state
+            const replyBody = willDispatch
+              ? `Task **${result.task.id}** created and dispatched.`
+              : `Task **${result.task.id}** created (status: ${result.task.status}).`;
+            replyOnIssue(result.issueNumber, result.repo, replyBody);
 
             // Emit signal
             mgmt.ensureEvolutionFields(board);

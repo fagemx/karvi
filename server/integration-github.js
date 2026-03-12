@@ -215,6 +215,16 @@ function handleMentionWebhook(board, payload, config) {
     return { action: 'status_reply', existingTask: null, issueNumber, repo };
   }
 
+  // Check ignoreLabels filter (same as handleWebhook)
+  if (Array.isArray(config.ignoreLabels) && config.ignoreLabels.length > 0) {
+    const issueLabels = (issue.labels || []).map(l => (l.name || '').toLowerCase());
+    const ignored = config.ignoreLabels.map(l => l.toLowerCase());
+    const match = issueLabels.find(l => ignored.includes(l));
+    if (match) {
+      return { action: 'skipped', error: `Label "${match}" is in ignoreLabels` };
+    }
+  }
+
   // fix / implement → create task (or report existing)
   if (isDuplicate(board, issueNumber, repo)) {
     const existing = (board.taskPlan?.tasks || []).find(t =>
