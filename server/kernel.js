@@ -11,6 +11,7 @@ const routeEngine = require('./route-engine');
 const { BLOCKER_TYPES } = require('./blocker-types');
 const contextCompiler = require('./context-compiler');
 const villageHooks = require('./village-hooks');
+const { verifyContract } = require('./village/deliverable-contracts');
 const worktreeHelper = require('./worktree');
 const { resolveRepoRoot } = require('./repo-resolver');
 const path = require('path');
@@ -304,6 +305,37 @@ function createKernel(deps) {
 
       case 'done': {
         if (latestTask) {
+          // Verify deliverable contract before approving
+          if (latestTask.contract) {
+            const cv = verifyContract(latestTask, latestBoard, helpers, artifactStore);
+            if (!cv.ok) {
+              console.warn(`[kernel] contract verification failed for ${taskId}: ${cv.reason}`);
+              latestTask.status = 'blocked';
+              latestTask.blocker = { type: 'contract_failed', reason: cv.reason };
+              latestTask.history = latestTask.history || [];
+              latestTask.history.push({ ts: helpers.nowIso(), status: 'blocked', reason: `contract: ${cv.reason}` });
+
+              // Signal + push (match dead_letter side-effects)
+              mgmt.ensureEvolutionFields(latestBoard);
+              latestBoard.signals.push({
+                id: helpers.uid('sig'), ts: helpers.nowIso(), by: 'kernel',
+                type: 'contract_failed',
+                content: `${taskId} contract verification failed: ${cv.reason}`,
+                refs: [taskId],
+                data: { taskId, kind: latestTask.contract.kind, reason: cv.reason },
+              });
+              mgmt.trimSignals(latestBoard, helpers.signalArchivePath);
+
+              if (push && PUSH_TOKENS_PATH) {
+                push.notifyTaskEvent(PUSH_TOKENS_PATH, latestTask, 'task.contract_failed')
+                  .catch(err => console.error('[kernel] contract_failed push error:', err.message));
+              }
+
+              helpers.writeBoard(latestBoard);
+              return;
+            }
+          }
+
           // Step pipeline includes review as step[3] — all steps succeeded means approved
           latestTask.status = 'approved';
           latestTask.completedAt = helpers.nowIso();
