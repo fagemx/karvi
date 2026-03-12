@@ -39,7 +39,7 @@ function mapState(state) {
 function computeStepIndex(board, taskId, stepId) {
   const task = (board.taskPlan?.tasks || []).find(t => t.id === taskId);
   const idx = (task?.steps || []).findIndex(s => s.step_id === stepId);
-  return idx >= 0 ? idx : 0;
+  return idx >= 0 ? idx : -1;
 }
 
 function emitWebhookEvent(board, eventType, payload) {
@@ -61,7 +61,9 @@ function emitWebhookEvent(board, eventType, payload) {
     step_id: payload.stepId,
     step_index: computeStepIndex(board, payload.taskId, payload.stepId),
   };
-  if (payload.state) nestedPayload.state = mapState(payload.state);
+  // Default state for step_started (call site omits state)
+  const rawState = payload.state || (eventType === 'step_started' ? 'running' : undefined);
+  if (rawState) nestedPayload.state = mapState(rawState);
   if (payload.stepType) nestedPayload.step_type = payload.stepType;
   if (payload.error) nestedPayload.error = payload.error;
 
@@ -71,6 +73,10 @@ function emitWebhookEvent(board, eventType, payload) {
     timestamp: now,
     version: 'karvi.event.v1',
     payload: nestedPayload,
+    // Deprecated compat fields — will be removed in v2
+    occurred_at: now,
+    ts: now,
+    event: eventType,
   };
   const body = JSON.stringify(envelope);
   const mod = parsed.protocol === 'https:' ? require('https') : require('http');
