@@ -13,6 +13,7 @@
  */
 const bb = require('../blackboard-server');
 const { json } = bb;
+const { requireRole } = require('./_shared');
 
 function queryArtifacts(board, filters, artifactStore) {
   const tasks = board.taskPlan?.tasks || [];
@@ -110,6 +111,7 @@ module.exports = function artifactsRoutes(req, res, helpers, deps) {
 
   const downloadMatch = req.url.match(/^\/api\/artifacts\/([^/]+)\/([^/]+)\/([^/?]+)/);
   if (downloadMatch) {
+    if (requireRole(req, res, 'viewer')) return;
     const [, runId, safeStepId, kind] = downloadMatch;
     const stepId = safeStepId.replace(/_/g, ':');
 

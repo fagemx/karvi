@@ -10,7 +10,7 @@ const fs = require('fs');
 const path = require('path');
 const bb = require('../blackboard-server');
 const { json } = bb;
-const { deepMerge } = require('./_shared');
+const { deepMerge, requireRole } = require('./_shared');
 
 module.exports = function briefsRoutes(req, res, helpers, deps) {
   const { DIR, DATA_DIR } = deps;
@@ -52,6 +52,7 @@ module.exports = function briefsRoutes(req, res, helpers, deps) {
   }
 
   if (req.method === 'PATCH' && briefGetMatch) {
+    if (requireRole(req, res, 'operator')) return;
     const taskId = decodeURIComponent(briefGetMatch[1]);
     helpers.parseBody(req).then(patch => {
       const existing = readBrief(taskId);
@@ -64,6 +65,7 @@ module.exports = function briefsRoutes(req, res, helpers, deps) {
   }
 
   if (req.method === 'PUT' && briefGetMatch) {
+    if (requireRole(req, res, 'operator')) return;
     const taskId = decodeURIComponent(briefGetMatch[1]);
     helpers.parseBody(req).then(data => {
       if (!writeBrief(taskId, data)) return json(res, 404, { error: 'no brief for this task' });

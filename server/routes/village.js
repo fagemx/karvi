@@ -11,6 +11,7 @@
  */
 const bb = require('../blackboard-server');
 const { json } = bb;
+const { requireRole } = require('./_shared');
 const { retryOnConflict } = require('../helpers/retry');
 
 // --- Default village block for board.json ---
@@ -70,6 +71,7 @@ module.exports = function villageRoutes(req, res, helpers, deps) {
 
   // ── POST /api/village/goals — add or update a goal ──
   if (req.method === 'POST' && pathname === '/api/village/goals') {
+    if (requireRole(req, res, 'operator')) return;
     helpers.parseBody(req).then(body => {
       try {
         const board = helpers.readBoard();
@@ -136,6 +138,7 @@ module.exports = function villageRoutes(req, res, helpers, deps) {
 
   // ── POST /api/village/departments — add or update a department ──
   if (req.method === 'POST' && pathname === '/api/village/departments') {
+    if (requireRole(req, res, 'operator')) return;
     helpers.parseBody(req).then(body => {
       try {
         const board = helpers.readBoard();
@@ -290,6 +293,7 @@ module.exports = function villageRoutes(req, res, helpers, deps) {
 
   // ── POST /api/village/trigger — trigger a village meeting ──
   if (req.method === 'POST' && pathname === '/api/village/trigger') {
+    if (requireRole(req, res, 'operator')) return;
     helpers.parseBody(req).then(async body => {
       try {
         const result = await retryOnConflict(async () => {
@@ -417,6 +421,7 @@ module.exports = function villageRoutes(req, res, helpers, deps) {
 
   // ── POST /api/village/config — update village-level config ──
   if (req.method === 'POST' && pathname === '/api/village/config') {
+    if (requireRole(req, res, 'admin')) return;
     helpers.parseBody(req).then(body => {
       try {
         const board = helpers.readBoard();
@@ -439,6 +444,7 @@ module.exports = function villageRoutes(req, res, helpers, deps) {
 
   // ── POST /api/village/approve — approve pending plan and dispatch tasks ──
   if (req.method === 'POST' && pathname === '/api/village/approve') {
+    if (requireRole(req, res, 'operator')) return;
     helpers.parseBody(req).then(async body => {
       try {
         const board = helpers.readBoard();
