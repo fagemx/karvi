@@ -15,6 +15,7 @@ const { verifyContract } = require('./village/deliverable-contracts');
 const worktreeHelper = require('./worktree');
 const { resolveRepoRoot } = require('./repo-resolver');
 const { createSignal } = require('./signal');
+const { retryOnConflict } = require('./helpers/retry');
 const path = require('path');
 
 /**
@@ -244,14 +245,22 @@ function createKernel(deps) {
         // Push notification
         if (push && PUSH_TOKENS_PATH && latestTask) {
           push.notifyTaskEvent(PUSH_TOKENS_PATH, latestTask, 'task.blocked')
-            .catch(err => {
+            .catch(async err => {
               console.error(`[kernel] push error for task ${taskId}, event task.blocked:`, err.message);
-              latestBoard.signals.push(createSignal({
-                by: 'kernel', type: 'push_failed',
-                content: `Push notification failed for ${taskId}: ${err.message}`,
-                refs: [taskId], data: { taskId, eventType: 'task.blocked', error: err.message },
-              }, helpers));
-              mgmt.trimSignals(latestBoard, helpers.signalArchivePath);
+              try {
+                await retryOnConflict(async () => {
+                  const freshBoard = helpers.readBoard();
+                  freshBoard.signals.push(createSignal({
+                    by: 'kernel', type: 'push_failed',
+                    content: `Push notification failed for ${taskId}: ${err.message}`,
+                    refs: [taskId], data: { taskId, eventType: 'task.blocked', error: err.message },
+                  }, helpers));
+                  mgmt.trimSignals(freshBoard, helpers.signalArchivePath);
+                  helpers.writeBoard(freshBoard);
+                });
+              } catch (retryErr) {
+                console.error(`[kernel] push_failed signal write failed after retries:`, retryErr.message);
+              }
             });
         }
         return;
@@ -281,14 +290,22 @@ function createKernel(deps) {
         helpers.writeBoard(latestBoard);
         if (push && PUSH_TOKENS_PATH && latestTask) {
           push.notifyTaskEvent(PUSH_TOKENS_PATH, latestTask, 'task.blocked')
-            .catch(err => {
+            .catch(async err => {
               console.error(`[kernel] push error for task ${taskId}, event task.blocked:`, err.message);
-              latestBoard.signals.push(createSignal({
-                by: 'kernel', type: 'push_failed',
-                content: `Push notification failed for ${taskId}: ${err.message}`,
-                refs: [taskId], data: { taskId, eventType: 'task.blocked', error: err.message },
-              }, helpers));
-              mgmt.trimSignals(latestBoard, helpers.signalArchivePath);
+              try {
+                await retryOnConflict(async () => {
+                  const freshBoard = helpers.readBoard();
+                  freshBoard.signals.push(createSignal({
+                    by: 'kernel', type: 'push_failed',
+                    content: `Push notification failed for ${taskId}: ${err.message}`,
+                    refs: [taskId], data: { taskId, eventType: 'task.blocked', error: err.message },
+                  }, helpers));
+                  mgmt.trimSignals(freshBoard, helpers.signalArchivePath);
+                  helpers.writeBoard(freshBoard);
+                });
+              } catch (retryErr) {
+                console.error(`[kernel] push_failed signal write failed after retries:`, retryErr.message);
+              }
             });
         }
         return;
@@ -387,27 +404,39 @@ function createKernel(deps) {
               const repoName = latestTask.pr.repo.split('/')[1];
               const commitTitle = `${latestTask.title || taskId} (#${number})`;
               githubApi.mergePR(pat, owner, repoName, number, commitTitle, 'squash')
-                .then(() => {
+                .then(async () => {
                   console.log(`[kernel] auto-merged PR #${number} for ${taskId}`);
-                  const freshBoard = helpers.readBoard();
-                  const freshTask = (freshBoard.taskPlan?.tasks || []).find(t => t.id === taskId);
-                  if (freshTask?.pr) {
-                    freshTask.pr.outcome = 'merged';
-                    freshTask.pr.mergedAt = helpers.nowIso();
-                    freshTask.pr.mergedBy = 'karvi-auto-merge';
-                    helpers.writeBoard(freshBoard);
+                  try {
+                    await retryOnConflict(async () => {
+                      const freshBoard = helpers.readBoard();
+                      const freshTask = (freshBoard.taskPlan?.tasks || []).find(t => t.id === taskId);
+                      if (freshTask?.pr) {
+                        freshTask.pr.outcome = 'merged';
+                        freshTask.pr.mergedAt = helpers.nowIso();
+                        freshTask.pr.mergedBy = 'karvi-auto-merge';
+                        helpers.writeBoard(freshBoard);
+                      }
+                    });
+                  } catch (retryErr) {
+                    console.error(`[kernel] auto-merge board update failed after retries:`, retryErr.message);
                   }
                 })
-                .catch(err => {
+                .catch(async err => {
                   console.error(`[kernel] auto-merge failed for PR #${number}:`, err.message);
-                  const freshBoard = helpers.readBoard();
-                  freshBoard.signals.push(createSignal({
-                    by: 'kernel', type: 'auto_merge_failed',
-                    content: `Auto-merge failed for ${taskId} PR #${number}: ${err.message}`,
-                    refs: [taskId], data: { taskId, prNumber: number, error: err.message },
-                  }, helpers));
-                  mgmt.trimSignals(freshBoard, helpers.signalArchivePath);
-                  helpers.writeBoard(freshBoard);
+                  try {
+                    await retryOnConflict(async () => {
+                      const freshBoard = helpers.readBoard();
+                      freshBoard.signals.push(createSignal({
+                        by: 'kernel', type: 'auto_merge_failed',
+                        content: `Auto-merge failed for ${taskId} PR #${number}: ${err.message}`,
+                        refs: [taskId], data: { taskId, prNumber: number, error: err.message },
+                      }, helpers));
+                      mgmt.trimSignals(freshBoard, helpers.signalArchivePath);
+                      helpers.writeBoard(freshBoard);
+                    });
+                  } catch (retryErr) {
+                    console.error(`[kernel] auto_merge_failed signal write failed after retries:`, retryErr.message);
+                  }
                 });
             }
           }
@@ -433,14 +462,22 @@ function createKernel(deps) {
 
         if (push && PUSH_TOKENS_PATH && latestTask) {
           push.notifyTaskEvent(PUSH_TOKENS_PATH, latestTask, 'task.completed')
-            .catch(err => {
+            .catch(async err => {
               console.error(`[kernel] push error for task ${taskId}, event task.completed:`, err.message);
-              latestBoard.signals.push(createSignal({
-                by: 'kernel', type: 'push_failed',
-                content: `Push notification failed for ${taskId}: ${err.message}`,
-                refs: [taskId], data: { taskId, eventType: 'task.completed', error: err.message },
-              }, helpers));
-              mgmt.trimSignals(latestBoard, helpers.signalArchivePath);
+              try {
+                await retryOnConflict(async () => {
+                  const freshBoard = helpers.readBoard();
+                  freshBoard.signals.push(createSignal({
+                    by: 'kernel', type: 'push_failed',
+                    content: `Push notification failed for ${taskId}: ${err.message}`,
+                    refs: [taskId], data: { taskId, eventType: 'task.completed', error: err.message },
+                  }, helpers));
+                  mgmt.trimSignals(freshBoard, helpers.signalArchivePath);
+                  helpers.writeBoard(freshBoard);
+                });
+              } catch (retryErr) {
+                console.error(`[kernel] push_failed signal write failed after retries:`, retryErr.message);
+              }
             });
         }
 

@@ -16,7 +16,9 @@ const mgmt = require('./management');
 const { resolveRepoRoot } = require('./repo-resolver');
 const { runHook } = require('./hook-runner');
 const { createSignal } = require('./signal');
+const { retryOnConflict } = require('./helpers/retry');
 const LOCK_GRACE_MS = 30_000; // 30s grace on top of step timeout
+const HEARTBEAT_DEBOUNCE_MS = 10_000; // Debounce heartbeat writes to 10s interval
 
 // --- Webhook event emission (#333) — Event Envelope v1 contract ---
 function emitWebhookEvent(board, eventType, payload) {
@@ -245,24 +247,41 @@ function createStepWorker(deps) {
     } else {
       // 4. Dispatch with duration tracking (catch failures to transition step properly)
       //    Heartbeat callback: refresh lock while runtime is alive (prevents retry-poller conflicts)
-      plan.onActivity = () => {
+      //    Debounced to write once per HEARTBEAT_DEBOUNCE_MS instead of per-activity.
+      let lastHeartbeatWrite = 0;
+      let heartbeatPending = false;
+      const writeHeartbeat = async () => {
         try {
-          const hbBoard = helpers.readBoard();
-          const hbTask = (hbBoard.taskPlan?.tasks || []).find(t => t.id === envelope.task_id);
-          const hbStep = hbTask?.steps?.find(s => s.step_id === envelope.step_id);
-          if (hbStep && hbStep.state === 'running') {
-            hbStep.lock_expires_at = new Date(Date.now() + timeoutMs + LOCK_GRACE_MS).toISOString();
-            // Also update last_activity so retry-poller sees fresh activity
-            if (!hbStep.progress) hbStep.progress = {};
-            hbStep.progress.last_activity = new Date().toISOString();
-            helpers.writeBoard(hbBoard);
-            console.log(`[step-worker] heartbeat: ${envelope.step_id} lock renewed to +${Math.round(timeoutMs/1000)}s`);
-          } else {
-            console.log(`[step-worker] heartbeat: ${envelope.step_id} skipped (state=${hbStep?.state} found=${!!hbStep})`);
-          }
+          await retryOnConflict(async () => {
+            const hbBoard = helpers.readBoard();
+            const hbTask = (hbBoard.taskPlan?.tasks || []).find(t => t.id === envelope.task_id);
+            const hbStep = hbTask?.steps?.find(s => s.step_id === envelope.step_id);
+            if (hbStep && hbStep.state === 'running') {
+              hbStep.lock_expires_at = new Date(Date.now() + timeoutMs + LOCK_GRACE_MS).toISOString();
+              if (!hbStep.progress) hbStep.progress = {};
+              hbStep.progress.last_activity = new Date().toISOString();
+              helpers.writeBoard(hbBoard);
+              console.log(`[step-worker] heartbeat: ${envelope.step_id} lock renewed to +${Math.round(timeoutMs/1000)}s`);
+            } else {
+              console.log(`[step-worker] heartbeat: ${envelope.step_id} skipped (state=${hbStep?.state} found=${!!hbStep})`);
+            }
+          });
         } catch (err) {
           console.log(`[step-worker] heartbeat error: ${envelope.step_id}: ${err.message}`);
         }
+        heartbeatPending = false;
+      };
+      plan.onActivity = () => {
+        const now = Date.now();
+        if (now - lastHeartbeatWrite < HEARTBEAT_DEBOUNCE_MS) {
+          if (!heartbeatPending) {
+            heartbeatPending = true;
+            setTimeout(writeHeartbeat, HEARTBEAT_DEBOUNCE_MS - (now - lastHeartbeatWrite));
+          }
+          return;
+        }
+        lastHeartbeatWrite = now;
+        writeHeartbeat();
       };
 
       // Progress callback: write granular progress to step metadata (throttled)
@@ -270,45 +289,49 @@ function createStepWorker(deps) {
       let lastProgressWrite = 0;
       const startMs = Date.now();
 
-      plan.onProgress = (event) => {
+      plan.onProgress = async (event) => {
         const now = Date.now();
         if (now - lastProgressWrite < PROGRESS_THROTTLE_MS) return;
         lastProgressWrite = now;
         try {
-          const pgBoard = helpers.readBoard();
-          const pgTask = (pgBoard.taskPlan?.tasks || []).find(t => t.id === envelope.task_id);
-          const pgStep = pgTask?.steps?.find(s => s.step_id === envelope.step_id);
-          if (!pgStep || pgStep.state !== 'running') return;
-          pgStep.progress = {
-            tool_calls: event.tool_calls || 0,
-            tokens: event.tokens || null,
-            last_tool: event.tool_name || null,
-            last_activity: new Date(now).toISOString(),
-            elapsed_ms: now - startMs,
-          };
-          helpers.writeBoard(pgBoard);
+          await retryOnConflict(async () => {
+            const pgBoard = helpers.readBoard();
+            const pgTask = (pgBoard.taskPlan?.tasks || []).find(t => t.id === envelope.task_id);
+            const pgStep = pgTask?.steps?.find(s => s.step_id === envelope.step_id);
+            if (!pgStep || pgStep.state !== 'running') return;
+            pgStep.progress = {
+              tool_calls: event.tool_calls || 0,
+              tokens: event.tokens || null,
+              last_tool: event.tool_name || null,
+              last_activity: new Date(now).toISOString(),
+              elapsed_ms: now - startMs,
+            };
+            helpers.writeBoard(pgBoard);
+          });
         } catch (err) {
           console.error(`[step-worker] onProgress write failed for ${envelope.step_id}:`, err.message);
         }
       };
       // Write initial progress before spawn (so progress is never undefined)
       try {
-        const initBoard = helpers.readBoard();
-        const initTask = (initBoard.taskPlan?.tasks || []).find(t => t.id === envelope.task_id);
-        const initStep = initTask?.steps?.find(s => s.step_id === envelope.step_id);
-        if (initStep && initStep.state === 'running') {
-          initStep.progress = {
-            tool_calls: 0,
-            tokens: null,
-            last_tool: null,
-            last_activity: new Date().toISOString(),
-            elapsed_ms: 0,
-            dispatched_at: new Date().toISOString(),
-            cwd: plan.workingDir || plan.cwd || null,
-            runtime: runtimeHint || 'unknown',
-          };
-          helpers.writeBoard(initBoard);
-        }
+        await retryOnConflict(async () => {
+          const initBoard = helpers.readBoard();
+          const initTask = (initBoard.taskPlan?.tasks || []).find(t => t.id === envelope.task_id);
+          const initStep = initTask?.steps?.find(s => s.step_id === envelope.step_id);
+          if (initStep && initStep.state === 'running') {
+            initStep.progress = {
+              tool_calls: 0,
+              tokens: null,
+              last_tool: null,
+              last_activity: new Date().toISOString(),
+              elapsed_ms: 0,
+              dispatched_at: new Date().toISOString(),
+              cwd: plan.workingDir || plan.cwd || null,
+              runtime: runtimeHint || 'unknown',
+            };
+            helpers.writeBoard(initBoard);
+          }
+        });
       } catch (err) {
         console.error(`[step-worker] initial progress write failed for ${envelope.step_id}:`, err.message);
       }
