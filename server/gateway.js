@@ -35,6 +35,8 @@ const proxy = require('./gateway-proxy');
 const mgr = require('./instance-manager');
 const { createLimiter } = require('./rate-limiter');
 
+const { isValidIP, isTrustedProxy } = proxy;
+
 // --- Configuration ---
 const PORT = Number(process.env.GATEWAY_PORT || 3460);
 const DATA_ROOT = path.resolve(process.env.GATEWAY_DATA_ROOT || './data');
@@ -104,11 +106,25 @@ const loginLimiter = createLimiter({ capacity: 10, refillRate: 10 / 60 });
 const registerLimiter = createLimiter({ capacity: 10, refillRate: 10 / 60 });
 
 function getClientIP(req) {
+  const socketIP = req.socket.remoteAddress || '127.0.0.1';
+
+  // Only trust X-Forwarded-For when request comes from trusted proxy
   const xff = req.headers['x-forwarded-for'];
-  if (xff) return xff.split(',')[0].trim();
+  if (xff && isTrustedProxy(socketIP)) {
+    const ips = xff.split(',').map(s => s.trim()).filter(Boolean);
+    // Return first valid IP from the chain
+    for (const ip of ips) {
+      if (isValidIP(ip)) return ip;
+    }
+  }
+
+  // Cloudflare connecting IP (only trust if from trusted source)
   const cfIP = req.headers['cf-connecting-ip'];
-  if (cfIP) return cfIP.trim();
-  return req.socket.remoteAddress || '127.0.0.1';
+  if (cfIP && isTrustedProxy(socketIP) && isValidIP(cfIP)) {
+    return cfIP.trim();
+  }
+
+  return socketIP;
 }
 
 // --- Helpers ---
