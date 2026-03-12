@@ -430,6 +430,51 @@ test('resolvePipeline returns array for valid template name', () => {
   assert.deepStrictEqual(result, [{ type: 'a' }]);
 });
 
+// --- Built-in Pipeline Templates ---
+
+test('BUILT_IN_TEMPLATES contains expected presets', () => {
+  const templates = mgmt.BUILT_IN_TEMPLATES;
+  assert.ok(templates['default'], 'should have default template');
+  assert.ok(templates['security-review'], 'should have security-review template');
+  assert.ok(templates['docs-only'], 'should have docs-only template');
+  assert.ok(templates['test-heavy'], 'should have test-heavy template');
+  assert.ok(templates['quick-fix'], 'should have quick-fix template');
+  assert.ok(templates['research'], 'should have research template');
+  // 每個範本都是非空陣列
+  for (const [name, pipeline] of Object.entries(templates)) {
+    assert.ok(Array.isArray(pipeline) && pipeline.length > 0, `${name} should be non-empty array`);
+  }
+});
+
+test('resolvePipeline resolves built-in template when board has none', () => {
+  const board = { pipelineTemplates: {} };
+  const result = mgmt.resolvePipeline('quick-fix', board);
+  assert.ok(Array.isArray(result), 'should resolve built-in template');
+  assert.strictEqual(result.length, 2);
+  assert.strictEqual(result[0].type, 'implement');
+  assert.strictEqual(result[1].type, 'review');
+});
+
+test('resolvePipeline user template overrides built-in of same name', () => {
+  const board = { pipelineTemplates: { 'quick-fix': [{ type: 'custom-step' }] } };
+  const result = mgmt.resolvePipeline('quick-fix', board);
+  assert.deepStrictEqual(result, [{ type: 'custom-step' }]);
+});
+
+test('resolvePipeline built-in works with null board', () => {
+  const result = mgmt.resolvePipeline('docs-only', null);
+  assert.ok(Array.isArray(result), 'should resolve built-in even with null board');
+  assert.strictEqual(result[0].type, 'implement');
+});
+
+test('generateStepsForTask uses built-in template by name', () => {
+  const board = { pipelineTemplates: {} };
+  const task = { id: 'T-BUILTIN', pipeline: 'quick-fix' };
+  const steps = mgmt.generateStepsForTask(task, 'run-bi', null, board);
+  assert.strictEqual(steps.length, 2);
+  assert.deepStrictEqual(steps.map(s => s.type), ['implement', 'review']);
+});
+
 test('buildDispatchPlan includes steps field', () => {
   // Minimal board and task for buildDispatchPlan
   const board = {

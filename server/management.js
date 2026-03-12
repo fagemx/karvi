@@ -1186,6 +1186,42 @@ const DEFAULT_STEP_PIPELINE = [
   { type: 'review', revision_target: 'implement' },
 ];
 
+// 預建 pipeline 範本，使用者可透過 resolvePipeline 直接引用名稱
+const BUILT_IN_TEMPLATES = {
+  'default': [
+    { type: 'plan' },
+    { type: 'implement' },
+    { type: 'review', revision_target: 'implement' },
+  ],
+  'security-review': [
+    { type: 'plan', instruction: 'Focus on security implications and threat modeling' },
+    { type: 'implement' },
+    { type: 'review', instruction: 'Security-focused review: check for vulnerabilities, injection, auth bypass', revision_target: 'implement' },
+    { type: 'review', instruction: 'Final security audit before merge', revision_target: 'implement' },
+  ],
+  'docs-only': [
+    { type: 'implement', instruction: 'Documentation changes only — no code modifications' },
+    { type: 'review', revision_target: 'implement' },
+  ],
+  'test-heavy': [
+    { type: 'plan', instruction: 'Plan test strategy and identify edge cases' },
+    { type: 'implement', instruction: 'Write tests first, then implement to pass them' },
+    { type: 'review', instruction: 'Verify test coverage and edge cases', revision_target: 'implement' },
+    { type: 'implement', instruction: 'Fix any issues found in review', revision_target: 'implement' },
+    { type: 'review', revision_target: 'implement' },
+  ],
+  'quick-fix': [
+    { type: 'implement' },
+    { type: 'review', revision_target: 'implement' },
+  ],
+  'research': [
+    { type: 'plan', instruction: 'Research and analyze the problem space thoroughly' },
+    { type: 'plan', instruction: 'Propose solution options with trade-offs' },
+    { type: 'implement' },
+    { type: 'review', revision_target: 'implement' },
+  ],
+};
+
 function normalizePipelineEntry(entry) {
   if (typeof entry === 'string') {
     const type = entry.trim();
@@ -1210,8 +1246,9 @@ function normalizePipelineEntry(entry) {
 function resolvePipeline(pipelineValue, board) {
   if (Array.isArray(pipelineValue)) return pipelineValue;
   if (typeof pipelineValue === 'string') {
-    const templates = board?.pipelineTemplates || {};
-    const resolved = templates[pipelineValue];
+    // 先查 board 自訂範本，再查內建範本
+    const userTemplates = board?.pipelineTemplates || {};
+    const resolved = userTemplates[pipelineValue] || BUILT_IN_TEMPLATES[pipelineValue];
     if (Array.isArray(resolved)) return resolved;
     console.warn(`[pipeline] template "${pipelineValue}" not found, using default`);
     return null;
@@ -1335,6 +1372,7 @@ module.exports = {
   normalizePipelineEntry,
   generateStepsForTask,
   DEFAULT_STEP_PIPELINE,
+  BUILT_IN_TEMPLATES,
   trimSignals,
   budgetPctRemaining,
   resolveCostRoutingModel,
