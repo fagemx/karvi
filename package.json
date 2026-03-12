@@ -12,6 +12,7 @@
     "scripts/go.js",
     "shared/",
     "index.html",
+    "brief-panel/",
     "env.template"
   ],
   "engines": {

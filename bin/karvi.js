@@ -137,7 +137,7 @@ function cmdInit() {
 
 // --- Routing ---
 
-if (!cmd || cmd === '--help' || cmd === '-h') {
+if (!cmd || cmd === 'help' || cmd === '--help' || cmd === '-h') {
   printHelp();
 } else if (cmd === '--version' || cmd === '-v') {
   console.log(`karvi v${VERSION}`);
