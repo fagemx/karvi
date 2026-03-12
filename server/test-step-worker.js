@@ -694,7 +694,7 @@ function createMockEnvelope(overrides = {}) {
 
     // Verify step was marked failed with TIMEOUT errorKind
     const step = currentBoard.taskPlan.tasks[0].steps[0];
-    assert.ok(step.state === 'failed' || step.state === 'dead', `step state should be failed or dead, got: ${step.state}`);
+    assert.strictEqual(step.state, 'dead', `step state should be dead (TIMEOUT is non-retryable), got: ${step.state}`);
     assert.ok(step.error && step.error.includes('step timeout exceeded'), `step error should mention timeout, got: ${step.error}`);
     assert.strictEqual(step.errorKind, 'TIMEOUT', `errorKind should be TIMEOUT, got: ${step.errorKind}`);
   });

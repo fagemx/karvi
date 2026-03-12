@@ -449,7 +449,9 @@ function createStepWorker(deps) {
 
       // Enforce step_timeout_sec: abort the runtime after timeoutMs
       let timedOut = false;
-      const timeoutTimer = setTimeout(() => {
+      let timeoutTimer;
+      try {
+      timeoutTimer = setTimeout(() => {
         timedOut = true;
         console.log(`[step-worker] timeout: ${envelope.step_id} exceeded ${timeoutSec}s, aborting`);
         ac.abort();
@@ -500,9 +502,10 @@ function createStepWorker(deps) {
           break; // 非 PROVIDER 錯誤或已用完所有候選
         }
       }
-
-      // Dispatch done (success or error) — cancel the timeout timer
-      clearTimeout(timeoutTimer);
+      } finally {
+        // Always cancel the timeout timer, even if hooks_before_run throws
+        if (timeoutTimer) clearTimeout(timeoutTimer);
+      }
 
       // Replace error with timeout-specific message so classifyError returns TIMEOUT
       if (dispatchErr && timedOut) {
