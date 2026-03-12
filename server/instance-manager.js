@@ -35,6 +35,7 @@ let registry = { meta: {}, instances: {} };
 let dataRoot = null;
 let healthCheckTimer = null;
 const childProcesses = new Map(); // instanceId → ChildProcess
+let createInstanceChain = Promise.resolve(); // Mutex for serializing port allocation
 
 // --- Helpers ---
 
@@ -173,67 +174,89 @@ async function createInstance({ userId, memoryLimitMB = DEFAULT_MEMORY_LIMIT_MB,
     throw new Error(`Instance already exists for user ${userId}`);
   }
 
-  const port = allocatePort();
   const instanceId = `inst-${userId}`;
   const userDataDir = path.join(dataRoot, 'users', userId);
   fs.mkdirSync(path.join(userDataDir, 'briefs'), { recursive: true });
 
-  const child = spawn(process.execPath, [
-    `--max-old-space-size=${memoryLimitMB}`,
-    SERVER_SCRIPT,
-  ], {
-    env: {
-      ...process.env,
-      PORT: String(port),
-      DATA_DIR: userDataDir,
-      INSTANCE_ID: instanceId,
-      ...envExtra,
-    },
-    stdio: ['ignore', 'pipe', 'pipe'],
-    windowsHide: true,
-    detached: false,
-  });
+  let port;
+  let instance;
+  let child;
 
-  const instance = {
-    instanceId,
-    userId,
-    port,
-    pid: child.pid,
-    status: 'starting',
-    dataDir: userDataDir,
-    memoryLimitMB,
-    envExtra, // persisted so restartInstance can re-inject (e.g. KARVI_API_TOKEN)
-    createdAt: new Date().toISOString(),
-    lastHealthCheck: null,
-    healthFailCount: 0,
-    restartHistory: [],
-  };
-
-  registry.instances[instanceId] = instance;
-  childProcesses.set(instanceId, child);
-
-  // Crash detection
-  child.on('exit', (code, signal) => {
-    handleInstanceExit(instanceId, code, signal);
-  });
-
-  // Capture stderr for debugging
-  child.stderr.on('data', (d) => {
-    const msg = d.toString().trim();
-    if (msg) console.error(`[${instanceId}] ${msg}`);
-  });
-
-  saveRegistry();
-
-  // Wait for readiness
   try {
+    await new Promise((resolve, reject) => {
+      createInstanceChain = createInstanceChain.then(async () => {
+        try {
+          port = allocatePort();
+
+          instance = {
+            instanceId,
+            userId,
+            port,
+            pid: null,
+            status: 'allocating',
+            dataDir: userDataDir,
+            memoryLimitMB,
+            envExtra,
+            createdAt: new Date().toISOString(),
+            lastHealthCheck: null,
+            healthFailCount: 0,
+            restartHistory: [],
+          };
+
+          registry.instances[instanceId] = instance;
+          saveRegistry();
+
+          child = spawn(process.execPath, [
+            `--max-old-space-size=${memoryLimitMB}`,
+            SERVER_SCRIPT,
+          ], {
+            env: {
+              ...process.env,
+              PORT: String(port),
+              DATA_DIR: userDataDir,
+              INSTANCE_ID: instanceId,
+              ...envExtra,
+            },
+            stdio: ['ignore', 'pipe', 'pipe'],
+            windowsHide: true,
+            detached: false,
+          });
+
+          instance.pid = child.pid;
+          instance.status = 'starting';
+          childProcesses.set(instanceId, child);
+          saveRegistry();
+
+          child.on('exit', (code, signal) => {
+            handleInstanceExit(instanceId, code, signal);
+          });
+
+          child.stderr.on('data', (d) => {
+            const msg = d.toString().trim();
+            if (msg) console.error(`[${instanceId}] ${msg}`);
+          });
+
+          resolve();
+        } catch (err) {
+          reject(err);
+        }
+      });
+    });
+
     await waitForReady(child);
     instance.status = 'running';
     saveRegistry();
   } catch (err) {
     console.error(`[instance-manager] ${instanceId} failed to start: ${err.message}`);
-    instance.status = 'failed';
-    saveRegistry();
+    if (instance) {
+      instance.status = 'failed';
+      instance.pid = null;
+      saveRegistry();
+    }
+    if (child && child.pid) {
+      try { child.kill(); } catch {}
+      childProcesses.delete(instanceId);
+    }
   }
 
   return instance;
