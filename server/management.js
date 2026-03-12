@@ -1284,14 +1284,16 @@ function generateStepsForTask(task, runId, pipeline, board) {
   });
 }
 
-function getDependencyDepth(task, allTasks) {
+function getDependencyDepth(task, allTasks, visited) {
+  if (visited.has(task.id)) return 0; // cycle → treat as root
+  visited.add(task.id);
   const depends = task.depends || [];
   if (depends.length === 0) return 0;
   let maxDepth = 0;
   for (const depId of depends) {
     const depTask = allTasks.find(t => t.id === depId);
     if (depTask) {
-      const depDepth = getDependencyDepth(depTask, allTasks);
+      const depDepth = getDependencyDepth(depTask, allTasks, visited);
       maxDepth = Math.max(maxDepth, depDepth + 1);
     }
   }
@@ -1315,11 +1317,9 @@ function pickNextTask(board) {
   if (ready.length === 0) return null;
 
   // 3. Sort by dependency depth (topological order: no-deps first)
-  ready.sort((a, b) => {
-    const depthA = getDependencyDepth(a, tasks);
-    const depthB = getDependencyDepth(b, tasks);
-    return depthA - depthB;
-  });
+  const depthMap = new Map();
+  for (const t of ready) depthMap.set(t.id, getDependencyDepth(t, tasks, new Set()));
+  ready.sort((a, b) => depthMap.get(a.id) - depthMap.get(b.id));
 
   // 4. Prefer tasks matching dispatch_hints
   const hints = board.controls?.dispatch_hints || [];
