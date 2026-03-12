@@ -43,6 +43,58 @@ const ADMIN_TOKEN = process.env.GATEWAY_ADMIN_TOKEN || '';
 const SESSION_TTL_HOURS = Number(process.env.GATEWAY_SESSION_TTL_HOURS || 168);
 const SESSION_CLEANUP_INTERVAL_MS = 3600000; // 1 hour
 
+// --- Session Verification Rate Limit ---
+// Per-IP failure counter: max N failures per 60-second window
+const SESSION_RATE_LIMIT = Number(process.env.KARVI_SESSION_RATE_LIMIT || 10);
+const SESSION_RATE_WINDOW_MS = 60000; // 1 minute
+const SESSION_RATE_CLEANUP_MS = 300000; // 5 minutes
+const sessionFailures = new Map(); // ip → { count, firstFailAt }
+
+/**
+ * Check if IP is rate-limited for session verification failures.
+ * Returns { allowed, remaining, retryAfter } or blocks with 429.
+ */
+function checkSessionRateLimit(ip) {
+  const now = Date.now();
+  const entry = sessionFailures.get(ip);
+  if (!entry) return { allowed: true, remaining: SESSION_RATE_LIMIT, retryAfter: 0 };
+
+  // Window expired — reset
+  if (now - entry.firstFailAt >= SESSION_RATE_WINDOW_MS) {
+    sessionFailures.delete(ip);
+    return { allowed: true, remaining: SESSION_RATE_LIMIT, retryAfter: 0 };
+  }
+
+  if (entry.count >= SESSION_RATE_LIMIT) {
+    const retryAfter = Math.ceil((entry.firstFailAt + SESSION_RATE_WINDOW_MS - now) / 1000);
+    return { allowed: false, remaining: 0, retryAfter };
+  }
+
+  return { allowed: true, remaining: SESSION_RATE_LIMIT - entry.count, retryAfter: 0 };
+}
+
+/**
+ * Record a session verification failure for an IP.
+ */
+function recordSessionFailure(ip) {
+  const now = Date.now();
+  const entry = sessionFailures.get(ip);
+  if (!entry || now - entry.firstFailAt >= SESSION_RATE_WINDOW_MS) {
+    sessionFailures.set(ip, { count: 1, firstFailAt: now });
+  } else {
+    entry.count++;
+  }
+}
+
+// Periodic cleanup of stale session failure entries
+const sessionRateCleanupTimer = setInterval(() => {
+  const cutoff = Date.now() - SESSION_RATE_WINDOW_MS;
+  for (const [ip, entry] of sessionFailures) {
+    if (entry.firstFailAt < cutoff) sessionFailures.delete(ip);
+  }
+}, SESSION_RATE_CLEANUP_MS);
+if (sessionRateCleanupTimer.unref) sessionRateCleanupTimer.unref();
+
 // CORS origin 白名單 — comma-separated，未設定時開發模式 fallback 到 *
 const ALLOWED_ORIGINS = (process.env.KARVI_CORS_ORIGINS || '').split(',').map(s => s.trim()).filter(Boolean);
 
@@ -303,8 +355,22 @@ function handleLogout(req, res) {
 }
 
 function handleMe(req, res) {
+  const clientIP = req.socket.remoteAddress || '127.0.0.1';
+  const rateCheck = checkSessionRateLimit(clientIP);
+  if (!rateCheck.allowed) {
+    res.setHeader('Retry-After', rateCheck.retryAfter);
+    res.setHeader('X-RateLimit-Limit', SESSION_RATE_LIMIT);
+    res.setHeader('X-RateLimit-Remaining', 0);
+    return json(res, 429, { error: 'Too many session verification failures', retryAfter: rateCheck.retryAfter });
+  }
+
   const session = requireSession(req);
-  if (!session) return json(res, 401, { error: 'Not authenticated' });
+  if (!session) {
+    // Only count failures when a token was actually provided (not missing)
+    const token = extractSessionToken(req);
+    if (token) recordSessionFailure(clientIP);
+    return json(res, 401, { error: 'Not authenticated' });
+  }
 
   const user = store.getUser(session.username);
   if (!user) return json(res, 401, { error: 'User not found' });
@@ -368,8 +434,21 @@ async function handleAdminDeleteUser(req, res, username) {
 // --- Proxy Handler ---
 
 async function handleProxy(req, res, username) {
+  const clientIP = req.socket.remoteAddress || '127.0.0.1';
+  const rateCheck = checkSessionRateLimit(clientIP);
+  if (!rateCheck.allowed) {
+    res.setHeader('Retry-After', rateCheck.retryAfter);
+    res.setHeader('X-RateLimit-Limit', SESSION_RATE_LIMIT);
+    res.setHeader('X-RateLimit-Remaining', 0);
+    return json(res, 429, { error: 'Too many session verification failures', retryAfter: rateCheck.retryAfter });
+  }
+
   const session = requireSession(req);
-  if (!session) return json(res, 401, { error: 'Not authenticated' });
+  if (!session) {
+    const token = extractSessionToken(req);
+    if (token) recordSessionFailure(clientIP);
+    return json(res, 401, { error: 'Not authenticated' });
+  }
 
   // Isolation check: user can only access their own instance
   if (session.username !== username) {
@@ -575,6 +654,7 @@ function start() {
 async function stop() {
   console.log('[gateway] Shutting down...');
   if (sessionCleanupTimer) clearInterval(sessionCleanupTimer);
+  clearInterval(sessionRateCleanupTimer);
   mgr.stopHealthChecker();
   await mgr.destroyAll();
   if (server) {
