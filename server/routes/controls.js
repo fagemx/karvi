@@ -22,11 +22,7 @@ module.exports = function controlsRoutes(req, res, helpers, deps) {
 
   if (req.method === 'POST' && req.url === '/api/controls') {
     if (requireRole(req, res, 'admin')) return;
-    let body = '';
-    req.on('data', c => (body += c));
-    req.on('end', () => {
-      try {
-        const patch = JSON.parse(body || '{}');
+    helpers.parseBody(req).then(patch => {
         const board = helpers.readBoard();
         board.controls = board.controls || {};
         const allowed = Object.keys(mgmt.DEFAULT_CONTROLS);
@@ -149,10 +145,7 @@ module.exports = function controlsRoutes(req, res, helpers, deps) {
         helpers.writeBoard(board);
         helpers.appendLog({ ts: helpers.nowIso(), event: 'controls_updated', controls: board.controls });
         json(res, 200, { ok: true, controls: mgmt.getControls(board) });
-      } catch (error) {
-        json(res, 400, { error: error.message });
-      }
-    });
+    }).catch(error => json(res, error.statusCode === 413 ? 413 : 400, { error: error.message }));
     return;
   }
 

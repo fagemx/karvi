@@ -459,7 +459,7 @@ function createServer(ctx, routeHandler) {
     // Catches obviously-too-large requests before reading any data.
     // The stream-level guard in parseBody() handles cases where
     // Content-Length is missing or spoofed.
-    if (req.method === 'POST' || req.method === 'PUT') {
+    if (req.method === 'POST' || req.method === 'PUT' || req.method === 'PATCH') {
       const contentLength = parseInt(req.headers['content-length'], 10);
       if (contentLength > ctx.maxBodyBytes) {
         res.writeHead(413, { 'Content-Type': 'application/json; charset=utf-8' });

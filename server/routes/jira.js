@@ -16,11 +16,7 @@ module.exports = function jiraRoutes(req, res, helpers, deps) {
   // POST /api/webhooks/jira — receive Jira webhook
   if (req.method === 'POST' && req.url.startsWith('/api/webhooks/jira')) {
     if (!jiraIntegration) { json(res, 404, { error: 'Jira integration not available' }); return; }
-    let body = '';
-    req.on('data', c => (body += c));
-    req.on('end', () => {
-      try {
-        const payload = JSON.parse(body || '{}');
+    helpers.parseBody(req).then(payload => {
         const board = helpers.readBoard();
         const result = jiraIntegration.handleWebhook(board, payload, req.url);
 
@@ -208,10 +204,7 @@ module.exports = function jiraRoutes(req, res, helpers, deps) {
           return;
         }
         json(res, 200, { ok: true, action: result.action });
-      } catch (err) {
-        json(res, 400, { error: err.message });
-      }
-    });
+    }).catch(err => json(res, err.statusCode === 413 ? 413 : 400, { error: err.message }));
     return;
   }
 
@@ -225,20 +218,13 @@ module.exports = function jiraRoutes(req, res, helpers, deps) {
 
   // POST /api/integrations/jira — update Jira config
   if (req.method === 'POST' && req.url === '/api/integrations/jira') {
-    let body = '';
-    req.on('data', c => (body += c));
-    req.on('end', () => {
-      try {
-        const payload = JSON.parse(body || '{}');
-        const board = helpers.readBoard();
-        board.integrations = board.integrations || {};
-        board.integrations.jira = { ...(board.integrations.jira || {}), ...payload };
-        helpers.writeBoard(board);
-        json(res, 200, board.integrations.jira);
-      } catch (err) {
-        json(res, 400, { error: err.message });
-      }
-    });
+    helpers.parseBody(req).then(payload => {
+      const board = helpers.readBoard();
+      board.integrations = board.integrations || {};
+      board.integrations.jira = { ...(board.integrations.jira || {}), ...payload };
+      helpers.writeBoard(board);
+      json(res, 200, board.integrations.jira);
+    }).catch(err => json(res, err.statusCode === 413 ? 413 : 400, { error: err.message }));
     return;
   }
 

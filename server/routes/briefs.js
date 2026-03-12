@@ -53,36 +53,22 @@ module.exports = function briefsRoutes(req, res, helpers, deps) {
 
   if (req.method === 'PATCH' && briefGetMatch) {
     const taskId = decodeURIComponent(briefGetMatch[1]);
-    let body = '';
-    req.on('data', c => (body += c));
-    req.on('end', () => {
-      try {
-        const patch = JSON.parse(body || '{}');
-        const existing = readBrief(taskId);
-        if (!existing) return json(res, 404, { error: 'no brief for this task' });
-        const merged = deepMerge(existing, patch);
-        writeBrief(taskId, merged);
-        return json(res, 200, { ok: true, taskId });
-      } catch (err) {
-        return json(res, 400, { error: err.message });
-      }
-    });
+    helpers.parseBody(req).then(patch => {
+      const existing = readBrief(taskId);
+      if (!existing) return json(res, 404, { error: 'no brief for this task' });
+      const merged = deepMerge(existing, patch);
+      writeBrief(taskId, merged);
+      return json(res, 200, { ok: true, taskId });
+    }).catch(err => json(res, err.statusCode === 413 ? 413 : 400, { error: err.message }));
     return;
   }
 
   if (req.method === 'PUT' && briefGetMatch) {
     const taskId = decodeURIComponent(briefGetMatch[1]);
-    let body = '';
-    req.on('data', c => (body += c));
-    req.on('end', () => {
-      try {
-        const data = JSON.parse(body || '{}');
-        if (!writeBrief(taskId, data)) return json(res, 404, { error: 'no brief for this task' });
-        return json(res, 200, { ok: true, taskId });
-      } catch (err) {
-        return json(res, 400, { error: err.message });
-      }
-    });
+    helpers.parseBody(req).then(data => {
+      if (!writeBrief(taskId, data)) return json(res, 404, { error: 'no brief for this task' });
+      return json(res, 200, { ok: true, taskId });
+    }).catch(err => json(res, err.statusCode === 413 ? 413 : 400, { error: err.message }));
     return;
   }
 

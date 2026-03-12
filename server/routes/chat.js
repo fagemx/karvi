@@ -232,194 +232,173 @@ async function processQueue(conversationId, deps, helpers) {
 module.exports = function chatRoutes(req, res, helpers, deps) {
 
   if (req.method === 'POST' && req.url === '/api/conversations') {
-    let body = '';
-    req.on('data', c => (body += c));
-    req.on('end', () => {
-      try {
-        const payload = JSON.parse(body || '{}');
-        const id = String(payload.id || '').trim();
-        const title = String(payload.title || '').trim();
-        const members = Array.isArray(payload.members) && payload.members.length > 0
-          ? [...new Set(payload.members.map(m => String(m).trim()).filter(Boolean))]
-          : ['human', 'main', 'nier'];
-        const defaultAutoTurns = Number.isFinite(Number(payload.defaultAutoTurns))
-          ? Math.max(1, Math.min(50, Number(payload.defaultAutoTurns)))
-          : 6;
+    helpers.parseBody(req).then(payload => {
+      const id = String(payload.id || '').trim();
+      const title = String(payload.title || '').trim();
+      const members = Array.isArray(payload.members) && payload.members.length > 0
+        ? [...new Set(payload.members.map(m => String(m).trim()).filter(Boolean))]
+        : ['human', 'main', 'nier'];
+      const defaultAutoTurns = Number.isFinite(Number(payload.defaultAutoTurns))
+        ? Math.max(1, Math.min(50, Number(payload.defaultAutoTurns)))
+        : 6;
 
-        if (!id || !/^[a-z0-9_-]+$/i.test(id)) {
-          return json(res, 400, { error: 'Invalid conversation id (a-z0-9_-)' });
-        }
-        if (!title) return json(res, 400, { error: 'title is required' });
-
-        const board = helpers.readBoard();
-        if (conversationById(board, id)) {
-          return json(res, 409, { error: `Conversation ${id} already exists` });
-        }
-
-        for (const m of members) {
-          if (!participantById(board, m)) {
-            return json(res, 400, { error: `Unknown member: ${m}` });
-          }
-        }
-
-        const conv = createConversation({ id, title, members, defaultAutoTurns });
-        board.conversations = board.conversations || [];
-        board.conversations.push(conv);
-
-        helpers.writeBoard(board);
-        helpers.appendLog({ ts: helpers.nowIso(), event: 'conversation_created', conversationId: id, title, members });
-        json(res, 200, { ok: true, conversation: conv });
-      } catch (error) {
-        json(res, 400, { error: error.message });
+      if (!id || !/^[a-z0-9_-]+$/i.test(id)) {
+        return json(res, 400, { error: 'Invalid conversation id (a-z0-9_-)' });
       }
-    });
+      if (!title) return json(res, 400, { error: 'title is required' });
+
+      const board = helpers.readBoard();
+      if (conversationById(board, id)) {
+        return json(res, 409, { error: `Conversation ${id} already exists` });
+      }
+
+      for (const m of members) {
+        if (!participantById(board, m)) {
+          return json(res, 400, { error: `Unknown member: ${m}` });
+        }
+      }
+
+      const conv = createConversation({ id, title, members, defaultAutoTurns });
+      board.conversations = board.conversations || [];
+      board.conversations.push(conv);
+
+      helpers.writeBoard(board);
+      helpers.appendLog({ ts: helpers.nowIso(), event: 'conversation_created', conversationId: id, title, members });
+      json(res, 200, { ok: true, conversation: conv });
+    }).catch(error => json(res, error.statusCode === 413 ? 413 : 400, { error: error.message }));
     return;
   }
 
   if (req.method === 'POST' && req.url === '/api/participants') {
-    let body = '';
-    req.on('data', c => (body += c));
-    req.on('end', () => {
-      try {
-        const payload = JSON.parse(body || '{}');
-        const id = String(payload.id || '').trim();
-        const type = payload.type === 'human' ? 'human' : 'agent';
-        const displayName = String(payload.displayName || '').trim();
-        const agentId = String(payload.agentId || '').trim();
+    helpers.parseBody(req).then(payload => {
+      const id = String(payload.id || '').trim();
+      const type = payload.type === 'human' ? 'human' : 'agent';
+      const displayName = String(payload.displayName || '').trim();
+      const agentId = String(payload.agentId || '').trim();
 
-        if (!id || !/^[a-z0-9_-]+$/i.test(id)) {
-          return json(res, 400, { error: 'Invalid participant id (a-z0-9_-)' });
-        }
-        if (!displayName) return json(res, 400, { error: 'displayName is required' });
-        if (type === 'agent' && !agentId) return json(res, 400, { error: 'agentId is required for agent participant' });
-
-        const board = helpers.readBoard();
-        if (participantById(board, id)) return json(res, 409, { error: `Participant ${id} already exists` });
-
-        const participant = { id, type, displayName };
-        if (type === 'agent') participant.agentId = agentId;
-        board.participants = board.participants || [];
-        board.participants.push(participant);
-
-        const conversationId = String(payload.conversationId || '').trim();
-        const conv = conversationId
-          ? conversationById(board, conversationId)
-          : board.conversations?.[0];
-        if (conversationId && !conv) {
-          return json(res, 404, { error: `Conversation ${conversationId} not found` });
-        }
-
-        if (conv) {
-          conv.members = Array.from(new Set([...(conv.members || []), id]));
-          conv.sessionIds = conv.sessionIds || {};
-          if (!(id in conv.sessionIds)) conv.sessionIds[id] = null;
-        }
-
-        helpers.writeBoard(board);
-        helpers.appendLog({ ts: helpers.nowIso(), event: 'participant_added', participant, conversationId: conv?.id || null });
-        json(res, 200, { ok: true, participant, conversationId: conv?.id || null });
-      } catch (error) {
-        json(res, 400, { error: error.message });
+      if (!id || !/^[a-z0-9_-]+$/i.test(id)) {
+        return json(res, 400, { error: 'Invalid participant id (a-z0-9_-)' });
       }
-    });
+      if (!displayName) return json(res, 400, { error: 'displayName is required' });
+      if (type === 'agent' && !agentId) return json(res, 400, { error: 'agentId is required for agent participant' });
+
+      const board = helpers.readBoard();
+      if (participantById(board, id)) return json(res, 409, { error: `Participant ${id} already exists` });
+
+      const participant = { id, type, displayName };
+      if (type === 'agent') participant.agentId = agentId;
+      board.participants = board.participants || [];
+      board.participants.push(participant);
+
+      const conversationId = String(payload.conversationId || '').trim();
+      const conv = conversationId
+        ? conversationById(board, conversationId)
+        : board.conversations?.[0];
+      if (conversationId && !conv) {
+        return json(res, 404, { error: `Conversation ${conversationId} not found` });
+      }
+
+      if (conv) {
+        conv.members = Array.from(new Set([...(conv.members || []), id]));
+        conv.sessionIds = conv.sessionIds || {};
+        if (!(id in conv.sessionIds)) conv.sessionIds[id] = null;
+      }
+
+      helpers.writeBoard(board);
+      helpers.appendLog({ ts: helpers.nowIso(), event: 'participant_added', participant, conversationId: conv?.id || null });
+      json(res, 200, { ok: true, participant, conversationId: conv?.id || null });
+    }).catch(error => json(res, error.statusCode === 413 ? 413 : 400, { error: error.message }));
     return;
   }
 
   const sendMatch = req.url.match(/^\/api\/conversations\/([^/]+)\/send$/);
   if (req.method === 'POST' && sendMatch) {
     const conversationId = decodeURIComponent(sendMatch[1]);
-    let body = '';
-    req.on('data', c => (body += c));
-    req.on('end', () => {
-      try {
-        const payload = JSON.parse(body || '{}');
-        const from = String(payload.from || '').trim();
-        const to = String(payload.to || '').trim();
-        const text = normalizeText(payload.text);
+    helpers.parseBody(req).then(payload => {
+      const from = String(payload.from || '').trim();
+      const to = String(payload.to || '').trim();
+      const text = normalizeText(payload.text);
 
-        if (!from || !to || !text) return json(res, 400, { error: 'from, to, text are required' });
+      if (!from || !to || !text) return json(res, 400, { error: 'from, to, text are required' });
 
-        const board = helpers.readBoard();
-        const conv = conversationById(board, conversationId);
-        if (!conv) return json(res, 404, { error: `Conversation ${conversationId} not found` });
+      const board = helpers.readBoard();
+      const conv = conversationById(board, conversationId);
+      if (!conv) return json(res, 404, { error: `Conversation ${conversationId} not found` });
 
-        if (!participantById(board, from)) return json(res, 400, { error: `Unknown participant: ${from}` });
-        const toParticipant = participantById(board, to);
-        if (!toParticipant) return json(res, 400, { error: `Unknown participant: ${to}` });
+      if (!participantById(board, from)) return json(res, 400, { error: `Unknown participant: ${from}` });
+      const toParticipant = participantById(board, to);
+      if (!toParticipant) return json(res, 400, { error: `Unknown participant: ${to}` });
 
-        const members = new Set(conv.members || []);
-        if (!members.has(from) || !members.has(to)) {
-          return json(res, 400, { error: `from/to must be members of conversation ${conversationId}` });
-        }
+      const members = new Set(conv.members || []);
+      if (!members.has(from) || !members.has(to)) {
+        return json(res, 400, { error: `from/to must be members of conversation ${conversationId}` });
+      }
 
-        const msg = {
+      const msg = {
+        id: helpers.uid('msg'),
+        ts: helpers.nowIso(),
+        type: 'message',
+        from,
+        to,
+        text,
+      };
+      pushMessage(conv, msg);
+
+      helpers.appendLog({
+        ts: helpers.nowIso(),
+        conversationId,
+        event: 'message_sent',
+        from,
+        to,
+        text,
+      });
+
+      let queuedTurn = null;
+      if (toParticipant.type === 'agent') {
+        const autoLoop = !!payload.autoLoop;
+        const loopPair = Array.isArray(payload.loopPair) ? payload.loopPair.slice(0, 2) : ['main', 'nier'];
+        const maxTurns = Number.isFinite(Number(payload.maxAutoTurns))
+          ? Math.max(0, Math.min(50, Number(payload.maxAutoTurns)))
+          : Number(conv.settings?.defaultAutoTurns || 6);
+
+        queuedTurn = {
+          id: helpers.uid('turn'),
+          createdAt: helpers.nowIso(),
+          status: 'queued',
+          from,
+          to,
+          text,
+          timeoutSec: 180,
+          loop: {
+            enabled: autoLoop,
+            pair: loopPair,
+            remaining: autoLoop ? maxTurns : 0,
+          },
+        };
+
+        enqueueTurn(conv, queuedTurn);
+
+        pushMessage(conv, {
           id: helpers.uid('msg'),
           ts: helpers.nowIso(),
-          type: 'message',
-          from,
-          to,
-          text,
-        };
-        pushMessage(conv, msg);
-
-        helpers.appendLog({
-          ts: helpers.nowIso(),
-          conversationId,
-          event: 'message_sent',
-          from,
-          to,
-          text,
+          type: 'system',
+          from: 'system',
+          to: 'human',
+          text: `已排入佇列：${from} → ${to}。`,
+          turnId: queuedTurn.id,
         });
-
-        let queuedTurn = null;
-        if (toParticipant.type === 'agent') {
-          const autoLoop = !!payload.autoLoop;
-          const loopPair = Array.isArray(payload.loopPair) ? payload.loopPair.slice(0, 2) : ['main', 'nier'];
-          const maxTurns = Number.isFinite(Number(payload.maxAutoTurns))
-            ? Math.max(0, Math.min(50, Number(payload.maxAutoTurns)))
-            : Number(conv.settings?.defaultAutoTurns || 6);
-
-          queuedTurn = {
-            id: helpers.uid('turn'),
-            createdAt: helpers.nowIso(),
-            status: 'queued',
-            from,
-            to,
-            text,
-            timeoutSec: 180,
-            loop: {
-              enabled: autoLoop,
-              pair: loopPair,
-              remaining: autoLoop ? maxTurns : 0,
-            },
-          };
-
-          enqueueTurn(conv, queuedTurn);
-
-          pushMessage(conv, {
-            id: helpers.uid('msg'),
-            ts: helpers.nowIso(),
-            type: 'system',
-            from: 'system',
-            to: 'human',
-            text: `已排入佇列：${from} → ${to}。`,
-            turnId: queuedTurn.id,
-          });
-        }
-
-        helpers.writeBoard(board);
-
-        if (queuedTurn && conv.settings?.autoRunQueue !== false) {
-          processQueue(conversationId, deps, helpers).catch(err => {
-            console.error(`[processQueue error] ${err.message}`);
-          });
-        }
-
-        json(res, 200, { ok: true, queuedTurnId: queuedTurn?.id || null });
-      } catch (error) {
-        json(res, 400, { error: error.message });
       }
-    });
+
+      helpers.writeBoard(board);
+
+      if (queuedTurn && conv.settings?.autoRunQueue !== false) {
+        processQueue(conversationId, deps, helpers).catch(err => {
+          console.error(`[processQueue error] ${err.message}`);
+        });
+      }
+
+      json(res, 200, { ok: true, queuedTurnId: queuedTurn?.id || null });
+    }).catch(error => json(res, error.statusCode === 413 ? 413 : 400, { error: error.message }));
     return;
   }
 

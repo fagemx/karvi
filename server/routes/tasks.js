@@ -697,11 +697,7 @@ module.exports = function tasksRoutes(req, res, helpers, deps) {
   }
 
   if (req.method === 'POST' && req.url === '/api/tasks') {
-    let body = '';
-    req.on('data', c => (body += c));
-    req.on('end', () => {
-      try {
-        const payload = JSON.parse(body || '{}');
+    helpers.parseBody(req).then(payload => {
         const board = helpers.readBoard();
 
         // Merge into existing taskPlan (never overwrite running tasks)
@@ -767,21 +763,14 @@ module.exports = function tasksRoutes(req, res, helpers, deps) {
         }
 
         json(res, 200, { ok: true, taskPlan: board.taskPlan });
-      } catch (error) {
-        json(res, 400, { error: error.message });
-      }
-    });
+    }).catch(error => json(res, error.statusCode === 413 ? 413 : 400, { error: error.message }));
     return;
   }
 
   const taskUpdateMatch = req.url.match(/^\/api\/tasks\/([^/]+)\/update$/);
   if (req.method === 'POST' && taskUpdateMatch) {
     const taskId = decodeURIComponent(taskUpdateMatch[1]);
-    let body = '';
-    req.on('data', c => (body += c));
-    req.on('end', () => {
-      try {
-        const payload = JSON.parse(body || '{}');
+    helpers.parseBody(req).then(payload => {
         const board = helpers.readBoard();
         const task = (board.taskPlan?.tasks || []).find(t => t.id === taskId);
 
@@ -945,21 +934,14 @@ module.exports = function tasksRoutes(req, res, helpers, deps) {
         }
 
         json(res, 200, { ok: true, task });
-      } catch (error) {
-        json(res, 400, { error: error.message });
-      }
-    });
+    }).catch(error => json(res, error.statusCode === 413 ? 413 : 400, { error: error.message }));
     return;
   }
 
   const unblockMatch = req.url.match(/^\/api\/tasks\/([^/]+)\/unblock$/);
   if (req.method === 'POST' && unblockMatch) {
     const taskId = decodeURIComponent(unblockMatch[1]);
-    let body = '';
-    req.on('data', c => (body += c));
-    req.on('end', () => {
-      try {
-        const payload = JSON.parse(body || '{}');
+    helpers.parseBody(req).then(payload => {
         const message = String(payload.message || '').trim();
         if (!message) return json(res, 400, { error: 'message is required to unblock' });
 
@@ -1007,21 +989,14 @@ module.exports = function tasksRoutes(req, res, helpers, deps) {
         }
 
         json(res, 200, { ok: true, task });
-      } catch (error) {
-        json(res, 400, { error: error.message });
-      }
-    });
+    }).catch(error => json(res, error.statusCode === 413 ? 413 : 400, { error: error.message }));
     return;
   }
 
   const reopenMatch = req.url.match(/^\/api\/tasks\/([^/]+)\/reopen$/);
   if (req.method === 'POST' && reopenMatch) {
     const taskId = decodeURIComponent(reopenMatch[1]);
-    let body = '';
-    req.on('data', c => (body += c));
-    req.on('end', () => {
-      try {
-        const payload = JSON.parse(body || '{}');
+    helpers.parseBody(req).then(payload => {
         const message = String(payload.message || '').trim();
         const customSteps = payload.steps;
         
@@ -1090,10 +1065,7 @@ module.exports = function tasksRoutes(req, res, helpers, deps) {
             dispatched: result.dispatched
           }
         });
-      } catch (error) {
-        json(res, 400, { error: error.message });
-      }
-    });
+    }).catch(error => json(res, error.statusCode === 413 ? 413 : 400, { error: error.message }));
     return;
   }
 
@@ -1102,11 +1074,7 @@ module.exports = function tasksRoutes(req, res, helpers, deps) {
   if (req.method === 'POST' && taskCancelMatch) {
     if (requireRole(req, res, 'operator')) return;
     const taskId = decodeURIComponent(taskCancelMatch[1]);
-    let body = '';
-    req.on('data', c => (body += c));
-    req.on('end', () => {
-      try {
-        const payload = JSON.parse(body || '{}');
+    helpers.parseBody(req).then(payload => {
         const reason = String(payload.reason || '').trim();
         const board = helpers.readBoard();
         const task = (board.taskPlan?.tasks || []).find(t => t.id === taskId);
@@ -1184,10 +1152,7 @@ module.exports = function tasksRoutes(req, res, helpers, deps) {
             worktreeCleanup: cancelMeta.worktreeCleanup,
           },
         });
-      } catch (error) {
-        json(res, 400, { error: error.message });
-      }
-    });
+    }).catch(error => json(res, error.statusCode === 413 ? 413 : 400, { error: error.message }));
     return;
   }
 
@@ -1196,11 +1161,7 @@ module.exports = function tasksRoutes(req, res, helpers, deps) {
   if (req.method === 'POST' && taskStatusMatch) {
     if (requireRole(req, res, 'operator')) return;
     const taskId = decodeURIComponent(taskStatusMatch[1]);
-    let body = '';
-    req.on('data', c => (body += c));
-    req.on('end', () => {
-      try {
-        const payload = JSON.parse(body || '{}');
+    helpers.parseBody(req).then(payload => {
         const newStatus = String(payload.status || '').trim();
         const validStatuses = ['pending', 'dispatched', 'in_progress', 'blocked', 'completed', 'reviewing', 'approved', 'needs_revision', 'cancelled'];
         if (!validStatuses.includes(newStatus)) {
@@ -1372,10 +1333,7 @@ module.exports = function tasksRoutes(req, res, helpers, deps) {
         }
 
         json(res, 200, { ok: true, task });
-      } catch (error) {
-        json(res, 400, { error: error.message });
-      }
-    });
+    }).catch(error => json(res, error.statusCode === 413 ? 413 : 400, { error: error.message }));
     return;
   }
 
@@ -1386,11 +1344,7 @@ module.exports = function tasksRoutes(req, res, helpers, deps) {
   // POST /api/tasks/:id/steps — create step pipeline for a task
   if (req.method === 'POST' && stepsCreateMatch) {
     const taskId = decodeURIComponent(stepsCreateMatch[1]);
-    let body = '';
-    req.on('data', c => (body += c));
-    req.on('end', () => {
-      try {
-        const payload = JSON.parse(body || '{}');
+    helpers.parseBody(req).then(payload => {
         const runId = payload.run_id || helpers.uid('run');
         const pipeline = payload.pipeline || null;
         const board = helpers.readBoard();
@@ -1406,10 +1360,7 @@ module.exports = function tasksRoutes(req, res, helpers, deps) {
         helpers.writeBoard(board);
         helpers.appendLog({ ts: helpers.nowIso(), event: 'steps_created', taskId, runId, count: task.steps.length });
         json(res, 200, { ok: true, taskId, runId, steps: task.steps });
-      } catch (error) {
-        json(res, 400, { error: error.message });
-      }
-    });
+    }).catch(error => json(res, error.statusCode === 413 ? 413 : 400, { error: error.message }));
     return;
   }
 
@@ -1428,11 +1379,7 @@ module.exports = function tasksRoutes(req, res, helpers, deps) {
   if (req.method === 'PATCH' && stepUpdateMatch) {
     const taskId = decodeURIComponent(stepUpdateMatch[1]);
     const stepId = decodeURIComponent(stepUpdateMatch[2]);
-    let body = '';
-    req.on('data', c => (body += c));
-    req.on('end', () => {
-      try {
-        const payload = JSON.parse(body || '{}');
+    helpers.parseBody(req).then(payload => {
         const newState = String(payload.state || '').trim();
         if (!newState) return json(res, 400, { error: 'state is required' });
 
@@ -1480,10 +1427,9 @@ module.exports = function tasksRoutes(req, res, helpers, deps) {
         }
 
         json(res, 200, { ok: true, taskId, step });
-      } catch (error) {
-        const status = error.code === 'INVALID_STEP_TRANSITION' ? 400 : 500;
+    }).catch(error => {
+        const status = error.statusCode === 413 ? 413 : (error.code === 'INVALID_STEP_TRANSITION' ? 400 : 500);
         json(res, status, { error: error.message });
-      }
     });
     return;
   }
@@ -1597,11 +1543,7 @@ module.exports = function tasksRoutes(req, res, helpers, deps) {
   if (req.method === 'POST' && batchDispatchMatch) {
     if (requireRole(req, res, 'operator')) return;
     const taskId = decodeURIComponent(batchDispatchMatch[1]);
-    let body = '';
-    req.on('data', c => (body += c));
-    req.on('end', async () => {
-      try {
-        const payload = JSON.parse(body || '{}');
+    helpers.parseBody(req).then(async payload => {
         const board = helpers.readBoard();
         const task = (board.taskPlan?.tasks || []).find(t => t.id === taskId);
         if (!task) return json(res, 404, { error: `Task ${taskId} not found` });
@@ -1666,10 +1608,7 @@ module.exports = function tasksRoutes(req, res, helpers, deps) {
           }
         }
         json(res, 200, { ok: true, taskId, dispatched: targets.length, results });
-      } catch (error) {
-        json(res, 500, { error: error.message });
-      }
-    });
+    }).catch(error => json(res, error.statusCode === 413 ? 413 : 500, { error: error.message }));
     return;
   }
 
@@ -1995,11 +1934,7 @@ module.exports = function tasksRoutes(req, res, helpers, deps) {
   // PUT /api/pipeline-templates/:name — create or update a template
   if (req.method === 'PUT' && templatesMatch && templatesMatch[1]) {
     const name = decodeURIComponent(templatesMatch[1]);
-    let body = '';
-    req.on('data', c => (body += c));
-    req.on('end', () => {
-      try {
-        const payload = JSON.parse(body || '{}');
+    helpers.parseBody(req).then(payload => {
         const pipeline = payload.pipeline;
         if (!Array.isArray(pipeline) || pipeline.length === 0) {
           return json(res, 400, { error: 'pipeline must be a non-empty array' });
@@ -2019,10 +1954,7 @@ module.exports = function tasksRoutes(req, res, helpers, deps) {
         mgmt.trimSignals(board, helpers.signalArchivePath);
         helpers.writeBoard(board);
         json(res, 200, { ok: true, name, pipeline: normalized });
-      } catch (error) {
-        json(res, 400, { error: error.message });
-      }
-    });
+    }).catch(error => json(res, error.statusCode === 413 ? 413 : 400, { error: error.message }));
     return;
   }
 
@@ -2049,11 +1981,7 @@ module.exports = function tasksRoutes(req, res, helpers, deps) {
   const taskRollbackMatch = req.url.match(/^\/api\/tasks\/([^/]+)\/rollback$/);
   if (req.method === 'POST' && taskRollbackMatch) {
     const taskId = decodeURIComponent(taskRollbackMatch[1]);
-    let body = '';
-    req.on('data', c => (body += c));
-    req.on('end', () => {
-      try {
-        const payload = JSON.parse(body || '{}');
+    helpers.parseBody(req).then(payload => {
         const reason = String(payload.reason || '').trim();
         const board = helpers.readBoard();
         const task = (board.taskPlan?.tasks || []).find(t => t.id === taskId);
@@ -2177,10 +2105,7 @@ module.exports = function tasksRoutes(req, res, helpers, deps) {
             reason: reason || null,
           },
         });
-      } catch (error) {
-        json(res, 400, { error: error.message });
-      }
-    });
+    }).catch(error => json(res, error.statusCode === 413 ? 413 : 400, { error: error.message }));
     return;
   }
 
@@ -2200,11 +2125,7 @@ module.exports = function tasksRoutes(req, res, helpers, deps) {
   // --- POST /api/tasks/cleanup — batch remove tasks by status/age ---
   if (req.method === 'POST' && req.url === '/api/tasks/cleanup') {
     if (requireRole(req, res, 'admin')) return;
-    let body = '';
-    req.on('data', c => (body += c));
-    req.on('end', () => {
-      try {
-        const payload = JSON.parse(body || '{}');
+    helpers.parseBody(req).then(payload => {
         const statuses = payload.statuses || ['cancelled', 'blocked'];
         const olderThanHours = payload.older_than_hours || 0;
         const board = helpers.readBoard();
@@ -2235,10 +2156,7 @@ module.exports = function tasksRoutes(req, res, helpers, deps) {
           helpers.broadcastSSE('board', board);
         }
         json(res, 200, { removed: removedIds, count: removedIds.length });
-      } catch (err) {
-        json(res, 500, { error: err.message });
-      }
-    });
+    }).catch(err => json(res, err.statusCode === 413 ? 413 : 500, { error: err.message }));
     return;
   }
 
