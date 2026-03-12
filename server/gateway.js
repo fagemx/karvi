@@ -22,6 +22,7 @@
  *   GATEWAY_SECRET          — Session token signing secret (required)
  *   GATEWAY_ADMIN_TOKEN     — Admin API auth token (required)
  *   GATEWAY_SESSION_TTL_HOURS — Session TTL in hours (default: 168 = 7 days)
+ *   KARVI_CORS_ORIGINS      — Comma-separated allowed origins (default: * in dev)
  *   KARVI_PORT_MIN          — Instance port range start (default: 4000)
  *   KARVI_PORT_MAX          — Instance port range end (default: 4999)
  */
@@ -40,6 +41,9 @@ const SECRET = process.env.GATEWAY_SECRET || '';
 const ADMIN_TOKEN = process.env.GATEWAY_ADMIN_TOKEN || '';
 const SESSION_TTL_HOURS = Number(process.env.GATEWAY_SESSION_TTL_HOURS || 168);
 const SESSION_CLEANUP_INTERVAL_MS = 3600000; // 1 hour
+
+// CORS origin 白名單 — comma-separated，未設定時開發模式 fallback 到 *
+const ALLOWED_ORIGINS = (process.env.KARVI_CORS_ORIGINS || '').split(',').map(s => s.trim()).filter(Boolean);
 
 // --- Helpers ---
 
@@ -400,8 +404,19 @@ function route(req, res) {
   const pathname = url.pathname;
   const method = req.method;
 
-  // CORS
-  res.setHeader('Access-Control-Allow-Origin', '*');
+  // CORS — 白名單模式（設定 KARVI_CORS_ORIGINS 時），否則 fallback 到 *
+  const origin = req.headers.origin;
+  if (ALLOWED_ORIGINS.length > 0) {
+    if (origin && ALLOWED_ORIGINS.includes(origin)) {
+      res.setHeader('Access-Control-Allow-Origin', origin);
+      res.setHeader('Access-Control-Allow-Credentials', 'true');
+      res.setHeader('Vary', 'Origin');
+    }
+    // origin 不在白名單 → 不設 Access-Control-Allow-Origin，瀏覽器會擋
+  } else {
+    // 未設定白名單 → 開發模式，允許全部
+    res.setHeader('Access-Control-Allow-Origin', '*');
+  }
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
 
