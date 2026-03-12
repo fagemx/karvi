@@ -173,6 +173,18 @@ function dispatchTask(task, board, deps, helpers, opts = {}) {
     return { dispatched: false, reason: 'assignee not agent' };
   }
 
+  // Usage limits gate
+  const ownerId = usage ? mgmt.resolveOwnerId(board) : null;
+  if (usage) {
+    const usageCheck = usage.enforceUsageLimits(ownerId, board);
+    if (!usageCheck.allowed) {
+      _dispatchLocks.delete(taskId);
+      console.log(`[dispatchTask:${taskId}] skip: usage limit exceeded (${usageCheck.metric}: ${usageCheck.used}/${usageCheck.limit})`);
+      helpers.appendLog({ ts: helpers.nowIso(), event: 'dispatch_blocked', taskId, source, code: 'USAGE_LIMIT_EXCEEDED', metric: usageCheck.metric, used: usageCheck.used, limit: usageCheck.limit });
+      return { dispatched: false, code: 'USAGE_LIMIT_EXCEEDED', reason: `usage limit exceeded: ${usageCheck.metric}`, metric: usageCheck.metric, used: usageCheck.used, limit: usageCheck.limit };
+    }
+  }
+
   // Budget gate
   if (task.budget && routeEngine.isBudgetExceeded(task.budget)) {
     _dispatchLocks.delete(taskId);
@@ -296,6 +308,10 @@ function dispatchTask(task, board, deps, helpers, opts = {}) {
       helpers.appendLog({ ts: helpers.nowIso(), event: 'step_pipeline_started', taskId, runId, firstStep: firstStep.step_id, source });
       deps.stepWorker.executeStep(envelope, helpers.readBoard(), helpers).catch(err =>
         console.error(`[dispatchTask:${taskId}] step execution error:`, err.message));
+      // Record dispatch usage event only on successful envelope build
+      if (usage) {
+        usage.record(ownerId, 'dispatch', { taskId, source, runtime: ctrl.preferred_runtime || 'openclaw' });
+      }
     } else {
       if (firstStep.state === 'queued') {
         deps.stepSchema.transitionStep(firstStep, 'running', { locked_by: source });
@@ -305,13 +321,14 @@ function dispatchTask(task, board, deps, helpers, opts = {}) {
       helpers.appendLog({ ts: helpers.nowIso(), event: 'dispatch_envelope_failed', taskId, source });
       console.error(`[dispatchTask:${taskId}] failed to build envelope for first step`);
     }
+
   _dispatchLocks.delete(taskId);
   return { dispatched: true, mode: 'step-pipeline', runId };
 }
 
 // --- Auto-dispatch ---
 function tryAutoDispatch(taskId, deps, helpers) {
-  const { mgmt } = deps;
+  const { mgmt, usage } = deps;
   const board = helpers.readBoard();
   const ctrl = mgmt.getControls(board);
   if (!ctrl.auto_dispatch) return;
@@ -325,6 +342,17 @@ function tryAutoDispatch(taskId, deps, helpers) {
   if (!assignee || assignee.type !== 'agent') {
     console.log(`[auto-dispatch:${taskId}] skip: assignee ${task.assignee} is not an agent`);
     return;
+  }
+
+  // Usage limits gate
+  if (usage) {
+    const userId = mgmt.resolveOwnerId(board);
+    const usageCheck = usage.enforceUsageLimits(userId, board);
+    if (!usageCheck.allowed) {
+      console.log(`[auto-dispatch:${taskId}] skip: usage limit exceeded (${usageCheck.metric}: ${usageCheck.used}/${usageCheck.limit})`);
+      helpers.appendLog({ ts: helpers.nowIso(), event: 'dispatch_blocked', taskId, source: 'auto-dispatch', code: 'USAGE_LIMIT_EXCEEDED', metric: usageCheck.metric, used: usageCheck.used, limit: usageCheck.limit });
+      return;
+    }
   }
 
   const unmetDeps = (task.depends || []).filter(depId => {
@@ -868,6 +896,9 @@ module.exports = function tasksRoutes(req, res, helpers, deps) {
       if (result.code === 'BUDGET_EXCEEDED') {
         return json(res, 409, { error: 'Budget exceeded', code: result.code, remaining: result.remaining });
       }
+      if (result.code === 'USAGE_LIMIT_EXCEEDED') {
+        return json(res, 409, { error: 'Usage limit exceeded', code: result.code, metric: result.metric, used: result.used, limit: result.limit });
+      }
       json(res, 200, { ok: true, taskId, dispatched: result.dispatched, planId: result.planId });
     } catch (error) {
       json(res, 500, { error: error.message });
@@ -1010,6 +1041,9 @@ module.exports = function tasksRoutes(req, res, helpers, deps) {
       const result = dispatchTask(task, board, deps, helpers, { source: 'dispatch-next' });
       if (result.code === 'BUDGET_EXCEEDED') {
         return json(res, 409, { error: 'Budget exceeded', code: result.code, taskId: task.id, remaining: result.remaining });
+      }
+      if (result.code === 'USAGE_LIMIT_EXCEEDED') {
+        return json(res, 409, { error: 'Usage limit exceeded', code: result.code, taskId: task.id, metric: result.metric, used: result.used, limit: result.limit });
       }
       return json(res, 202, { ok: true, dispatched: result.dispatched, taskId: task.id, planId: result.planId });
     } catch (error) {

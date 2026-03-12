@@ -477,11 +477,56 @@ function checkLimits(userId) {
   return result;
 }
 
+/**
+ * Enforce usage limits before dispatch. Returns { allowed: true } or
+ * { allowed: false, code: 'USAGE_LIMIT_EXCEEDED', metric, used, limit }.
+ * Unlike checkLimits (threshold-based alerts), this is a hard gate: used >= limit → block.
+ * @param {string} userId
+ * @returns {{ allowed: boolean, code?: string, metric?: string, used?: number, limit?: number }}
+ */
+function enforceUsageLimits(userId, board) {
+  if (!config) return { allowed: true };
+
+  if (!board) {
+    try {
+      board = config.readBoard();
+    } catch {
+      return { allowed: true };
+    }
+  }
+
+  const limits = board.controls?.usage_limits;
+  if (!limits) return { allowed: true };
+
+  const month = currentMonth();
+  const uid = String(userId || 'default').trim();
+  const key = cacheKey(uid, month);
+  const agg = cache.get(key) || emptyAggregation(uid, month);
+
+  if (limits.dispatches_per_month != null && agg.dispatches >= limits.dispatches_per_month) {
+    return { allowed: false, code: 'USAGE_LIMIT_EXCEEDED', metric: 'dispatches', used: agg.dispatches, limit: limits.dispatches_per_month };
+  }
+
+  if (limits.runtime_sec_per_month != null && agg.runtimeSec >= limits.runtime_sec_per_month) {
+    return { allowed: false, code: 'USAGE_LIMIT_EXCEEDED', metric: 'runtimeSec', used: agg.runtimeSec, limit: limits.runtime_sec_per_month };
+  }
+
+  if (limits.tokens_per_month != null) {
+    const totalTokens = agg.tokens.input + agg.tokens.output;
+    if (totalTokens >= limits.tokens_per_month) {
+      return { allowed: false, code: 'USAGE_LIMIT_EXCEEDED', metric: 'tokens', used: totalTokens, limit: limits.tokens_per_month };
+    }
+  }
+
+  return { allowed: true };
+}
+
 module.exports = {
   init,
   record,
   query,
   summary,
   checkLimits,
+  enforceUsageLimits,
   currentMonth,
 };
