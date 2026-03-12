@@ -300,6 +300,61 @@ async function testCORS() {
   assert(r1.status === 204, 'OPTIONS returns 204');
 }
 
+async function testXForwardedForValidation() {
+  console.log('\n--- X-Forwarded-For Validation ---');
+
+  const { isValidIP, sanitizeXForwardedFor } = require('./gateway-proxy');
+
+  // IPv4 validation
+  assert(isValidIP('192.168.1.1') === true, 'Valid IPv4 accepted');
+  assert(isValidIP('0.0.0.0') === true, 'Valid IPv4 0.0.0.0 accepted');
+  assert(isValidIP('255.255.255.255') === true, 'Valid IPv4 max accepted');
+  assert(isValidIP('256.1.1.1') === false, 'Invalid IPv4 (256) rejected');
+  assert(isValidIP('1.2.3') === false, 'Invalid IPv4 (3 octets) rejected');
+  assert(isValidIP('1.2.3.4.5') === false, 'Invalid IPv4 (5 octets) rejected');
+
+  // IPv6 validation
+  assert(isValidIP('::1') === true, 'Valid IPv6 loopback accepted');
+  assert(isValidIP('2001:db8::1') === true, 'Valid IPv6 abbreviated accepted');
+  assert(isValidIP('fe80::1') === true, 'Valid IPv6 link-local accepted');
+  assert(isValidIP('::ffff:192.168.1.1') === true, 'Valid IPv6-mapped IPv4 accepted');
+
+  // Invalid formats
+  assert(isValidIP('') === false, 'Empty string rejected');
+  assert(isValidIP(null) === false, 'Null rejected');
+  assert(isValidIP(undefined) === false, 'Undefined rejected');
+  assert(isValidIP('not-an-ip') === false, 'Non-IP string rejected');
+  assert(isValidIP('../../etc/passwd') === false, 'Path injection rejected');
+  assert(isValidIP('123.456.789.999') === false, 'Invalid numeric IP rejected');
+
+  // Sanitization tests
+  const clientIP = '10.0.0.1';
+
+  // Valid IPs should be preserved
+  const s1 = sanitizeXForwardedFor('192.168.1.1, 172.16.0.1', clientIP);
+  assert(s1 === '192.168.1.1, 172.16.0.1, 10.0.0.1', 'Valid IPs preserved');
+
+  // Invalid IPs should be stripped
+  const s2 = sanitizeXForwardedFor('192.168.1.1, invalid-ip, 172.16.0.1', clientIP);
+  assert(s2 === '192.168.1.1, 172.16.0.1, 10.0.0.1', 'Invalid IP stripped from middle');
+
+  // All invalid IPs — only clientIP
+  const s3 = sanitizeXForwardedFor('not-an-ip, also-invalid', clientIP);
+  assert(s3 === clientIP, 'All invalid IPs replaced with clientIP');
+
+  // Empty XFF — just clientIP
+  const s4 = sanitizeXForwardedFor('', clientIP);
+  assert(s4 === clientIP, 'Empty XFF returns clientIP');
+
+  // Null XFF — just clientIP
+  const s5 = sanitizeXForwardedFor(null, clientIP);
+  assert(s5 === clientIP, 'Null XFF returns clientIP');
+
+  // Spoofing attempt with injection patterns
+  const s6 = sanitizeXForwardedFor('192.168.1.1, ../../injection, 172.16.0.1', clientIP);
+  assert(s6 === '192.168.1.1, 172.16.0.1, 10.0.0.1', 'Injection attempt stripped');
+}
+
 // --- Test Runner ---
 
 async function runTests() {
@@ -309,6 +364,7 @@ async function runTests() {
 
   try {
     await testHealth();
+    await testXForwardedForValidation();
     const regToken = await testRegistration();
     const loginToken = await testLogin(regToken);
     await testMe(loginToken);
