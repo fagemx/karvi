@@ -49,6 +49,7 @@ let runtimeOpencode = null;
 try { runtimeOpencode = require('./runtime-opencode'); } catch { /* opencode not installed, skip */ }
 
 const { validateAllRuntimes } = require('./runtime-contract');
+const { migrateBoard } = require('./board-migration');
 
 const RUNTIMES = {
   openclaw: runtime,
@@ -254,20 +255,12 @@ const appendLog = (e) => bb.appendLog(ctx, e);
 const broadcastSSE = (ev, d) => bb.broadcastSSE(ctx, ev, d);
 
 const initBoard = readBoard();
-let dirty = false;
-if (!Array.isArray(initBoard.signals)) { initBoard.signals = []; dirty = true; }
-if (!Array.isArray(initBoard.insights)) { initBoard.insights = []; dirty = true; }
-if (!Array.isArray(initBoard.lessons)) { initBoard.lessons = []; dirty = true; }
-if (!Array.isArray(initBoard.projects)) { initBoard.projects = []; dirty = true; }
-// Village Chief: ensure village block exists on startup
-if (!initBoard.village) { villageRoutes.ensureVillage(initBoard); dirty = true; }
-if (dirty) writeBoard(initBoard);
-
-// --- Recover expired step locks (crashed dispatch recovery) ---
 const { recoverExpiredLocks } = require('./step-worker');
-const recoveredLocks = recoverExpiredLocks(initBoard);
-if (recoveredLocks > 0) {
-  console.log(`[step-worker] recovered ${recoveredLocks} expired step lock(s)`);
+const migrationResult = migrateBoard(initBoard, { villageRoutes, recoverExpiredLocks });
+if (migrationResult.applied.length > 0) {
+  console.log(`[migration] applied: ${migrationResult.applied.join(', ')}`);
+}
+if (migrationResult.dirty) {
   writeBoard(initBoard);
 }
 
