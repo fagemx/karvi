@@ -562,6 +562,83 @@
       padding: 5px 0;
     }
 
+    /* --- Batch dispatch UI --- */
+    .task-card .batch-check {
+      position: absolute;
+      top: 10px;
+      right: 10px;
+      width: 18px;
+      height: 18px;
+      accent-color: var(--accent);
+      cursor: pointer;
+      z-index: 2;
+    }
+
+    .task-card.batch-selected {
+      outline: 2px solid var(--accent);
+      outline-offset: -2px;
+    }
+
+    .batch-bar {
+      display: none;
+      position: sticky;
+      top: 0;
+      z-index: 10;
+      background: linear-gradient(180deg, #1a2850, #14203d);
+      border: 1px solid var(--accent);
+      border-radius: 10px;
+      padding: 10px 16px;
+      margin-bottom: 12px;
+      align-items: center;
+      gap: 12px;
+      font-size: 13px;
+      box-shadow: 0 4px 20px rgba(0,0,0,.4);
+    }
+
+    .batch-bar.visible {
+      display: flex;
+    }
+
+    .batch-bar .batch-count {
+      font-weight: 700;
+      color: var(--accent);
+      min-width: 100px;
+    }
+
+    .batch-bar button {
+      border: none;
+      border-radius: 6px;
+      padding: 6px 14px;
+      font-size: 12px;
+      font-weight: 600;
+      cursor: pointer;
+      color: white;
+    }
+
+    .batch-bar .batch-dispatch-btn {
+      background: linear-gradient(180deg, #4d79ec, #3a5fc0);
+    }
+
+    .batch-bar .batch-select-all {
+      background: #2a3862;
+    }
+
+    .batch-bar .batch-deselect {
+      background: #333;
+    }
+
+    .batch-bar .batch-progress {
+      flex: 1;
+      text-align: right;
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    .batch-bar button:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
+
     .t-reply {
       margin-top: 8px;
       background: #0d1528;
@@ -790,6 +867,13 @@
           <h2>No Task Plan</h2>
           <div class="meta">等待建立</div>
         </div>
+        <div class="batch-bar" id="batch-bar">
+          <span class="batch-count" id="batch-count">0 selected</span>
+          <button class="batch-select-all" id="batch-select-all">Select All Ready</button>
+          <button class="batch-deselect" id="batch-deselect">Deselect All</button>
+          <button class="batch-dispatch-btn" id="batch-dispatch-btn">Batch Dispatch</button>
+          <span class="batch-progress" id="batch-progress"></span>
+        </div>
         <div class="task-grid" id="task-grid"></div>
 
         <div class="spec-modal" id="spec-modal">
@@ -843,9 +927,19 @@
       board: null,
       convId: 'task-room',
       refreshTimer: null,
+      selectedTasks: new Set(),
+      batchDispatching: false,
     };
 
     const el = id => document.getElementById(id);
+
+    function isTaskDispatchable(t, tasks) {
+      if (t.status !== 'pending' && t.status !== 'dispatched') return false;
+      return !t.depends?.length || t.depends.every(depId => {
+        const dep = tasks.find(d => d.id === depId);
+        return dep && dep.status === 'approved';
+      });
+    }
 
     function fmtTime(ts) {
       if (!ts) return '-';
@@ -1047,13 +1141,11 @@
         }
 
         // Per-task action buttons based on status
+        const isDispatchable = isTaskDispatchable(t, plan.tasks);
+
         let actionsHtml = '<div class="task-actions">';
         if (t.status === 'pending' || t.status === 'dispatched') {
-          const depsOk = !t.depends?.length || t.depends.every(depId => {
-            const dep = plan.tasks.find(d => d.id === depId);
-            return dep && dep.status === 'approved';
-          });
-          if (depsOk) {
+          if (isDispatchable) {
             actionsHtml += `<button class="t-btn dispatch" onclick="dispatchSingleTask('${t.id}')">▶ 派發</button>`;
           } else {
             actionsHtml += `<span class="t-btn-disabled">⏳ 等待依賴</span>`;
@@ -1122,8 +1214,10 @@
           replyHtml = `<div class="t-reply"><div class="t-reply-label">Last reply (${fmtTime(t.lastReplyAt)}):</div><div class="t-reply-text">${escapeHtml(preview)}</div></div>`;
         }
 
+         const isSelected = state.selectedTasks.has(t.id);
          return `
-            <div class="task-card ${t.status}">
+            <div class="task-card ${t.status}${isSelected ? ' batch-selected' : ''}">
+               ${isDispatchable ? `<input type="checkbox" class="batch-check" data-task-id="${t.id}" ${isSelected ? 'checked' : ''} onclick="toggleBatchSelect('${t.id}', this.checked)" />` : ''}
                <div class="t-meta">
                  <span>#${t.id} · ${participantName(t.assignee)}</span>
                  ${t.scope ? `<span class="t-scope-indicator" title="Scope: allow=${t.scope.allow?.join(',') || 'none'}, deny=${t.scope.deny?.join(',') || 'none'}">🔒</span>` : ''}
@@ -1138,6 +1232,15 @@
             </div>
           `;
       }).join('');
+
+      // Clean up selections for tasks that are no longer dispatchable
+      for (const id of [...state.selectedTasks]) {
+        const t = plan.tasks.find(tk => tk.id === id);
+        if (!t || !isTaskDispatchable(t, plan.tasks)) {
+          state.selectedTasks.delete(id);
+        }
+      }
+      updateBatchBar();
     }
 
     window.unblockTask = async function (id) {
@@ -1177,6 +1280,78 @@
         await post(`/api/tasks/${id}/status`, { status: 'blocked', reason });
         await loadBoard();
       } catch (e) { alert(e.message); }
+    };
+
+    // --- Batch dispatch functions ---
+    window.toggleBatchSelect = function (taskId, checked) {
+      if (checked) state.selectedTasks.add(taskId);
+      else state.selectedTasks.delete(taskId);
+      // Update card visual without full re-render
+      document.querySelectorAll(`.batch-check[data-task-id="${taskId}"]`).forEach(cb => {
+        cb.closest('.task-card').classList.toggle('batch-selected', checked);
+      });
+      updateBatchBar();
+    };
+
+    function getDispatchableTasks() {
+      const plan = state.board?.taskPlan;
+      if (!plan?.tasks) return [];
+      return plan.tasks.filter(t => isTaskDispatchable(t, plan.tasks));
+    }
+
+    function updateBatchBar() {
+      const bar = el('batch-bar');
+      const count = state.selectedTasks.size;
+      const hasSummary = !!el('batch-progress').textContent;
+      el('batch-count').textContent = `${count} selected`;
+      bar.classList.toggle('visible', count > 0 || state.batchDispatching || hasSummary);
+    }
+
+    window.batchSelectAll = function () {
+      getDispatchableTasks().forEach(t => state.selectedTasks.add(t.id));
+      renderTaskBoard();
+    };
+
+    window.batchDeselectAll = function () {
+      state.selectedTasks.clear();
+      renderTaskBoard();
+    };
+
+    window.batchDispatch = async function () {
+      const ids = [...state.selectedTasks];
+      if (ids.length === 0) return;
+      if (!confirm(`Dispatch ${ids.length} task(s)?`)) return;
+
+      state.batchDispatching = true;
+      const progressEl = el('batch-progress');
+      const dispatchBtn = el('batch-dispatch-btn');
+      dispatchBtn.disabled = true;
+      dispatchBtn.textContent = 'Dispatching...';
+
+      let ok = 0, fail = 0;
+      for (const id of ids) {
+        progressEl.textContent = `${ok + fail + 1}/${ids.length}...`;
+        try {
+          await post(`/api/tasks/${id}/dispatch`);
+          ok++;
+          state.selectedTasks.delete(id);
+        } catch (e) {
+          fail++;
+          console.error(`[batch-dispatch] ${id} failed:`, e.message);
+        }
+      }
+
+      state.batchDispatching = false;
+      dispatchBtn.disabled = false;
+      dispatchBtn.textContent = 'Batch Dispatch';
+
+      const summary = fail > 0
+        ? `Dispatched ${ok}/${ids.length}. ${fail} failed.`
+        : `Dispatched ${ok} task(s).`;
+      progressEl.textContent = summary;
+      setTimeout(() => { progressEl.textContent = ''; updateBatchBar(); }, 5000);
+
+      await loadBoard();
     };
 
     window.viewSpec = async function (specPath) {
@@ -1351,6 +1526,11 @@
           await loadBoard();
         } catch (e) { alert(e.message); }
       });
+
+      // Batch dispatch bar buttons
+      el('batch-select-all').addEventListener('click', () => batchSelectAll());
+      el('batch-deselect').addEventListener('click', () => batchDeselectAll());
+      el('batch-dispatch-btn').addEventListener('click', () => batchDispatch());
     }
 
     async function boot() {
@@ -1369,7 +1549,7 @@
           }
           renderParticipants();
           renderTimeline();
-          renderTaskBoard();
+          if (!state.batchDispatching) renderTaskBoard();
           renderEvolution(state.board);
         } catch (err) {
           console.error('SSE parse error:', err);
