@@ -6,7 +6,7 @@
  * No dependency on conversation history — purely artifact-driven.
  */
 const path = require('path');
-const { BUDGET_DEFAULTS } = require('./route-engine');
+const { BUDGET_DEFAULTS, resolveStepGroup } = require('./route-engine');
 const { resolveCostRoutingModel } = require('./management');
 
 const STEP_OBJECTIVES = {
@@ -45,15 +45,33 @@ function buildEnvelope(decision, runState, deps) {
   const runId = targetStep.run_id;
   const stepType = targetStep.type;
 
-  // Find the preceding step's output
-  const stepTypes = steps.map(s => s.type);
-  const targetIdx = stepTypes.indexOf(stepType);
+  // Find the preceding group's output(s).
+  // For parallel groups, merge outputs from all steps in the previous group.
+  const targetGroup = resolveStepGroup(targetStep, steps);
   let previousOutput = null;
   let previousOutputRef = null;
-  if (targetIdx > 0) {
-    const prevStep = steps[targetIdx - 1];
-    previousOutput = artifactStore.readArtifact(runId, prevStep.step_id, 'output');
-    previousOutputRef = prevStep.output_ref || null;
+  const prevGroupSteps = steps.filter(s => {
+    const g = resolveStepGroup(s, steps);
+    return g < targetGroup && s.state === 'succeeded';
+  });
+  if (prevGroupSteps.length > 0) {
+    // Find steps from the closest preceding group
+    const maxPrevGroup = Math.max(...prevGroupSteps.map(s => resolveStepGroup(s, steps)));
+    const closestPrevSteps = prevGroupSteps.filter(s => resolveStepGroup(s, steps) === maxPrevGroup);
+    if (closestPrevSteps.length === 1) {
+      // Single predecessor — same as before
+      previousOutput = artifactStore.readArtifact(runId, closestPrevSteps[0].step_id, 'output');
+      previousOutputRef = closestPrevSteps[0].output_ref || null;
+    } else if (closestPrevSteps.length > 1) {
+      // Multiple predecessors (parallel group) — merge summaries and payloads
+      const outputs = closestPrevSteps.map(s => artifactStore.readArtifact(runId, s.step_id, 'output')).filter(Boolean);
+      previousOutput = {
+        status: outputs.every(o => o.status === 'succeeded') ? 'succeeded' : 'mixed',
+        summary: outputs.map(o => o.summary).filter(Boolean).join('\n---\n'),
+        payload: Object.assign({}, ...outputs.map(o => o.payload || {})),
+      };
+      previousOutputRef = closestPrevSteps.map(s => s.output_ref).filter(Boolean).join(',');
+    }
   }
 
   // Compute idempotency key from inputs
