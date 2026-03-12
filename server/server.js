@@ -150,6 +150,7 @@ const logsRoutes = require('./routes/logs');
 const eddaRoutes = require('./routes/edda');
 const executionsRoutes = require('./routes/executions');
 const marketplaceRoutes = require('./routes/marketplace');
+const configRoutes = require('./routes/config');
 
 const postmortem = require('./postmortem');
 
@@ -180,6 +181,7 @@ const routes = [
   logsRoutes,
   eddaRoutes,
   executionsRoutes,
+  configRoutes,
 ];
 
 const { json } = bb;
@@ -531,6 +533,27 @@ process.on('SIGINT', gracefulShutdown);
       console.error('[SECURITY] API token not set but server is binding to %s:%d', HOST, ctx.port);
       console.error('           Set KARVI_API_TOKEN or use --force to bypass this check');
       process.exit(1);
+    }
+  }
+}
+
+// Validate opencode.json at startup (if exists)
+{
+  const opencodeConfig = require('./opencode-config');
+  const { config, error } = opencodeConfig.loadOpenCodeConfig(ROOT);
+  if (error) {
+    console.error('[ERROR] opencode.json validation failed:', error);
+    process.exit(1);
+  }
+  if (config) {
+    const providerCount = Object.keys(config.provider || {}).length;
+    const modelCount = Object.values(config.provider || {}).reduce(
+      (sum, p) => sum + Object.keys(p.models || {}).length, 0
+    );
+    console.log(`[opencode] Loaded ${providerCount} provider(s), ${modelCount} model(s)`);
+    for (const [providerId, provider] of Object.entries(config.provider || {})) {
+      const envStatus = (provider.env || []).map(k => process.env[k] ? `${k}=✓` : `${k}=✗`).join(' ');
+      console.log(`[opencode]   ${providerId}: ${provider.name} (${envStatus})`);
     }
   }
 }
