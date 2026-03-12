@@ -396,7 +396,7 @@ function createKernel(deps) {
         // Village: synthesis plan dispatch + cycle completion check
         // Non-blocking — failures logged but don't stop the pipeline.
         try {
-          await villageHooks.onTaskDone(latestBoard, latestTask, step, helpers, { artifactStore, push, PUSH_TOKENS_PATH, mgmt });
+          await villageHooks.onTaskDone(latestBoard, latestTask, step, helpers, { artifactStore, push, PUSH_TOKENS_PATH, mgmt, tryAutoDispatch: deps.tryAutoDispatch });
         } catch (err) {
           console.error('[kernel] village onTaskDone hook failed:', err.message);
         }
