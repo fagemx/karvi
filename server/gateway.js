@@ -43,7 +43,7 @@ const SESSION_TTL_HOURS = Number(process.env.GATEWAY_SESSION_TTL_HOURS || 168);
 const SESSION_CLEANUP_INTERVAL_MS = 3600000; // 1 hour
 
 // CORS origin 白名單 — comma-separated，未設定時開發模式 fallback 到 *
-const ALLOWED_ORIGINS = (process.env.KARVI_CORS_ORIGINS || '').split(',').filter(Boolean);
+const ALLOWED_ORIGINS = (process.env.KARVI_CORS_ORIGINS || '').split(',').map(s => s.trim()).filter(Boolean);
 
 // --- Helpers ---
 
@@ -409,6 +409,7 @@ function route(req, res) {
   if (ALLOWED_ORIGINS.length > 0) {
     if (origin && ALLOWED_ORIGINS.includes(origin)) {
       res.setHeader('Access-Control-Allow-Origin', origin);
+      res.setHeader('Access-Control-Allow-Credentials', 'true');
       res.setHeader('Vary', 'Origin');
     }
     // origin 不在白名單 → 不設 Access-Control-Allow-Origin，瀏覽器會擋
