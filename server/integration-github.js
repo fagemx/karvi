@@ -116,6 +116,131 @@ function buildTaskFromIssue(payload, config) {
 }
 
 // ---------------------------------------------------------------------------
+// @karvi mention command parser
+// ---------------------------------------------------------------------------
+
+const MENTION_RE = /@karvi\b\s*(.*)/i;
+const SUPPORTED_COMMANDS = ['fix', 'implement', 'status'];
+
+/**
+ * parseMentionCommand(commentBody)
+ *
+ * Extract command from @karvi mention in a comment body.
+ * @param {string} commentBody — raw comment text
+ * @returns {{ mentioned: boolean, command: string, args: string } | { mentioned: false }}
+ */
+function parseMentionCommand(commentBody) {
+  const match = (commentBody || '').match(MENTION_RE);
+  if (!match) return { mentioned: false };
+
+  const raw = match[1].trim();
+  if (!raw) return { mentioned: true, command: 'implement', args: '' };
+
+  const parts = raw.split(/\s+/);
+  const first = parts[0].toLowerCase();
+
+  // Normalize aliases
+  if (first === 'fix' || first === 'implement') {
+    return { mentioned: true, command: first, args: parts.slice(1).join(' ') };
+  }
+  if (first === 'status') {
+    return { mentioned: true, command: 'status', args: parts.slice(1).join(' ') };
+  }
+
+  // Unknown command → treat as implement with full text as args
+  return { mentioned: true, command: 'implement', args: raw };
+}
+
+// ---------------------------------------------------------------------------
+// Handle issue_comment mention webhook
+// ---------------------------------------------------------------------------
+
+/**
+ * handleMentionWebhook(board, payload, config)
+ *
+ * Processes issue_comment events looking for @karvi mentions.
+ * Returns action to take: create_task, status_reply, or skipped.
+ *
+ * @param {object} board — current board state
+ * @param {object} payload — parsed GitHub webhook JSON body (issue_comment event)
+ * @param {object|null} config — board.integrations.github
+ * @returns {{ action: string, task?: object, issueNumber?: number, repo?: string, existingTask?: object, error?: string }}
+ */
+function handleMentionWebhook(board, payload, config) {
+  if (!config?.enabled) {
+    return { action: 'skipped', error: 'GitHub integration disabled' };
+  }
+
+  // Only handle comment creation
+  if (payload.action !== 'created') {
+    return { action: 'skipped', error: `Not a comment.created event (action: ${payload.action})` };
+  }
+
+  const comment = payload.comment;
+  if (!comment?.body) {
+    return { action: 'skipped', error: 'No comment body in payload' };
+  }
+
+  const parsed = parseMentionCommand(comment.body);
+  if (!parsed.mentioned) {
+    return { action: 'skipped', error: 'No @karvi mention in comment' };
+  }
+
+  const issue = payload.issue;
+  if (!issue?.number) {
+    return { action: 'skipped', error: 'No issue number in payload' };
+  }
+
+  const repo = payload.repository?.full_name || '';
+
+  // Check targetRepos filter
+  if (Array.isArray(config.targetRepos) && config.targetRepos.length > 0) {
+    if (!config.targetRepos.includes(repo)) {
+      return { action: 'skipped', error: `Repo "${repo}" not in targetRepos` };
+    }
+  }
+
+  const issueNumber = issue.number;
+
+  // Status command → return existing task info
+  if (parsed.command === 'status') {
+    const existing = (board.taskPlan?.tasks || []).find(t =>
+      t.source?.type === 'github_issue' &&
+      t.source?.number === issueNumber &&
+      t.source?.repo === repo
+    );
+    if (existing) {
+      return { action: 'status_reply', existingTask: existing, issueNumber, repo };
+    }
+    return { action: 'status_reply', existingTask: null, issueNumber, repo };
+  }
+
+  // Check ignoreLabels filter (same as handleWebhook)
+  if (Array.isArray(config.ignoreLabels) && config.ignoreLabels.length > 0) {
+    const issueLabels = (issue.labels || []).map(l => (l.name || '').toLowerCase());
+    const ignored = config.ignoreLabels.map(l => l.toLowerCase());
+    const match = issueLabels.find(l => ignored.includes(l));
+    if (match) {
+      return { action: 'skipped', error: `Label "${match}" is in ignoreLabels` };
+    }
+  }
+
+  // fix / implement → create task (or report existing)
+  if (isDuplicate(board, issueNumber, repo)) {
+    const existing = (board.taskPlan?.tasks || []).find(t =>
+      t.source?.type === 'github_issue' &&
+      t.source?.number === issueNumber &&
+      t.source?.repo === repo
+    );
+    return { action: 'already_exists', existingTask: existing, issueNumber, repo };
+  }
+
+  // Build task from the issue context — reuse buildTaskFromIssue
+  const task = buildTaskFromIssue(payload, config);
+  return { action: 'create_task', task, issueNumber, repo, command: parsed.command };
+}
+
+// ---------------------------------------------------------------------------
 // Main webhook handler
 // ---------------------------------------------------------------------------
 
@@ -237,6 +362,8 @@ module.exports = {
   verifySignature,
   handleWebhook,
   handlePRWebhook,
+  handleMentionWebhook,
+  parseMentionCommand,
   buildTaskFromIssue,
   isDuplicate,
   mapLabelToPriority,
@@ -440,6 +567,109 @@ if (require.main === module) {
     assert.ok(result.error.includes('Not a pull_request.closed'));
     ok('handlePRWebhook: non-closed action → skipped');
   } catch (e) { fail('handlePRWebhook: non-closed action', e.message); }
+
+  // --- parseMentionCommand ---
+  try {
+    const r1 = parseMentionCommand('@karvi fix this bug');
+    assert.strictEqual(r1.mentioned, true);
+    assert.strictEqual(r1.command, 'fix');
+    assert.strictEqual(r1.args, 'this bug');
+    ok('parseMentionCommand: @karvi fix this bug');
+  } catch (e) { fail('parseMentionCommand: fix', e.message); }
+
+  try {
+    const r2 = parseMentionCommand('@karvi implement');
+    assert.strictEqual(r2.mentioned, true);
+    assert.strictEqual(r2.command, 'implement');
+    assert.strictEqual(r2.args, '');
+    ok('parseMentionCommand: @karvi implement');
+  } catch (e) { fail('parseMentionCommand: implement', e.message); }
+
+  try {
+    const r3 = parseMentionCommand('@karvi status');
+    assert.strictEqual(r3.mentioned, true);
+    assert.strictEqual(r3.command, 'status');
+    ok('parseMentionCommand: @karvi status');
+  } catch (e) { fail('parseMentionCommand: status', e.message); }
+
+  try {
+    const r4 = parseMentionCommand('@karvi');
+    assert.strictEqual(r4.mentioned, true);
+    assert.strictEqual(r4.command, 'implement');
+    ok('parseMentionCommand: bare @karvi → implement');
+  } catch (e) { fail('parseMentionCommand: bare', e.message); }
+
+  try {
+    const r5 = parseMentionCommand('no mention here');
+    assert.strictEqual(r5.mentioned, false);
+    ok('parseMentionCommand: no mention → mentioned=false');
+  } catch (e) { fail('parseMentionCommand: no mention', e.message); }
+
+  try {
+    const r6 = parseMentionCommand('@karvi do something custom');
+    assert.strictEqual(r6.mentioned, true);
+    assert.strictEqual(r6.command, 'implement');
+    assert.strictEqual(r6.args, 'do something custom');
+    ok('parseMentionCommand: unknown command → implement with args');
+  } catch (e) { fail('parseMentionCommand: unknown', e.message); }
+
+  // --- handleMentionWebhook ---
+  try {
+    const board = { taskPlan: { tasks: [] } };
+    const payload = {
+      action: 'created',
+      comment: { body: '@karvi fix this' },
+      issue: { number: 55, title: 'Bug report', body: 'Something broke', labels: [{ name: 'bug' }], html_url: 'https://github.com/owner/repo/issues/55', user: { login: 'bob' } },
+      repository: { full_name: 'owner/repo' },
+    };
+    const result = handleMentionWebhook(board, payload, { enabled: true });
+    assert.strictEqual(result.action, 'create_task');
+    assert.strictEqual(result.task.id, 'GH-55');
+    assert.strictEqual(result.command, 'fix');
+    ok('handleMentionWebhook: @karvi fix → create_task');
+  } catch (e) { fail('handleMentionWebhook: fix', e.message); }
+
+  try {
+    const existing = { id: 'GH-55', status: 'in_progress', source: { type: 'github_issue', number: 55, repo: 'owner/repo' } };
+    const board = { taskPlan: { tasks: [existing] } };
+    const payload = {
+      action: 'created',
+      comment: { body: '@karvi fix' },
+      issue: { number: 55, title: 'Bug', body: '', labels: [], user: {} },
+      repository: { full_name: 'owner/repo' },
+    };
+    const result = handleMentionWebhook(board, payload, { enabled: true });
+    assert.strictEqual(result.action, 'already_exists');
+    assert.strictEqual(result.existingTask.id, 'GH-55');
+    ok('handleMentionWebhook: duplicate → already_exists');
+  } catch (e) { fail('handleMentionWebhook: duplicate', e.message); }
+
+  try {
+    const existing = { id: 'GH-60', status: 'completed', source: { type: 'github_issue', number: 60, repo: 'owner/repo' } };
+    const board = { taskPlan: { tasks: [existing] } };
+    const payload = {
+      action: 'created',
+      comment: { body: '@karvi status' },
+      issue: { number: 60, title: 'Done', body: '', labels: [], user: {} },
+      repository: { full_name: 'owner/repo' },
+    };
+    const result = handleMentionWebhook(board, payload, { enabled: true });
+    assert.strictEqual(result.action, 'status_reply');
+    assert.strictEqual(result.existingTask.id, 'GH-60');
+    ok('handleMentionWebhook: @karvi status → status_reply');
+  } catch (e) { fail('handleMentionWebhook: status', e.message); }
+
+  try {
+    const result = handleMentionWebhook({}, {
+      action: 'created',
+      comment: { body: 'just a comment' },
+      issue: { number: 1 },
+      repository: { full_name: 'o/r' },
+    }, { enabled: true });
+    assert.strictEqual(result.action, 'skipped');
+    assert.ok(result.error.includes('No @karvi mention'));
+    ok('handleMentionWebhook: no mention → skipped');
+  } catch (e) { fail('handleMentionWebhook: no mention', e.message); }
 
   console.log(`\n  ${passed} passed, ${failed} failed`);
   process.exit(failed > 0 ? 1 : 0);
