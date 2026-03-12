@@ -199,7 +199,22 @@ function createKernel(deps) {
                 }
               }
               if (sibRunning >= sibLimit) {
-                console.log(`[kernel] ${sibling.step_type} concurrency limit reached for parallel sibling, skipping`);
+                console.log(`[kernel] ${sibling.step_type} concurrency limit reached for parallel sibling ${sibling.step_id}, scheduling retry`);
+                // Re-check after 30s so the sibling doesn't stay queued forever
+                const retryTimer = setTimeout(() => {
+                  try {
+                    const retryBoard = helpers.readBoard();
+                    const retryTask = (retryBoard.taskPlan?.tasks || []).find(t => t.id === taskId);
+                    const retryStep = retryTask?.steps?.find(s => s.step_id === sibling.step_id);
+                    if (retryStep && retryStep.state === 'queued') {
+                      console.log(`[kernel] retrying parallel sibling ${sibling.step_id}`);
+                      advanceStep(taskId, sibling.step_id, retryBoard);
+                    }
+                  } catch (err) {
+                    console.error(`[kernel] parallel sibling retry failed for ${sibling.step_id}:`, err.message);
+                  }
+                }, 30000);
+                retryTimer.unref();
                 continue;
               }
             }
