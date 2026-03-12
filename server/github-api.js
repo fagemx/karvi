@@ -118,4 +118,16 @@ async function testToken(token) {
   };
 }
 
-module.exports = { fetchPR, fetchPRFiles, createReview, mergePR, testToken };
+/**
+ * Post a comment on an issue or PR
+ * @param {string} token - GitHub PAT
+ * @param {string} owner - Repository owner
+ * @param {string} repo - Repository name
+ * @param {number} number - Issue or PR number
+ * @param {string} body - Comment body (markdown)
+ */
+function createComment(token, owner, repo, number, body) {
+  return request('POST', `/repos/${owner}/${repo}/issues/${number}/comments`, token, { body });
+}
+
+module.exports = { fetchPR, fetchPRFiles, createReview, mergePR, testToken, createComment };

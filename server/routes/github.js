@@ -5,7 +5,7 @@
  * server retrieves PAT from vault.
  *
  * Webhook (auth bypass — verified via HMAC):
- * POST /api/webhooks/github — receive GitHub issue webhook
+ * POST /api/webhooks/github — receive GitHub webhook (issues, pull_request, issue_comment)
  *
  * Config:
  * GET  /api/integrations/github — read GitHub integration config
@@ -172,6 +172,88 @@ module.exports = function githubRoutes(req, res, helpers, deps) {
               }
             }
             json(res, 200, { ok: true, action: 'pr_outcome', taskId: result.taskId, outcome: result.outcome });
+            return;
+          }
+
+          json(res, 200, { ok: true, action: result.action });
+          return;
+        }
+
+        // --- issue_comment events: @karvi mention triggers ---
+        if (ghEvent === 'issue_comment') {
+          const result = githubIntegration.handleMentionWebhook(board, payload, config);
+
+          if (result.action === 'skipped') {
+            json(res, 200, { ok: true, skipped: true, reason: result.error });
+            return;
+          }
+
+          // Helper: reply on issue via GitHub API
+          const replyOnIssue = (issueNumber, repoFullName, body) => {
+            const tokenBuf = vault.has('default', 'github_pat')
+              ? vault.retrieve('default', 'github_pat')
+              : null;
+            if (!tokenBuf) return; // no token → can't reply
+            const pat = tokenBuf.toString('utf8');
+            tokenBuf.fill(0);
+            const [owner, repo] = repoFullName.split('/');
+            githubApi.createComment(pat, owner, repo, issueNumber, body)
+              .catch(err => console.error('[github-webhook] reply failed:', err.message));
+          };
+
+          if (result.action === 'status_reply') {
+            const t = result.existingTask;
+            const replyBody = t
+              ? `Task **${t.id}** is currently **${t.status}**.`
+              : `No task found for this issue.`;
+            replyOnIssue(result.issueNumber, result.repo, replyBody);
+            json(res, 200, { ok: true, action: 'status_reply', taskId: t?.id || null, status: t?.status || null });
+            return;
+          }
+
+          if (result.action === 'already_exists') {
+            const t = result.existingTask;
+            const replyBody = `Task **${t.id}** already exists (status: **${t.status}**).`;
+            replyOnIssue(result.issueNumber, result.repo, replyBody);
+            json(res, 200, { ok: true, action: 'already_exists', taskId: t.id, status: t.status });
+            return;
+          }
+
+          if (result.action === 'create_task' && result.task) {
+            board.taskPlan = board.taskPlan || { tasks: [] };
+            board.taskPlan.tasks = board.taskPlan.tasks || [];
+            board.taskPlan.tasks.push(result.task);
+            helpers.writeBoard(board);
+            helpers.appendLog({
+              ts: helpers.nowIso(),
+              event: 'github_mention_task_created',
+              taskId: result.task.id,
+              issueNumber: result.issueNumber,
+              command: result.command,
+              source: 'github-mention',
+            });
+
+            // Reply on issue
+            const replyBody = `Task **${result.task.id}** created and dispatched.`;
+            replyOnIssue(result.issueNumber, result.repo, replyBody);
+
+            // Auto-dispatch via step pipeline
+            if (result.task.status === 'dispatched' && deps.tryAutoDispatch) {
+              setImmediate(() => deps.tryAutoDispatch(result.task.id));
+            }
+
+            // Emit signal
+            mgmt.ensureEvolutionFields(board);
+            board.signals.push(createSignal({
+              by: 'github-mention', type: 'mention_task_created',
+              content: `@karvi mention → ${result.task.id} created from issue #${result.issueNumber}`,
+              refs: [result.task.id],
+              data: { taskId: result.task.id, issueNumber: result.issueNumber, command: result.command },
+            }, req, helpers));
+            mgmt.trimSignals(board, helpers.signalArchivePath);
+            helpers.writeBoard(board);
+
+            json(res, 201, { ok: true, action: 'create_task', taskId: result.task.id, issueNumber: result.issueNumber });
             return;
           }
 
