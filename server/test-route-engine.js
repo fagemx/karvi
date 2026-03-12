@@ -29,6 +29,7 @@ function makeRunState(overrides = {}) {
     task: { id: 'T-1', budget: overrides.budget || null, ...overrides.task },
     steps,
     run_id: 'run-1',
+    controls: overrides.controls || {},
   };
 }
 
@@ -193,6 +194,66 @@ test('decideNext uses default MAX_REVISION_CYCLES when max_revision_cycles not s
   const d = routeEngine.decideNext(output, runState);
   // max cycles reached → falls through to done
   assert.strictEqual(d.action, 'done');
+});
+
+// --- Cost budget tests (GH-362) ---
+
+test('isCostBudgetExceeded returns false when no budget_per_task set', () => {
+  const budget = { used: { cost: 10 } };
+  const controls = { budget_per_task: null };
+  assert.strictEqual(routeEngine.isCostBudgetExceeded(budget, controls), false);
+});
+
+test('isCostBudgetExceeded returns false when cost under limit', () => {
+  const budget = { used: { cost: 0.5 } };
+  const controls = { budget_per_task: 1.0 };
+  assert.strictEqual(routeEngine.isCostBudgetExceeded(budget, controls), false);
+});
+
+test('isCostBudgetExceeded returns true when cost meets limit', () => {
+  const budget = { used: { cost: 1.0 } };
+  const controls = { budget_per_task: 1.0 };
+  assert.strictEqual(routeEngine.isCostBudgetExceeded(budget, controls), true);
+});
+
+test('isCostBudgetExceeded returns true when cost exceeds limit', () => {
+  const budget = { used: { cost: 1.5 } };
+  const controls = { budget_per_task: 1.0 };
+  assert.strictEqual(routeEngine.isCostBudgetExceeded(budget, controls), true);
+});
+
+test('isCostBudgetExceeded returns false when budget is null', () => {
+  const controls = { budget_per_task: 1.0 };
+  assert.strictEqual(routeEngine.isCostBudgetExceeded(null, controls), false);
+});
+
+test('decideNext returns dead_letter when cost budget exceeded', () => {
+  const budget = {
+    limits: { max_llm_calls: 50, max_tokens: 2000000, max_wall_clock_ms: 1800000, max_steps: 20 },
+    used: { llm_calls: 5, tokens: 100, wall_clock_ms: 0, steps: 2, cost: 2.0 },
+  };
+  const controls = { budget_per_task: 1.5 };
+  const runState = makeRunState({ budget, controls });
+  const output = { step_id: 'T-1:implement', status: 'failed', failure: { retryable: true } };
+  const d = routeEngine.decideNext(output, runState);
+  assert.strictEqual(d.action, 'dead_letter');
+  assert.strictEqual(d.rule, 'cost_budget_exceeded');
+});
+
+test('decideNext allows retry when cost budget not exceeded', () => {
+  const budget = {
+    limits: { max_llm_calls: 50, max_tokens: 2000000, max_wall_clock_ms: 1800000, max_steps: 20 },
+    used: { llm_calls: 5, tokens: 100, wall_clock_ms: 0, steps: 2, cost: 0.5 },
+  };
+  const controls = { budget_per_task: 2.0 };
+  const steps = [
+    { step_id: 'T-1:plan', type: 'plan', state: 'running', attempt: 0, max_attempts: 3, run_id: 'run-1', retry_policy: { backoff_base_ms: 5000 } },
+  ];
+  const runState = makeRunState({ budget, controls, steps });
+  const output = { step_id: 'T-1:plan', status: 'failed', error: 'missing file context', failure: { retryable: true } };
+  const d = routeEngine.decideNext(output, runState);
+  // Should retry because cost is under budget
+  assert.strictEqual(d.action, 'retry');
 });
 
 // --- Summary ---

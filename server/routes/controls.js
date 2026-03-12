@@ -133,6 +133,13 @@ module.exports = function controlsRoutes(req, res, helpers, deps) {
                 board.controls[key] = val;
               }
             }
+            else if (key === 'budget_per_task') {
+              if (val === null) {
+                board.controls[key] = null;
+              } else if (typeof val === 'number' && Number.isFinite(val) && val > 0) {
+                board.controls[key] = val;
+              }
+            }
           }
         }
         // Deprecation warning: use_step_pipeline=false is no longer supported (GH-218)

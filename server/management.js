@@ -49,6 +49,7 @@ const DEFAULT_CONTROLS = {
   hooks_after_worktree_create: '',    // shell command run after worktree created
   hooks_before_run: '',               // shell command run before agent starts
   hooks_after_run: '',                // shell command run after agent completes
+  budget_per_task: null,              // max cost per task in USD (null = unlimited)
 };
 
 // --- Evolution Layer: Schema validation ---
@@ -406,7 +407,7 @@ function budgetPctRemaining(budget) {
  * 回傳 model hint string 或 null。
  */
 function resolveCostRoutingModel(runtimeHint, stepType, controls, budget) {
-  const costRouting = controls.cost_routing;
+  const costRouting = controls?.cost_routing;
   if (!costRouting?.tiers?.length || !budget) return null;
   const pctRemaining = budgetPctRemaining(budget);
   // 依 budget_pct_remaining 由低到高排序，最嚴格的 tier（最低閾值）優先匹配
