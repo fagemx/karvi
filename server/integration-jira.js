@@ -179,6 +179,182 @@ function buildTaskFromIssue(issue, config) {
 }
 
 // ---------------------------------------------------------------------------
+// @karvi mention command parser
+// ---------------------------------------------------------------------------
+
+const JIRA_MENTION_RE = /@karvi\b\s*(.*)/i;
+
+/**
+ * parseMentionCommand(commentBody)
+ *
+ * Extract command from @karvi mention in a Jira comment body.
+ * @param {string} commentBody — raw comment text (ADF already converted to plain text)
+ * @returns {{ mentioned: boolean, command: string, args: string } | { mentioned: false }}
+ */
+function parseMentionCommand(commentBody) {
+  const match = (commentBody || '').match(JIRA_MENTION_RE);
+  if (!match) return { mentioned: false };
+
+  const raw = match[1].trim();
+  if (!raw) return { mentioned: true, command: 'implement', args: '' };
+
+  const parts = raw.split(/\s+/);
+  const first = parts[0].toLowerCase();
+
+  // Normalize aliases
+  if (first === 'fix' || first === 'implement') {
+    return { mentioned: true, command: first, args: parts.slice(1).join(' ') };
+  }
+  if (first === 'status') {
+    return { mentioned: true, command: 'status', args: parts.slice(1).join(' ') };
+  }
+  if (first === 'plan') {
+    return { mentioned: true, command: 'plan', args: parts.slice(1).join(' ') };
+  }
+
+  // Unknown command → treat as implement with full text as args
+  return { mentioned: true, command: 'implement', args: raw };
+}
+
+// ---------------------------------------------------------------------------
+// Handle comment_created webhook with @karvi mention
+// ---------------------------------------------------------------------------
+
+/**
+ * handleMentionWebhook(board, payload, config)
+ *
+ * Processes comment_created events looking for @karvi mentions.
+ * Returns action to take: create_task, status_reply, or skipped.
+ *
+ * @param {object} board — current board state
+ * @param {object} payload — parsed Jira webhook JSON body (comment_created event)
+ * @param {object|null} config — board.integrations.jira
+ * @returns {{ action: string, task?: object, issueKey?: string, existingTask?: object, command?: string, error?: string }}
+ */
+function handleMentionWebhook(board, payload, config) {
+  if (!config?.enabled) {
+    return { action: 'skipped', error: 'Jira integration disabled' };
+  }
+
+  // Only handle comment_created webhook event
+  const webhookEvent = payload.webhookEvent;
+  if (webhookEvent !== 'comment_created') {
+    return { action: 'skipped', error: `Not a comment_created event (event: ${webhookEvent})` };
+  }
+
+  const comment = payload.comment;
+  if (!comment?.body) {
+    return { action: 'skipped', error: 'No comment body in payload' };
+  }
+
+  // Convert ADF comment body to plain text for parsing
+  let commentBody = '';
+  if (typeof comment.body === 'string') {
+    commentBody = comment.body;
+  } else {
+    commentBody = adfToPlainText(comment.body).trim();
+  }
+
+  const parsed = parseMentionCommand(commentBody);
+  if (!parsed.mentioned) {
+    return { action: 'skipped', error: 'No @karvi mention in comment' };
+  }
+
+  const issue = payload.issue;
+  if (!issue?.key) {
+    return { action: 'skipped', error: 'No issue key in payload' };
+  }
+
+  const issueKey = issue.key;
+  const tasks = board.taskPlan?.tasks || [];
+
+  // Status command → return existing task info
+  if (parsed.command === 'status') {
+    const existing = tasks.find(t =>
+      t.jiraKey === issueKey ||
+      t.id === issueKey
+    );
+    return { action: 'status_reply', existingTask: existing || null, issueKey, command: 'status' };
+  }
+
+  // Check if task already exists for this issue
+  const existingTask = tasks.find(t =>
+    t.jiraKey === issueKey ||
+    t.id === issueKey
+  );
+
+  if (existingTask) {
+    return { action: 'already_exists', existingTask, issueKey, command: parsed.command };
+  }
+
+  // Build task from the issue context
+  const task = buildTaskFromMention(issue, commentBody, parsed, config);
+  // status is already 'dispatched' from buildTaskFromMention
+
+  return { action: 'create_task', task, issueKey, command: parsed.command };
+}
+
+/**
+ * buildTaskFromMention(issue, commentBody, parsed, config)
+ *
+ * Build a Karvi task from a Jira issue when @karvi is mentioned.
+ *
+ * @param {object} issue — Jira issue object
+ * @param {string} commentBody — the comment that triggered the mention
+ * @param {object} parsed — parsed mention command { command, args }
+ * @param {object} config — board.integrations.jira config
+ * @returns {object} Karvi task object
+ */
+function buildTaskFromMention(issue, commentBody, parsed, config) {
+  const fields = issue.fields || {};
+  const key = issue.key || '';
+  const host = process.env.JIRA_HOST || '';
+  const jiraUrl = host ? `https://${host}/browse/${key}` : '';
+
+  // Extract description — could be ADF object or plain string
+  let description = '';
+  if (fields.description) {
+    if (typeof fields.description === 'string') {
+      description = fields.description;
+    } else {
+      description = adfToPlainText(fields.description).trim();
+    }
+  }
+
+  // Append the mention context to description
+  if (parsed.args) {
+    description += `\n\n--- @karvi mention ---\n${parsed.args}`;
+  }
+
+  // Truncate to 2000 chars
+  const MAX_DESC = 2000;
+  if (description.length > MAX_DESC) {
+    description = description.slice(0, MAX_DESC) + '... (truncated)';
+  }
+
+  const priority = mapJiraPriority(fields.priority?.name);
+  const assignee = fields.assignee?.displayName || null;
+
+  return {
+    id: key,
+    title: fields.summary || key,
+    description,
+    status: 'dispatched',
+    jiraKey: key,
+    jiraUrl,
+    source: 'jira',
+    sourceType: 'jira_mention',
+    priority,
+    assignee,
+    depends: [],
+    history: [
+      { ts: new Date().toISOString(), status: 'created', by: 'jira-mention' },
+      { ts: new Date().toISOString(), status: 'dispatched', by: 'jira-mention' },
+    ],
+  };
+}
+
+// ---------------------------------------------------------------------------
 // Field change detection (issue #51 — AC/DoD sync)
 // ---------------------------------------------------------------------------
 
@@ -271,24 +447,44 @@ function verifyWebhookToken(url) {
   }
 }
 
+/**
+ * verifyHmacSignature(rawBody, signatureHeader, secret)
+ *
+ * Verifies Jira webhook HMAC-SHA256 signature (for servers that support it).
+ * @param {string} rawBody — raw request body string
+ * @param {string|undefined} signatureHeader — X-Hub-Signature-256 or custom header value
+ * @param {string|null} secret — webhook secret (null = skip verification)
+ * @returns {boolean}
+ */
+function verifyHmacSignature(rawBody, signatureHeader, secret) {
+  if (!secret) return true;
+  if (!signatureHeader) return false;
+
+  const expected = 'sha256=' + crypto.createHmac('sha256', secret)
+    .update(rawBody)
+    .digest('hex');
+
+  const a = Buffer.from(signatureHeader);
+  const b = Buffer.from(expected);
+  if (a.length !== b.length) return false;
+  return crypto.timingSafeEqual(a, b);
+}
+
 // ---------------------------------------------------------------------------
 // Inbound: handle Jira webhook
 // ---------------------------------------------------------------------------
 
 /**
- * handleWebhook(board, payload, url)
+ * handleWebhook(board, payload)
+ *
+ * Auth is handled by the route layer before calling this function.
  *
  * @param {object} board  — current board state
  * @param {object} payload — Jira webhook JSON body
- * @param {string} url    — request URL (for token verification)
  * @returns {{ action, task?, karviStatus?, error? }}
  */
-function handleWebhook(board, payload, url) {
-  // 1. Verify token
-  if (!verifyWebhookToken(url)) {
-    return { action: 'rejected', error: 'Invalid webhook token' };
-  }
-
+function handleWebhook(board, payload) {
+  // Auth is handled by the route layer (HMAC / URL token) before calling this.
   const config = getConfig(board);
   if (!config?.enabled) {
     return { action: 'skipped', error: 'Jira integration disabled' };
@@ -572,6 +768,7 @@ module.exports = {
   getConfig,
   isEnabled,
   handleWebhook,
+  handleMentionWebhook,
   notifyJira,
   testConnection,
   mapJiraToKarvi,
@@ -579,11 +776,14 @@ module.exports = {
   // exposed for testing
   jiraRequest,
   verifyWebhookToken,
+  verifyHmacSignature,
   adfToPlainText,
   mapJiraPriority,
   buildTaskFromIssue,
+  buildTaskFromMention,
   detectFieldChanges,
   computeChangeHash,
+  parseMentionCommand,
 };
 
 // ---------------------------------------------------------------------------
@@ -672,7 +872,7 @@ if (require.main === module) {
         fields: { summary: 'New feature', priority: { name: 'Medium' } },
       },
     };
-    const result = handleWebhook(board, payload, 'http://localhost/api/webhooks/jira');
+    const result = handleWebhook(board, payload);
     if (result.action !== 'create_task') throw new Error(`action: ${result.action}`);
     if (result.task.id !== 'PROJ-1') throw new Error(`task.id: ${result.task.id}`);
     if (result.issueKey !== 'PROJ-1') throw new Error(`issueKey: ${result.issueKey}`);
@@ -692,7 +892,7 @@ if (require.main === module) {
         fields: { summary: 'Duplicate' },
       },
     };
-    const result = handleWebhook(board, payload, 'http://localhost/api/webhooks/jira');
+    const result = handleWebhook(board, payload);
     if (result.action !== 'skipped') throw new Error(`action: ${result.action}`);
     if (!result.error.includes('already exists')) throw new Error(`error: ${result.error}`);
     ok('handleWebhook: dedup → skipped');
@@ -709,7 +909,7 @@ if (require.main === module) {
       issue: { key: 'REG-1' },
       changelog: { items: [{ field: 'status', toString: 'Done' }] },
     };
-    const result = handleWebhook(board, payload, 'http://localhost/api/webhooks/jira');
+    const result = handleWebhook(board, payload);
     if (result.action !== 'status_change') throw new Error(`action: ${result.action}`);
     if (result.karviStatus !== 'completed') throw new Error(`karviStatus: ${result.karviStatus}`);
     ok('handleWebhook: issue_updated regression → status_change');
@@ -772,7 +972,7 @@ if (require.main === module) {
         ],
       },
     };
-    const result = handleWebhook(board, payload, 'http://localhost/api/webhooks/jira');
+    const result = handleWebhook(board, payload);
     if (result.action !== 'fields_updated') throw new Error(`action: ${result.action}`);
     if (result.changes.length !== 2) throw new Error(`changes: ${result.changes.length}`);
     if (result.updatedFields.title !== 'New Title') throw new Error(`title: ${result.updatedFields.title}`);
@@ -790,11 +990,11 @@ if (require.main === module) {
       issue: { key: 'DUP-1', fields: { summary: 'New' } },
       changelog: { items: [{ field: 'summary', fromString: 'Title', toString: 'New' }] },
     };
-    const r1 = handleWebhook(board, payload, 'http://localhost/api/webhooks/jira');
+    const r1 = handleWebhook(board, payload);
     if (r1.action !== 'fields_updated') throw new Error(`first call: ${r1.action}`);
     // Simulate applying the hash
     board.taskPlan.tasks[0]._lastChangeHash = r1.changeHash;
-    const r2 = handleWebhook(board, payload, 'http://localhost/api/webhooks/jira');
+    const r2 = handleWebhook(board, payload);
     if (r2.action !== 'skipped') throw new Error(`second call: ${r2.action}`);
     ok('handleWebhook: dedup via change hash');
   } catch (e) { fail('handleWebhook: dedup via change hash', e.message); }
@@ -813,10 +1013,135 @@ if (require.main === module) {
         { field: 'Sprint', fromString: 'Sprint 1', toString: 'Sprint 2' },
       ]},
     };
-    const result = handleWebhook(board, payload, 'http://localhost/api/webhooks/jira');
+    const result = handleWebhook(board, payload);
     if (result.action !== 'skipped') throw new Error(`action: ${result.action}`);
     ok('handleWebhook: ignores non-substantive fields');
   } catch (e) { fail('handleWebhook: ignores non-substantive', e.message); }
+
+  // --- verifyHmacSignature ---
+  try {
+    const secret = 'test-secret';
+    const body = '{"webhookEvent":"comment_created"}';
+    const sig = 'sha256=' + crypto.createHmac('sha256', secret).update(body).digest('hex');
+    if (!verifyHmacSignature(body, sig, secret)) throw new Error('valid HMAC should pass');
+    if (verifyHmacSignature(body, 'sha256=wrong', secret)) throw new Error('invalid HMAC should fail');
+    if (verifyHmacSignature(body, undefined, secret)) throw new Error('missing header should fail');
+    if (!verifyHmacSignature(body, undefined, null)) throw new Error('no secret should pass');
+    ok('verifyHmacSignature: all cases');
+  } catch (e) { fail('verifyHmacSignature', e.message); }
+
+  // --- parseMentionCommand ---
+  try {
+    const r1 = parseMentionCommand('@karvi fix this bug');
+    if (!r1.mentioned || r1.command !== 'fix' || r1.args !== 'this bug') throw new Error('fix command failed');
+    const r2 = parseMentionCommand('@karvi implement');
+    if (!r2.mentioned || r2.command !== 'implement' || r2.args !== '') throw new Error('implement command failed');
+    const r3 = parseMentionCommand('@karvi status');
+    if (!r3.mentioned || r3.command !== 'status') throw new Error('status command failed');
+    const r4 = parseMentionCommand('@karvi');
+    if (!r4.mentioned || r4.command !== 'implement') throw new Error('bare @karvi should default to implement');
+    const r5 = parseMentionCommand('no mention here');
+    if (r5.mentioned) throw new Error('no mention should return false');
+    const r6 = parseMentionCommand('@karvi do something custom');
+    if (!r6.mentioned || r6.command !== 'implement' || r6.args !== 'do something custom') throw new Error('unknown command should be implement with args');
+    ok('parseMentionCommand: all cases');
+  } catch (e) { fail('parseMentionCommand', e.message); }
+
+  // --- handleMentionWebhook: comment_created with @karvi → create_task ---
+  try {
+    process.env.JIRA_HOST = 'test.atlassian.net';
+    const board = {
+      integrations: { jira: { enabled: true } },
+      taskPlan: { tasks: [] },
+    };
+    const payload = {
+      webhookEvent: 'comment_created',
+      comment: { body: '@karvi fix the login bug' },
+      issue: {
+        key: 'MENTION-1',
+        fields: { summary: 'Login issue', priority: { name: 'High' } },
+      },
+    };
+    const result = handleMentionWebhook(board, payload, { enabled: true });
+    if (result.action !== 'create_task') throw new Error(`action: ${result.action}`);
+    if (result.task.id !== 'MENTION-1') throw new Error(`task.id: ${result.task.id}`);
+    if (result.task.status !== 'dispatched') throw new Error(`task.status should be dispatched: ${result.task.status}`);
+    if (result.command !== 'fix') throw new Error(`command: ${result.command}`);
+    if (result.task.sourceType !== 'jira_mention') throw new Error(`sourceType: ${result.task.sourceType}`);
+    ok('handleMentionWebhook: @karvi fix → create_task');
+    delete process.env.JIRA_HOST;
+  } catch (e) { fail('handleMentionWebhook: @karvi fix', e.message); delete process.env.JIRA_HOST; }
+
+  // --- handleMentionWebhook: no mention → skipped ---
+  try {
+    const board = { integrations: { jira: { enabled: true } }, taskPlan: { tasks: [] } };
+    const payload = {
+      webhookEvent: 'comment_created',
+      comment: { body: 'just a regular comment' },
+      issue: { key: 'MENTION-2', fields: { summary: 'Test' } },
+    };
+    const result = handleMentionWebhook(board, payload, { enabled: true });
+    if (result.action !== 'skipped') throw new Error(`action: ${result.action}`);
+    if (!result.error.includes('No @karvi mention')) throw new Error(`error: ${result.error}`);
+    ok('handleMentionWebhook: no mention → skipped');
+  } catch (e) { fail('handleMentionWebhook: no mention', e.message); }
+
+  // --- handleMentionWebhook: @karvi status → status_reply ---
+  try {
+    const existing = { id: 'MENTION-3', jiraKey: 'MENTION-3', status: 'in_progress' };
+    const board = { integrations: { jira: { enabled: true } }, taskPlan: { tasks: [existing] } };
+    const payload = {
+      webhookEvent: 'comment_created',
+      comment: { body: '@karvi status' },
+      issue: { key: 'MENTION-3', fields: { summary: 'Test' } },
+    };
+    const result = handleMentionWebhook(board, payload, { enabled: true });
+    if (result.action !== 'status_reply') throw new Error(`action: ${result.action}`);
+    if (result.existingTask.id !== 'MENTION-3') throw new Error(`existingTask.id: ${result.existingTask?.id}`);
+    ok('handleMentionWebhook: @karvi status → status_reply');
+  } catch (e) { fail('handleMentionWebhook: @karvi status', e.message); }
+
+  // --- handleMentionWebhook: duplicate → already_exists ---
+  try {
+    const existing = { id: 'MENTION-4', jiraKey: 'MENTION-4', status: 'in_progress' };
+    const board = { integrations: { jira: { enabled: true } }, taskPlan: { tasks: [existing] } };
+    const payload = {
+      webhookEvent: 'comment_created',
+      comment: { body: '@karvi fix this' },
+      issue: { key: 'MENTION-4', fields: { summary: 'Test' } },
+    };
+    const result = handleMentionWebhook(board, payload, { enabled: true });
+    if (result.action !== 'already_exists') throw new Error(`action: ${result.action}`);
+    if (result.existingTask.id !== 'MENTION-4') throw new Error(`existingTask.id: ${result.existingTask?.id}`);
+    ok('handleMentionWebhook: duplicate → already_exists');
+  } catch (e) { fail('handleMentionWebhook: duplicate', e.message); }
+
+  // --- handleMentionWebhook: disabled → skipped ---
+  try {
+    const board = { integrations: { jira: { enabled: false } }, taskPlan: { tasks: [] } };
+    const payload = {
+      webhookEvent: 'comment_created',
+      comment: { body: '@karvi fix' },
+      issue: { key: 'MENTION-5', fields: {} },
+    };
+    const result = handleMentionWebhook(board, payload, { enabled: false });
+    if (result.action !== 'skipped') throw new Error(`action: ${result.action}`);
+    ok('handleMentionWebhook: disabled → skipped');
+  } catch (e) { fail('handleMentionWebhook: disabled', e.message); }
+
+  // --- handleMentionWebhook: non-comment event → skipped ---
+  try {
+    const board = { integrations: { jira: { enabled: true } }, taskPlan: { tasks: [] } };
+    const payload = {
+      webhookEvent: 'jira:issue_created',
+      comment: { body: '@karvi fix' },
+      issue: { key: 'MENTION-6', fields: {} },
+    };
+    const result = handleMentionWebhook(board, payload, { enabled: true });
+    if (result.action !== 'skipped') throw new Error(`action: ${result.action}`);
+    if (!result.error.includes('Not a comment_created')) throw new Error(`error: ${result.error}`);
+    ok('handleMentionWebhook: non-comment event → skipped');
+  } catch (e) { fail('handleMentionWebhook: non-comment event', e.message); }
 
   console.log(`\n  ${passed} passed, ${failed} failed`);
   process.exit(failed > 0 ? 1 : 0);
