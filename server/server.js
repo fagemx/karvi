@@ -18,6 +18,7 @@ const push = require('./push');
 const { createScheduler } = require('./village/village-scheduler');
 const githubApi = require('./github-api');
 const usage = require('./usage');
+const { createServiceManager } = require('./service-manager');
 
 const vault = require('./vault').createVault({ vaultDir: path.join(__dirname, 'vaults') });
 
@@ -193,6 +194,11 @@ const server = bb.createServer(ctx, (req, res, helpers) => {
     if (result !== false) return;
   }
 
+  // GET /api/services/status — background service health
+  if (req.method === 'GET' && req.url === '/api/services/status') {
+    return json(res, 200, serviceManager.status());
+  }
+
   // POST /api/shutdown — graceful shutdown (critical for Windows where SIGTERM kills immediately)
   if (req.method === 'POST' && req.url === '/api/shutdown') {
     // Admin-only: shutdown requires highest privilege
@@ -267,9 +273,14 @@ if (migrationResult.dirty) {
   writeBoard(initBoard);
 }
 
-// --- Retry poller: re-dispatch steps stuck in queued with past scheduled_at ---
+// --- Service Manager: 統一管理所有 background services ---
+const serviceManager = createServiceManager();
+deps.serviceManager = serviceManager;
+
+// 1. Retry poller: re-dispatch steps stuck in queued with past scheduled_at
 const RETRY_POLL_MS = 10_000;
-const retryPoller = setInterval(() => {
+let retryPollerTimer = null;
+function retryPollerTick() {
   try {
     const board = readBoard();
     const now = new Date().toISOString();
@@ -334,14 +345,20 @@ const retryPoller = setInterval(() => {
   } catch (err) {
     console.error('[retry-poller] error:', err.message);
   }
-}, RETRY_POLL_MS);
+}
+serviceManager.register('retry-poller', {
+  start() { retryPollerTimer = setInterval(retryPollerTick, RETRY_POLL_MS); },
+  stop() { clearInterval(retryPollerTimer); retryPollerTimer = null; },
+  healthCheck() { return retryPollerTimer !== null; },
+});
 
-// --- TTL cleanup: auto-remove stale terminal tasks ---
+// 2. TTL cleanup: auto-remove stale terminal tasks
 const CLEANUP_POLL_MS = 60_000;
 const TTL_CANCELLED_MS = 1 * 3600_000;       // 1 hour
 const TTL_BLOCKED_DEAD_MS = 6 * 3600_000;    // 6 hours
 const TTL_APPROVED_MS = 24 * 3600_000;        // 24 hours
-const cleanupPoller = setInterval(() => {
+let cleanupPollerTimer = null;
+function cleanupPollerTick() {
   try {
     const board = readBoard();
     const tasks = board.taskPlan?.tasks || [];
@@ -398,46 +415,52 @@ const cleanupPoller = setInterval(() => {
   } catch (err) {
     console.error('[cleanup] error:', err.message);
   }
-}, CLEANUP_POLL_MS);
-
-// --- Telemetry init ---
-let telemetryHandle;
-try {
-  telemetryHandle = telemetry.init({
-    dataDir: DATA_DIR,
-    readBoard,
-  });
-} catch (err) {
-  console.warn(`[telemetry] init failed, continuing without telemetry: ${err.message}`);
 }
+serviceManager.register('cleanup-poller', {
+  start() { cleanupPollerTimer = setInterval(cleanupPollerTick, CLEANUP_POLL_MS); },
+  stop() { clearInterval(cleanupPollerTimer); cleanupPollerTimer = null; },
+  healthCheck() { return cleanupPollerTimer !== null; },
+});
 
-// --- Usage tracking init ---
-let usageHandle;
-try {
-  usageHandle = usage.init({
-    dataDir: DATA_DIR,
-    broadcastSSE,
-    readBoard,
-  });
-  // SSE connection tracking callback
-  ctx.onSSEDisconnect = ({ minutes }) => {
-    usage.record('default', 'sse.connect', { sessionMinutes: minutes });
-  };
-} catch (err) {
-  console.warn(`[usage] init failed, continuing without usage tracking: ${err.message}`);
-}
+// 3. Telemetry
+let telemetryHandle = null;
+serviceManager.register('telemetry', {
+  start() {
+    telemetryHandle = telemetry.init({ dataDir: DATA_DIR, readBoard });
+  },
+  stop() { telemetryHandle?.stop(); },
+  healthCheck() { return telemetryHandle && !telemetryHandle.disabled; },
+});
 
-// --- Village Scheduler (Cadence Engine) ---
+// 4. Usage tracking
+let usageHandle = null;
+serviceManager.register('usage-tracking', {
+  start() {
+    usageHandle = usage.init({ dataDir: DATA_DIR, broadcastSSE, readBoard });
+    ctx.onSSEDisconnect = ({ minutes }) => {
+      usage.record('default', 'sse.connect', { sessionMinutes: minutes });
+    };
+  },
+  stop() { usageHandle?.stop(); },
+  healthCheck() { return usageHandle !== null; },
+});
+
+// 5. Village Scheduler (Cadence Engine)
 let villageScheduler = null;
-try {
-  villageScheduler = createScheduler({
-    helpers: routeHelpers,
-    tryAutoDispatch: (taskId) => deps.tryAutoDispatch && deps.tryAutoDispatch(taskId),
-  });
-  villageScheduler.start();
-} catch (err) {
-  console.warn(`[village-scheduler] init failed, continuing without scheduler: ${err.message}`);
-}
+serviceManager.register('village-scheduler', {
+  start() {
+    villageScheduler = createScheduler({
+      helpers: routeHelpers,
+      tryAutoDispatch: (taskId) => deps.tryAutoDispatch && deps.tryAutoDispatch(taskId),
+    });
+    villageScheduler.start();
+  },
+  stop() { villageScheduler?.stop(); },
+  healthCheck() { return villageScheduler !== null; },
+});
+
+// --- Start all background services ---
+serviceManager.startAll();
 
 // --- Graceful Shutdown with Request Draining ---
 let inFlightRequests = 0;
@@ -445,11 +468,7 @@ const DRAIN_TIMEOUT_MS = 30000;
 
 function gracefulShutdown() {
   console.log('[server] shutting down...');
-  clearInterval(retryPoller);
-  clearInterval(cleanupPoller);
-  villageScheduler?.stop();
-  telemetryHandle?.stop();
-  usageHandle?.stop();
+  serviceManager.stopAll();
 
   if (inFlightRequests === 0) {
     server.close(() => process.exit(0));
