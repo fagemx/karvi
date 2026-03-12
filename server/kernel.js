@@ -76,8 +76,9 @@ function createKernel(deps) {
 
     // Initialize budget tracking on first kernel interaction
     if (!task.budget) {
-      task.budget = { limits: { ...routeEngine.BUDGET_DEFAULTS }, used: { llm_calls: 0, tokens: 0, wall_clock_ms: 0, steps: 0 } };
+      task.budget = { limits: { ...routeEngine.BUDGET_DEFAULTS }, used: { llm_calls: 0, tokens: 0, wall_clock_ms: 0, steps: 0, cost: 0 } };
     }
+    if (task.budget.used.cost === undefined) task.budget.used.cost = 0;
     task.budget.used.steps = (task.budget.used.steps || 0) + 1;
 
     // Build agent output from step + artifact
@@ -99,6 +100,9 @@ function createKernel(deps) {
     task.budget.used.llm_calls = (task.budget.used.llm_calls || 0) + 1;
     if (output?.duration_ms) {
       task.budget.used.wall_clock_ms = (task.budget.used.wall_clock_ms || 0) + output.duration_ms;
+    }
+    if (output?.cost) {
+      task.budget.used.cost = (task.budget.used.cost || 0) + output.cost;
     }
 
     // Route

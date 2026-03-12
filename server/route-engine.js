@@ -88,6 +88,12 @@ function isBudgetExceeded(budget) {
   );
 }
 
+function isCostBudgetExceeded(budget, controls) {
+  if (!controls?.budget_per_task) return false;
+  const usedCost = budget?.used?.cost || 0;
+  return usedCost >= controls.budget_per_task;
+}
+
 // --- Review verdict classification ---
 
 // Max review→fix cycles before accepting as-is
@@ -109,7 +115,7 @@ function needsRevision(agentOutput) {
 // --- Core routing ---
 
 function decideNext(agentOutput, runState) {
-  const { task, steps } = runState;
+  const { task, steps, controls } = runState;
   const fromStep = steps.find(s => s.step_id === agentOutput.step_id);
   const base = {
     from_step_id: agentOutput.step_id,
@@ -119,6 +125,12 @@ function decideNext(agentOutput, runState) {
   // 1. Budget exceeded → dead_letter
   if (isBudgetExceeded(task.budget)) {
     return { ...base, action: 'dead_letter', rule: 'budget_exceeded', confidence: 1.0,
+      next_step: null, retry: null, human_review: null };
+  }
+
+  // 1b. Cost budget exceeded → dead_letter (skip retry to save costs)
+  if (isCostBudgetExceeded(task.budget, controls)) {
+    return { ...base, action: 'dead_letter', rule: 'cost_budget_exceeded', confidence: 1.0,
       next_step: null, retry: null, human_review: null };
   }
 
@@ -213,6 +225,7 @@ module.exports = {
   MAX_REVISION_CYCLES,
   classifyFailure,
   isBudgetExceeded,
+  isCostBudgetExceeded,
   needsRevision,
   decideNext,
 };
