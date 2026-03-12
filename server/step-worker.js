@@ -20,7 +20,28 @@ const { retryOnConflict } = require('./helpers/retry');
 const LOCK_GRACE_MS = 30_000; // 30s grace on top of step timeout
 const HEARTBEAT_DEBOUNCE_MS = 10_000; // Debounce heartbeat writes to 10s interval
 
-// --- Webhook event emission (#333) — Event Envelope v1 contract ---
+// --- Webhook event emission (#333/#443) — Thyra-aligned Event Envelope ---
+
+// Map internal signal types to Thyra event_type values
+function mapEventType(type) {
+  if (type === 'step_succeeded' || type === 'step_failed' || type === 'step_dead') return 'step_completed';
+  return type; // step_started, step_cancelled pass through
+}
+
+// Map internal step state to Thyra state values
+function mapState(state) {
+  if (state === 'succeeded') return 'done';
+  if (state === 'dead') return 'failed';
+  return state; // 'failed', 'cancelled' 保持不變
+}
+
+// Compute 0-based step index from task's steps array
+function computeStepIndex(board, taskId, stepId) {
+  const task = (board.taskPlan?.tasks || []).find(t => t.id === taskId);
+  const idx = (task?.steps || []).findIndex(s => s.step_id === stepId);
+  return idx >= 0 ? idx : 0;
+}
+
 function emitWebhookEvent(board, eventType, payload) {
   const url = mgmt.getControls(board).event_webhook_url;
   if (!url) return;
@@ -34,15 +55,22 @@ function emitWebhookEvent(board, eventType, payload) {
   }
 
   const now = new Date().toISOString();
+  // 巢狀 payload，snake_case 欄位名，符合 Thyra KarviWebhookPayloadSchema
+  const nestedPayload = {
+    task_id: payload.taskId,
+    step_id: payload.stepId,
+    step_index: computeStepIndex(board, payload.taskId, payload.stepId),
+  };
+  if (payload.state) nestedPayload.state = mapState(payload.state);
+  if (payload.stepType) nestedPayload.step_type = payload.stepType;
+  if (payload.error) nestedPayload.error = payload.error;
+
   const envelope = {
-    version: 'karvi.event.v1',
+    event_type: mapEventType(eventType),
     event_id: `evt_${crypto.randomUUID()}`,
-    event_type: eventType,
-    occurred_at: now,
-    // backward compat fields
-    event: eventType,
-    ts: now,
-    ...payload,
+    timestamp: now,
+    version: 'karvi.event.v1',
+    payload: nestedPayload,
   };
   const body = JSON.stringify(envelope);
   const mod = parsed.protocol === 'https:' ? require('https') : require('http');
