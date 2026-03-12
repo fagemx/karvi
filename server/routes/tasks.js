@@ -25,7 +25,7 @@ const fs = require('fs');
 const path = require('path');
 const bb = require('../blackboard-server');
 const { json } = bb;
-const { participantById, pushMessage, getUserIdForTask, requireRole, createSignal, getAttribution } = require('./_shared');
+const { participantById, pushMessage, getUserIdForTask, requireRole, createSignal } = require('./_shared');
 const routeEngine = require('../route-engine');
 const worktreeHelper = require('../worktree');
 const { resolveRepoRoot, validateRepoRoot } = require('../repo-resolver');
@@ -371,11 +371,10 @@ function dispatchTask(task, board, deps, helpers, opts = {}) {
 
 
     mgmt.ensureEvolutionFields(board);
-    board.signals.push({
-      id: helpers.uid('sig'), ts: helpers.nowIso(), by: source,
-      type: 'steps_created', content: `${taskId} steps created (${task.steps.length})`,
+    board.signals.push(createSignal({
+      by: source, type: 'steps_created', content: `${taskId} steps created (${task.steps.length})`,
       refs: [taskId], data: { taskId, runId, count: task.steps.length },
-    });
+    }, req, helpers));
     mgmt.trimSignals(board, helpers.signalArchivePath);
 
     const firstStep = task.steps[0];
@@ -1346,11 +1345,10 @@ module.exports = function tasksRoutes(req, res, helpers, deps) {
         if (!task) return json(res, 404, { error: `Task ${taskId} not found` });
         task.steps = mgmt.generateStepsForTask(task, runId, pipeline, board);
         mgmt.ensureEvolutionFields(board);
-        board.signals.push({
-          id: helpers.uid('sig'), ts: helpers.nowIso(), by: 'kernel',
-          type: 'steps_created', content: `${taskId} steps created (${task.steps.length})`,
+        board.signals.push(createSignal({
+          by: 'kernel', type: 'steps_created', content: `${taskId} steps created (${task.steps.length})`,
           refs: [taskId], data: { taskId, runId, count: task.steps.length },
-        });
+        }, req, helpers));
         mgmt.trimSignals(board, helpers.signalArchivePath);
         helpers.writeBoard(board);
         helpers.appendLog({ ts: helpers.nowIso(), event: 'steps_created', taskId, runId, count: task.steps.length });
@@ -1407,13 +1405,12 @@ module.exports = function tasksRoutes(req, res, helpers, deps) {
           : (step.state === 'queued' && oldState === 'running') ? 'step_failed'
           : `step_${step.state}`;
         mgmt.ensureEvolutionFields(board);
-        board.signals.push({
-          id: helpers.uid('sig'), ts: helpers.nowIso(), by: 'kernel',
-          type: signalType,
+        board.signals.push(createSignal({
+          by: 'kernel', type: signalType,
           content: `${taskId} step ${stepId} ${oldState} → ${step.state}`,
           refs: [taskId],
           data: { taskId, stepId, from: oldState, to: step.state, attempt: step.attempt },
-        });
+        }, req, helpers));
         mgmt.trimSignals(board, helpers.signalArchivePath);
 
         helpers.writeBoard(board);
@@ -1462,13 +1459,12 @@ module.exports = function tasksRoutes(req, res, helpers, deps) {
 
     // Emit signal
     mgmt.ensureEvolutionFields(board);
-    board.signals.push({
-      id: helpers.uid('sig'), ts: helpers.nowIso(), by: 'user',
-      type: 'step_cancelling',
+    board.signals.push(createSignal({
+      by: 'user', type: 'step_cancelling',
       content: `${taskId} step ${stepId} running → cancelling (kill requested)`,
       refs: [taskId],
       data: { taskId, stepId, from: 'running', to: 'cancelling' },
-    });
+    }, req, helpers));
     mgmt.trimSignals(board, helpers.signalArchivePath);
 
     helpers.writeBoard(board);
@@ -1524,13 +1520,12 @@ module.exports = function tasksRoutes(req, res, helpers, deps) {
 
     // Emit signal
     mgmt.ensureEvolutionFields(board);
-    board.signals.push({
-      id: helpers.uid('sig'), ts: helpers.nowIso(), by: 'user',
-      type: 'step_reset',
+    board.signals.push(createSignal({
+      by: 'user', type: 'step_reset',
       content: `${taskId} step ${stepId} ${fromState} → queued (reset)`,
       refs: [taskId],
       data: { taskId, stepId, from: fromState, to: 'queued', taskUnblocked },
-    });
+    }, req, helpers));
     mgmt.trimSignals(board, helpers.signalArchivePath);
 
     helpers.writeBoard(board);
@@ -1964,11 +1959,10 @@ module.exports = function tasksRoutes(req, res, helpers, deps) {
         if (!board.pipelineTemplates) board.pipelineTemplates = {};
         board.pipelineTemplates[name] = normalized;
         mgmt.ensureEvolutionFields(board);
-        board.signals.push({
-          id: helpers.uid('sig'), ts: helpers.nowIso(), by: 'api',
+        board.signals.push(createSignal({
           type: 'pipeline_template_updated', content: `Template "${name}" updated (${normalized.length} steps)`,
           refs: [], data: { name, count: normalized.length },
-        });
+        }, req, helpers));
         mgmt.trimSignals(board, helpers.signalArchivePath);
         helpers.writeBoard(board);
         json(res, 200, { ok: true, name, pipeline: normalized });
@@ -1988,11 +1982,10 @@ module.exports = function tasksRoutes(req, res, helpers, deps) {
     }
     delete board.pipelineTemplates[name];
     mgmt.ensureEvolutionFields(board);
-    board.signals.push({
-      id: helpers.uid('sig'), ts: helpers.nowIso(), by: 'api',
+    board.signals.push(createSignal({
       type: 'pipeline_template_deleted', content: `Template "${name}" deleted`,
       refs: [], data: { name },
-    });
+    }, req, helpers));
     mgmt.trimSignals(board, helpers.signalArchivePath);
     helpers.writeBoard(board);
     json(res, 200, { ok: true, name, deleted: true });
@@ -2089,15 +2082,12 @@ module.exports = function tasksRoutes(req, res, helpers, deps) {
         }
 
         mgmt.ensureEvolutionFields(board);
-        board.signals.push({
-          id: helpers.uid('sig'),
-          ts: helpers.nowIso(),
-          by: 'api',
+        board.signals.push(createSignal({
           type: 'task_rolled_back',
           content: `${task.id} ${oldStatus} → pending (rollback)`,
           refs: [task.id],
           data: { taskId: task.id, from: oldStatus, to: 'pending', reason: reason || null },
-        });
+        }, req, helpers));
         mgmt.trimSignals(board, helpers.signalArchivePath);
 
         helpers.writeBoard(board);

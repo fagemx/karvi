@@ -10,6 +10,7 @@
 const fs = require('fs');
 const bb = require('../blackboard-server');
 const { json } = bb;
+const { createSignal } = require('./_shared');
 
 module.exports = function evolutionRoutes(req, res, helpers, deps) {
   const { mgmt } = deps;
@@ -182,15 +183,12 @@ module.exports = function evolutionRoutes(req, res, helpers, deps) {
       insight.appliedAt = helpers.nowIso();
 
       // Write signal for the apply
-      board.signals.push({
-        id: helpers.uid('sig'),
-        ts: helpers.nowIso(),
-        by: 'gate',
-        type: 'insight_applied',
+      board.signals.push(createSignal({
+        by: 'gate', type: 'insight_applied',
         content: `Applied insight ${insight.id}: ${insight.judgement}`,
         refs: [insight.id],
         data: { insightId: insight.id, actionType: sa.type, snapshot: insight.snapshot || null },
-      });
+      }, req, helpers));
       mgmt.trimSignals(board, helpers.signalArchivePath);
 
       helpers.writeBoard(board);

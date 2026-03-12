@@ -23,6 +23,7 @@ const bb = require('../blackboard-server');
 const { json } = bb;
 const worktreeHelper = require('../worktree');
 const { resolveRepoRoot } = require('../repo-resolver');
+const { createSignal } = require('./_shared');
 const path = require('path');
 
 module.exports = function githubRoutes(req, res, helpers, deps) {
@@ -81,9 +82,8 @@ module.exports = function githubRoutes(req, res, helpers, deps) {
               // Emit signal
               const signalType = result.outcome === 'merged' ? 'pr_merged' : 'pr_closed';
               mgmt.ensureEvolutionFields(board);
-              board.signals.push({
-                id: helpers.uid('sig'), ts: helpers.nowIso(), by: 'github-webhook',
-                type: signalType,
+              board.signals.push(createSignal({
+                by: 'github-webhook', type: signalType,
                 content: `${result.taskId} PR #${result.prNumber} ${result.outcome}${result.mergedBy ? ` by ${result.mergedBy}` : ''}`,
                 refs: [result.taskId],
                 data: {
@@ -94,7 +94,7 @@ module.exports = function githubRoutes(req, res, helpers, deps) {
                   closedBy: result.closedBy || null,
                   mergeCommitSha: result.mergeCommitSha || null,
                 },
-              });
+              }, req, helpers));
               mgmt.trimSignals(board, helpers.signalArchivePath);
 
               helpers.writeBoard(board);
@@ -160,13 +160,12 @@ module.exports = function githubRoutes(req, res, helpers, deps) {
                   if (allDone) {
                     project.status = 'done';
                     project.completedAt = helpers.nowIso();
-                    board.signals.push({
-                      id: helpers.uid('sig'), ts: helpers.nowIso(),
+                    board.signals.push(createSignal({
                       by: 'project-orchestrator', type: 'project_done',
                       content: `Project "${project.title}" completed (${projectTasks.length} tasks)`,
                       refs: project.taskIds,
                       data: { projectId: project.id },
-                    });
+                    }, req, helpers));
                     helpers.writeBoard(board);
                   }
                 }
