@@ -101,6 +101,11 @@ async function onTaskDone(board, task, step, helpers, deps) {
         const retroSignals = retro.generateRetroSignals(board, cycleId, helpers);
         board.signals.push(...retroSignals);
 
+        const retroLessons = retro.generateRetroLessons(board, cycleId, helpers);
+        if (retroLessons.length > 0) {
+          console.log(`[kernel] retro generated ${retroLessons.length} lessons for cycle ${cycleId}`);
+        }
+
         board.village.currentCycle.phase = 'done';
         board.village.currentCycle.completedAt = helpers.nowIso();
 
