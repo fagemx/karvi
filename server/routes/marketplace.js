@@ -4,9 +4,9 @@
  *
  * Skills are directories in server/skills/ with a manifest.json.
  *
- * GET  /api/marketplace/skills        — list all marketplace skills with metadata
- * GET  /api/marketplace/skills/:name  — get single skill detail
- * POST /api/marketplace/skills/:name/install — install skill to active skills
+ * GET  /api/skills           — list all marketplace skills with metadata
+ * GET  /api/skills/:name     — get single skill detail
+ * POST /api/skills/:name/install — install skill to active skills
  */
 const fs = require('fs');
 const path = require('path');
@@ -188,7 +188,7 @@ function installSkill(skillId, projectRoot) {
 module.exports = function marketplaceRoutes(req, res, helpers, deps) {
   const projectRoot = deps.ctx.dir;
 
-  if (req.method === 'GET' && urlMatch(req.url, '/api/marketplace/skills')) {
+  if (req.method === 'GET' && urlMatch(req.url, '/api/skills')) {
     try {
       const skills = listMarketplaceSkills();
       const installedDir = path.join(projectRoot, '.claude', 'skills');
@@ -205,7 +205,7 @@ module.exports = function marketplaceRoutes(req, res, helpers, deps) {
     }
   }
 
-  const detailMatch = req.method === 'GET' && req.url.match(/^\/api\/marketplace\/skills\/([^/?]+)$/);
+  const detailMatch = req.method === 'GET' && req.url.match(/^\/api\/skills\/([^/?]+)$/);
   if (detailMatch) {
     try {
       const skillId = decodeURIComponent(detailMatch[1]);
@@ -221,7 +221,7 @@ module.exports = function marketplaceRoutes(req, res, helpers, deps) {
     }
   }
 
-  const installMatch = req.method === 'POST' && req.url.match(/^\/api\/marketplace\/skills\/([^/?]+)\/install$/);
+  const installMatch = req.method === 'POST' && req.url.match(/^\/api\/skills\/([^/?]+)\/install$/);
   if (installMatch) {
     if (requireRole(req, res, 'operator')) return;
     try {

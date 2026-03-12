@@ -173,12 +173,12 @@ const routes = [
   postmortemRoute,
   statusRoutes,
   versionRoutes,
+  marketplaceRoutes,
   discoveryRoutes,
   artifactsRoutes,
   logsRoutes,
   eddaRoutes,
   executionsRoutes,
-  marketplaceRoutes,
 ];
 
 const { json } = bb;
