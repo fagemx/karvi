@@ -29,6 +29,7 @@ const { json } = bb;
 const { participantById, pushMessage, getUserIdForTask, requireRole, createSignal } = require('./_shared');
 const routeEngine = require('../route-engine');
 const worktreeHelper = require('../worktree');
+const { runHook } = require('../hook-runner');
 const { resolveRepoRoot, validateRepoRoot } = require('../repo-resolver');
 const { BLOCKER_TYPES, shouldUnblockOnReset } = require('../blocker-types');
 
@@ -323,6 +324,13 @@ function dispatchTask(task, board, deps, helpers, opts = {}) {
         task.worktreeDir = wt.worktreePath;
         task.worktreeBranch = wt.branch;
         console.log(`[dispatchTask:${taskId}] worktree: ${wt.worktreePath}`);
+        // hooks_after_worktree_create — fire-and-forget (dispatchTask is sync)
+        if (ctrl.hooks_after_worktree_create) {
+          runHook('hooks_after_worktree_create', ctrl.hooks_after_worktree_create, wt.worktreePath, {
+            KARVI_TASK_ID: taskId,
+            KARVI_WORKTREE_DIR: wt.worktreePath,
+          }).catch(() => {});
+        }
       } catch (err) {
         _dispatchLocks.delete(taskId);
         console.error(`[dispatchTask:${taskId}] worktree failed: ${err.message}`);
