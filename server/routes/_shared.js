@@ -140,14 +140,14 @@ function requireRole(req, res, minRole) {
  * @returns {object} Signal object ready to push to board.signals
  */
 function createSignal(opts, req, helpers) {
-  const { type, content, refs = [], data = {} } = opts;
+  const { type, content, refs = [], data = {}, by } = opts;
   const actor = req?.karviUser || null;
   const role = req?.karviRole || null;
-  
+
   return {
     id: helpers.uid('sig'),
     ts: helpers.nowIso(),
-    by: actor || 'api',  // Use userId if available, else 'api'
+    by: actor || by || 'api',
     type,
     content,
     refs,

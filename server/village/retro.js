@@ -112,9 +112,13 @@ function generateRetroLessons(board, cycleId, helpers) {
         id: helpers.uid('lesson'),
         ts: now,
         by: 'village-retro',
+        fromInsight: null,
         rule,
+        effect: `success rate ${Math.round(successRate * 100)}% (${completed.length}/${total})`,
         scope: { cycleId },
         status: 'active',
+        validatedAt: null,
+        supersededBy: null,
       });
     }
   }
@@ -128,9 +132,13 @@ function generateRetroLessons(board, cycleId, helpers) {
           id: helpers.uid('lesson'),
           ts: now,
           by: 'village-retro',
+          fromInsight: null,
           rule,
+          effect: `${stats.blocked}/${stats.total} blocked in ${dept}`,
           scope: { cycleId, department: dept },
           status: 'active',
+          validatedAt: null,
+          supersededBy: null,
         });
       }
     }
@@ -145,9 +153,13 @@ function generateRetroLessons(board, cycleId, helpers) {
         id: helpers.uid('lesson'),
         ts: now,
         by: 'village-retro',
+        fromInsight: null,
         rule,
+        effect: `${blocked.length}/${total} blocked`,
         scope: { cycleId },
         status: 'active',
+        validatedAt: null,
+        supersededBy: null,
       });
     }
   }

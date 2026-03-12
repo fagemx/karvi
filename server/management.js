@@ -636,11 +636,32 @@ function matchLessonsForTask(board, task) {
     }
   }
 
+  // Tier 2.5: Department-scoped lessons (village-retro)
+  const taskDept = task.department || null;
+  if (taskDept) {
+    for (const l of allLessons) {
+      if (seen.has(l.id)) continue;
+      if (l.scope?.department === taskDept) {
+        matched.push({ id: l.id, rule: l.rule, relevance: 'department', status: l.status });
+        seen.add(l.id);
+      }
+    }
+  }
+
   // Tier 3: Universal (validated only)
   for (const l of allLessons) {
     if (seen.has(l.id)) continue;
     if (l.status === 'validated') {
       matched.push({ id: l.id, rule: l.rule, relevance: 'universal', status: l.status });
+      seen.add(l.id);
+    }
+  }
+
+  // Tier 4: Cycle-scoped lessons without department (village-retro, active)
+  for (const l of allLessons) {
+    if (seen.has(l.id)) continue;
+    if (l.scope?.cycleId && !l.scope?.department && !l.fromInsight) {
+      matched.push({ id: l.id, rule: l.rule, relevance: 'cycle', status: l.status });
       seen.add(l.id);
     }
   }

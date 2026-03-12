@@ -11,7 +11,7 @@ const fs = require('fs');
 const path = require('path');
 const bb = require('../blackboard-server');
 const { json } = bb;
-const { requireRole } = require('./_shared');
+const { requireRole, createSignal } = require('./_shared');
 
 /**
  * Detect circular dependencies using string task IDs.
@@ -271,13 +271,11 @@ module.exports = function projectsRoutes(req, res, helpers, deps) {
           board.projects.push(project);
 
           mgmt.ensureEvolutionFields(board);
-          board.signals.push({
-            id: helpers.uid('sig'), ts: helpers.nowIso(), by: 'project-orchestrator',
-            type: 'project_created',
+          board.signals.push(createSignal({
+            by: 'project-orchestrator', type: 'project_created',
             content: `Project "${title}" created with ${taskIds.length} tasks`,
-            refs: taskIds,
-            data: { projectId, taskIds },
-          });
+            refs: taskIds, data: { projectId, taskIds },
+          }, req, helpers));
           mgmt.trimSignals(board, helpers.signalArchivePath);
         }
 
