@@ -10,8 +10,7 @@
 const routeEngine = require('./route-engine');
 const { BLOCKER_TYPES } = require('./blocker-types');
 const contextCompiler = require('./context-compiler');
-const planDispatcher = require('./village/plan-dispatcher');
-const cycleWatchdog = require('./village/cycle-watchdog');
+const villageHooks = require('./village-hooks');
 const worktreeHelper = require('./worktree');
 const { resolveRepoRoot } = require('./repo-resolver');
 const path = require('path');
@@ -126,6 +125,9 @@ function createKernel(deps) {
     });
     mgmt.trimSignals(latestBoard, helpers.signalArchivePath);
 
+    // Village hook deps (used by multiple cases)
+    const villageDeps = { push, PUSH_TOKENS_PATH, mgmt };
+
     // Execute decision
     switch (decision.action) {
       case 'next_step': {
@@ -232,27 +234,9 @@ function createKernel(deps) {
           refs: [taskId],
           data: { taskId, stepId, reason: decision.human_review?.reason },
         });
-        // Cycle stall detection: blocked meeting tasks may stall the cycle
-        if (cycleWatchdog.isMeetingTask(taskId)) {
-          const health = cycleWatchdog.checkCycleHealth(latestBoard);
-          if (health.stalled) {
-            cycleWatchdog.closeStalledCycle(latestBoard, helpers, health.reason, health);
-            if (push && PUSH_TOKENS_PATH && latestTask) {
-              push.notifyTaskEvent(PUSH_TOKENS_PATH, latestTask, 'task.blocked')
-                .catch(err => {
-                  console.error(`[kernel] push error for task ${taskId}, event task.blocked:`, err.message);
-                  latestBoard.signals.push({
-                    id: helpers.uid('sig'), ts: helpers.nowIso(), by: 'kernel',
-                    type: 'push_failed',
-                    content: `Push notification failed for ${taskId}: ${err.message}`,
-                    refs: [taskId],
-                    data: { taskId, eventType: 'task.blocked', error: err.message },
-                  });
-                  mgmt.trimSignals(latestBoard, helpers.signalArchivePath);
-                });
-            }
-            return;
-          }
+        // Village: cycle stall detection for meeting tasks
+        if (villageHooks.onTaskBlocked(latestBoard, taskId, latestTask, helpers, villageDeps)) {
+          return;
         }
         helpers.writeBoard(latestBoard);
         // Push notification
@@ -292,29 +276,9 @@ function createKernel(deps) {
           refs: [taskId],
           data: { taskId, stepId, rule: decision.rule },
         });
-        // Cycle stall detection: when a meeting task dies, check if the
-        // entire cycle is now stuck (all tasks exhausted retries).
-        if (cycleWatchdog.isMeetingTask(taskId)) {
-          const health = cycleWatchdog.checkCycleHealth(latestBoard);
-          if (health.stalled) {
-            // closeStalledCycle calls writeBoard internally
-            cycleWatchdog.closeStalledCycle(latestBoard, helpers, health.reason, health);
-            if (push && PUSH_TOKENS_PATH && latestTask) {
-              push.notifyTaskEvent(PUSH_TOKENS_PATH, latestTask, 'task.blocked')
-                .catch(err => {
-                  console.error(`[kernel] push error for task ${taskId}, event task.blocked:`, err.message);
-                  latestBoard.signals.push({
-                    id: helpers.uid('sig'), ts: helpers.nowIso(), by: 'kernel',
-                    type: 'push_failed',
-                    content: `Push notification failed for ${taskId}: ${err.message}`,
-                    refs: [taskId],
-                    data: { taskId, eventType: 'task.blocked', error: err.message },
-                  });
-                  mgmt.trimSignals(latestBoard, helpers.signalArchivePath);
-                });
-            }
-            return;
-          }
+        // Village: cycle stall detection for meeting tasks
+        if (villageHooks.onTaskBlocked(latestBoard, taskId, latestTask, helpers, villageDeps)) {
+          return;
         }
         helpers.writeBoard(latestBoard);
         if (push && PUSH_TOKENS_PATH && latestTask) {
@@ -429,117 +393,16 @@ function createKernel(deps) {
         // Unlock dependent tasks (autoUnlockDependents checks for 'approved')
         const unlocked = mgmt.autoUnlockDependents(latestBoard);
 
-        // Village Plan Dispatcher: when a synthesis task completes,
-        // parse the plan from its artifact and create execution tasks.
-        // Runs server-side (no LLM tokens). Failures are non-blocking.
-        if (latestTask && planDispatcher.isSynthesisTask(latestTask)) {
-          // Check if auto_approve is enabled (default: true)
-          const autoApprove = latestBoard.village?.auto_approve !== false;
-
-          if (autoApprove) {
-            // Current behavior: dispatch immediately
-            // Push: village.plan_ready — chief's plan is available
-            if (push && PUSH_TOKENS_PATH) {
-              const cycleId = latestBoard.village?.currentCycle?.cycleId;
-              push.notifyTaskEvent(PUSH_TOKENS_PATH, null, 'village.plan_ready', { cycleId })
-                .catch(err => {
-                  console.error(`[kernel] village.plan_ready push error:`, err.message);
-                  latestBoard.signals.push({
-                    id: helpers.uid('sig'), ts: helpers.nowIso(), by: 'kernel',
-                    type: 'push_failed',
-                    content: `Push notification failed for village.plan_ready: ${err.message}`,
-                    refs: [],
-                    data: { taskId: null, eventType: 'village.plan_ready', error: err.message },
-                  });
-                  mgmt.trimSignals(latestBoard, helpers.signalArchivePath);
-                });
-            }
-            try {
-              const synthArtifact = artifactStore.readArtifact(
-                step.run_id, stepId, 'output'
-              );
-              const planData = planDispatcher.extractPlanFromArtifact(synthArtifact);
-              if (planData) {
-                await planDispatcher.parsePlanAndDispatch(
-                  latestBoard, planData, helpers, deps, latestTask
-                );
-                // parsePlanAndDispatch calls writeBoard internally,
-                // so we re-read the board for subsequent operations
-              } else {
-                console.warn('[kernel] synthesis task completed but no plan found in artifact');
-              }
-            } catch (err) {
-              console.error('[kernel] plan dispatch failed:', err.message);
-              // Non-blocking — pipeline continues even if dispatch fails
-            }
-          } else {
-            // Human gate: update cycle phase and wait for manual approval
-            if (latestBoard.village?.currentCycle) {
-              latestBoard.village.currentCycle.phase = 'awaiting_approval';
-            }
-            // Push notification: plan ready, needs approval
-            if (push && PUSH_TOKENS_PATH) {
-              push.notifyTaskEvent(PUSH_TOKENS_PATH, null, 'village.plan_ready', {
-                cycleId: latestBoard.village?.currentCycle?.cycleId,
-                needsApproval: true,
-              }).catch(err => {
-                console.error(`[kernel] push error for village.plan_ready (needsApproval):`, err.message);
-                latestBoard.signals.push({
-                  id: helpers.uid('sig'), ts: helpers.nowIso(), by: 'kernel',
-                  type: 'push_failed',
-                  content: `Push notification failed for village.plan_ready (needsApproval): ${err.message}`,
-                  refs: [],
-                  data: { taskId: null, eventType: 'village.plan_ready', error: err.message },
-                });
-                mgmt.trimSignals(latestBoard, helpers.signalArchivePath);
-              });
-            }
-          }
+        // Village: synthesis plan dispatch + cycle completion check
+        // Non-blocking — failures logged but don't stop the pipeline.
+        try {
+          await villageHooks.onTaskDone(latestBoard, latestTask, step, helpers, { artifactStore, push, PUSH_TOKENS_PATH, mgmt, tryAutoDispatch: deps.tryAutoDispatch });
+        } catch (err) {
+          console.error('[kernel] village onTaskDone hook failed:', err.message);
         }
 
-        // Check if all execution tasks for the current village cycle are complete
-        if (latestBoard.village?.currentCycle?.phase === 'execution') {
-          const cycleId = latestBoard.village.currentCycle.cycleId;
-          const execTaskIds = latestBoard.village.currentCycle.executionTaskIds || [];
-          if (execTaskIds.length > 0) {
-            const allDone = execTaskIds.every(id => {
-              const t = (latestBoard.taskPlan?.tasks || []).find(tt => tt.id === id);
-              return t && (t.status === 'approved' || t.status === 'blocked');
-            });
-            if (allDone) {
-              // Generate retro signals
-              const retro = require('./village/retro');
-              const retroSignals = retro.generateRetroSignals(latestBoard, cycleId, helpers);
-              latestBoard.signals.push(...retroSignals);
-
-              // Mark cycle as done
-              latestBoard.village.currentCycle.phase = 'done';
-              latestBoard.village.currentCycle.completedAt = helpers.nowIso();
-
-              // Push notification
-              const completedCount = execTaskIds.filter(id => {
-                const t = (latestBoard.taskPlan?.tasks || []).find(tt => tt.id === id);
-                return t?.status === 'approved';
-              }).length;
-              if (push && PUSH_TOKENS_PATH) {
-                push.notifyTaskEvent(PUSH_TOKENS_PATH, null, 'village.checkin_summary', {
-                  cycleId, completed: completedCount, total: execTaskIds.length,
-                  blocked: execTaskIds.length - completedCount,
-                }).catch(err => {
-                  console.error(`[kernel] retro push error for village.checkin_summary:`, err.message);
-                  latestBoard.signals.push({
-                    id: helpers.uid('sig'), ts: helpers.nowIso(), by: 'kernel',
-                    type: 'push_failed',
-                    content: `Push notification failed for village.checkin_summary: ${err.message}`,
-                    refs: [],
-                    data: { taskId: null, eventType: 'village.checkin_summary', error: err.message },
-                  });
-                  mgmt.trimSignals(latestBoard, helpers.signalArchivePath);
-                });
-              }
-            }
-          }
-        }
+        // Village: proposals_ready push when synthesis task unlocked
+        villageHooks.onTaskUnlocked(latestBoard, unlocked, helpers, { push, PUSH_TOKENS_PATH, mgmt });
 
         mgmt.trimSignals(latestBoard, helpers.signalArchivePath);
 
@@ -558,31 +421,6 @@ function createKernel(deps) {
               });
               mgmt.trimSignals(latestBoard, helpers.signalArchivePath);
             });
-        }
-
-        // Push: village.proposals_ready — when synthesis task unlocks, all proposals are done
-        if (push && PUSH_TOKENS_PATH && unlocked.length > 0) {
-          const allTasks = latestBoard.taskPlan?.tasks || [];
-          for (const uid of unlocked) {
-            const unlockedTask = allTasks.find(t => t.id === uid);
-            if (unlockedTask && planDispatcher.isSynthesisTask(unlockedTask)) {
-              const cycleId = latestBoard.village?.currentCycle?.cycleId;
-              const deptCount = latestBoard.village?.departments?.length || 0;
-              push.notifyTaskEvent(PUSH_TOKENS_PATH, null, 'village.proposals_ready', {
-                cycleId, departmentCount: deptCount,
-              }).catch(err => {
-                console.error(`[kernel] village.proposals_ready push error:`, err.message);
-                latestBoard.signals.push({
-                  id: helpers.uid('sig'), ts: helpers.nowIso(), by: 'kernel',
-                  type: 'push_failed',
-                  content: `Push notification failed for village.proposals_ready: ${err.message}`,
-                  refs: [],
-                  data: { taskId: null, eventType: 'village.proposals_ready', error: err.message },
-                });
-                mgmt.trimSignals(latestBoard, helpers.signalArchivePath);
-              });
-            }
-          }
         }
 
         // Auto-dispatch newly unblocked tasks (deferred to avoid deep recursion)
