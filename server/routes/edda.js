@@ -62,89 +62,79 @@ module.exports = function eddaRoutes(req, res, helpers, deps) {
     let body = '';
     req.on('data', c => (body += c));
     req.on('end', () => {
-      try {
-        const payload = JSON.parse(body || '{}');
-        const patch = payload.patch;
-        const reasoning = String(payload.reasoning || '').trim();
-        const by = String(payload.by || 'edda').trim();
-        const forceRisk = payload.risk;
+      let payload;
+      try { payload = JSON.parse(body || '{}'); }
+      catch { return json(res, 400, { error: 'Invalid JSON' }); }
 
-        const validation = validatePatch(patch, mgmt);
-        if (!validation.valid) {
-          return json(res, 400, { error: validation.error });
-        }
+      const patch = payload.patch;
+      const reasoning = String(payload.reasoning || '').trim();
+      const by = String(payload.by || 'edda').trim();
+      const forceRisk = payload.risk;
 
-        const board = helpers.readBoard();
-        mgmt.ensureEvolutionFields(board);
-        const currentControls = mgmt.getControls(board);
-        const risk = forceRisk || classifyRisk(patch, currentControls);
-
-        if (!['low', 'medium', 'high'].includes(risk)) {
-          return json(res, 400, { error: 'risk must be low, medium, or high' });
-        }
-
-        const judgement = Object.entries(patch)
-          .map(([k, v]) => `${k}=${JSON.stringify(v)}`)
-          .join(', ');
-
-        const insight = {
-          id: helpers.uid('ins'),
-          ts: helpers.nowIso(),
-          by,
-          about: 'controls_adjustment',
-          judgement: `Adjust controls: ${judgement}`,
-          reasoning: reasoning || null,
-          suggestedAction: {
-            type: 'controls_patch',
-            payload: patch,
-          },
-          risk,
-          status: 'pending',
-          snapshot: null,
-          appliedAt: null,
-          verifyAfter: payload.verifyAfter || 3,
-        };
-        if (payload.data && typeof payload.data === 'object') {
-          insight.data = payload.data;
-        }
-
-        board.insights.push(insight);
-        mgmt.autoApplyInsights(board);
-        helpers.writeBoard(board);
-
-        json(res, 201, {
-          ok: true,
-          insight,
-          autoApplied: insight.status === 'applied',
-        });
-      } catch (error) {
-        json(res, 400, { error: error.message });
+      const validation = validatePatch(patch, mgmt);
+      if (!validation.valid) {
+        return json(res, 400, { error: validation.error });
       }
+
+      const board = helpers.readBoard();
+      mgmt.ensureEvolutionFields(board);
+      const currentControls = mgmt.getControls(board);
+      const risk = forceRisk || classifyRisk(patch, currentControls);
+
+      if (!['low', 'medium', 'high'].includes(risk)) {
+        return json(res, 400, { error: 'risk must be low, medium, or high' });
+      }
+
+      const judgement = Object.entries(patch)
+        .map(([k, v]) => `${k}=${JSON.stringify(v)}`)
+        .join(', ');
+
+      const insight = {
+        id: helpers.uid('ins'),
+        ts: helpers.nowIso(),
+        by,
+        about: 'controls_adjustment',
+        judgement: `Adjust controls: ${judgement}`,
+        reasoning: reasoning || null,
+        suggestedAction: {
+          type: 'controls_patch',
+          payload: patch,
+        },
+        risk,
+        status: 'pending',
+        snapshot: null,
+        appliedAt: null,
+        verifyAfter: payload.verifyAfter ?? 3,
+      };
+      if (payload.data && typeof payload.data === 'object') {
+        insight.data = payload.data;
+      }
+
+      board.insights.push(insight);
+      mgmt.autoApplyInsights(board);
+      helpers.writeBoard(board);
+
+      json(res, 201, {
+        ok: true,
+        insight,
+        autoApplied: insight.status === 'applied',
+      });
     });
     return;
   }
 
   if (req.method === 'GET' && req.url === '/api/edda/status') {
-    try {
-      const board = helpers.readBoard();
-      mgmt.ensureEvolutionFields(board);
-      const controls = mgmt.getControls(board);
-      const pendingControlsPatches = board.insights.filter(
-        i => i.status === 'pending' && i.suggestedAction?.type === 'controls_patch'
-      );
-      json(res, 200, {
-        controls: {
-          auto_dispatch: controls.auto_dispatch,
-          auto_review: controls.auto_review,
-          quality_threshold: controls.quality_threshold,
-          max_concurrent_tasks: controls.max_concurrent_tasks,
-        },
-        pendingProposals: pendingControlsPatches.length,
-        autoApplyEnabled: controls.auto_apply_insights,
-      });
-    } catch (error) {
-      json(res, 500, { error: error.message });
-    }
+    const board = helpers.readBoard();
+    mgmt.ensureEvolutionFields(board);
+    const controls = mgmt.getControls(board);
+    const pendingControlsPatches = board.insights.filter(
+      i => i.status === 'pending' && i.suggestedAction?.type === 'controls_patch'
+    );
+    json(res, 200, {
+      controls,
+      pendingProposals: pendingControlsPatches.length,
+      autoApplyEnabled: controls.auto_apply_insights,
+    });
     return;
   }
 
