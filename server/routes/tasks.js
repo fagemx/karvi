@@ -6,6 +6,7 @@
  * POST /api/tasks/:id/cancel — cancel task, stop running step, cleanup worktree
  * POST /api/tasks/:id/rollback — rollback task: git revert + state reset to pending
  * GET  /api/tasks — task list
+ * GET  /api/tasks/batch-status?ids=... — batch progress snapshot for multiple tasks
  * GET  /api/spec/:file — serve spec files
  * POST /api/tasks — create task plan
  * POST /api/tasks/:id/update — update task fields
@@ -609,12 +610,56 @@ module.exports = function tasksRoutes(req, res, helpers, deps) {
     });
   }
 
+  // GET /api/tasks/batch-status?ids=GH-1,GH-2 — batch progress snapshot
+  const batchStatusMatch = req.method === 'GET' && req.url.match(/^\/api\/tasks\/batch-status(\?|$)/);
+  if (batchStatusMatch) {
+    try {
+      const url = new URL(req.url, 'http://localhost');
+      const idsParam = url.searchParams.get('ids') || '';
+      const ids = idsParam.split(',').map(s => s.trim()).filter(Boolean);
+
+      if (ids.length === 0) {
+        return json(res, 400, { error: 'ids query parameter required (comma-separated task IDs)' });
+      }
+
+      const board = helpers.readBoard();
+      const tasks = board.taskPlan?.tasks || [];
+      const results = [];
+
+      for (const id of ids) {
+        const task = tasks.find(t => t.id === id);
+        if (!task) {
+          results.push({ id, status: null, stepStates: null, pct: null, error: 'not_found' });
+          continue;
+        }
+
+        const steps = task.steps || [];
+        const stepStates = steps.map(s => ({ step_id: s.step_id, type: s.type, state: s.state }));
+        const totalSteps = steps.length;
+        const completedSteps = steps.filter(s => s.state === 'succeeded' || s.state === 'dead').length;
+        const pct = totalSteps > 0 ? Math.round((completedSteps / totalSteps) * 100) : 0;
+
+        results.push({
+          id: task.id,
+          status: task.status,
+          stepStates,
+          pct,
+        });
+      }
+
+      return json(res, 200, { tasks: results });
+    } catch (error) {
+      return json(res, 500, { error: error.message });
+    }
+  }
+
   if (req.method === 'GET' && req.url.startsWith('/api/tasks') &&
       !req.url.includes('/steps') &&
       !req.url.includes('/digest') &&
       !req.url.includes('/timeline') &&
       !req.url.includes('/report') &&
       !req.url.includes('/confidence') &&
+      !req.url.includes('/batch-status') &&
       !req.url.includes('/progress')) {
     try {
       const board = helpers.readBoard();
