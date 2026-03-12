@@ -72,8 +72,6 @@ function sanitizeXForwardedFor(xff, clientIP) {
   const validIPs = ips.filter(isValidIP);
 
   if (validIPs.length === 0) return clientIP;
-  if (validIPs.length === ips.length) return `${validIPs.join(', ')}, ${clientIP}`;
-
   return `${validIPs.join(', ')}, ${clientIP}`;
 }
 
@@ -88,6 +86,11 @@ function buildForwardedFor(req) {
   }
 
   return sanitizeXForwardedFor(xff, clientIP);
+}
+
+/** Validate host header: hostname or hostname:port, no path traversal */
+function isValidHost(host) {
+  return /^[a-zA-Z0-9._-]+(:\d+)?$/.test(host);
 }
 
 /**
@@ -130,6 +133,10 @@ function proxyRequest(req, res, port, opts = {}) {
   // Forward client IP (with spoofing protection)
   headers['x-forwarded-for'] = buildForwardedFor(req);
   headers['x-forwarded-proto'] = req.headers['x-forwarded-proto'] || 'http';
+  // Validate X-Forwarded-Host to prevent host header injection
+  if (req.headers['x-forwarded-host'] && !isValidHost(req.headers['x-forwarded-host'])) {
+    delete headers['x-forwarded-host'];
+  }
 
   const proxyReq = http.request({
     hostname: '127.0.0.1',
@@ -188,6 +195,7 @@ function proxyRequest(req, res, port, opts = {}) {
 module.exports = {
   proxyRequest,
   isValidIP,
+  isValidHost,
   sanitizeXForwardedFor,
   buildForwardedFor,
   isTrustedProxy,

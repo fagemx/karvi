@@ -303,7 +303,7 @@ async function testCORS() {
 async function testXForwardedForValidation() {
   console.log('\n--- X-Forwarded-For Validation ---');
 
-  const { isValidIP, sanitizeXForwardedFor } = require('./gateway-proxy');
+  const { isValidIP, isValidHost, sanitizeXForwardedFor } = require('./gateway-proxy');
 
   // IPv4 validation
   assert(isValidIP('192.168.1.1') === true, 'Valid IPv4 accepted');
@@ -353,6 +353,14 @@ async function testXForwardedForValidation() {
   // Spoofing attempt with injection patterns
   const s6 = sanitizeXForwardedFor('192.168.1.1, ../../injection, 172.16.0.1', clientIP);
   assert(s6 === '192.168.1.1, 172.16.0.1, 10.0.0.1', 'Injection attempt stripped');
+
+  // X-Forwarded-Host validation
+  assert(isValidHost('example.com') === true, 'isValidHost: domain');
+  assert(isValidHost('example.com:8080') === true, 'isValidHost: domain with port');
+  assert(isValidHost('localhost') === true, 'isValidHost: localhost');
+  assert(isValidHost('example.com/../../etc') === false, 'isValidHost: path traversal rejected');
+  assert(isValidHost('example.com:8080/admin') === false, 'isValidHost: path injection rejected');
+  assert(isValidHost('') === false, 'isValidHost: empty rejected');
 }
 
 // --- Test Runner ---
