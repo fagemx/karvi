@@ -161,6 +161,11 @@ function dispatchTask(task, board, deps, helpers, opts = {}) {
   }
   _dispatchLocks.set(taskId, helpers.nowIso());
 
+  // Hook system: emit dispatch_started
+  if (deps.hookSystem) {
+    deps.hookSystem.emit('dispatch_started', { taskId, source, mode });
+  }
+
   const assignee = participantById(board, task.assignee);
   if (!assignee || assignee.type !== 'agent') {
     _dispatchLocks.delete(taskId);
@@ -638,6 +643,11 @@ module.exports = function tasksRoutes(req, res, helpers, deps) {
           };
           if (t.scope) newTask.scope = t.scope;
           board.taskPlan.tasks.push(newTask);
+
+          // Hook system: emit task_created
+          if (deps.hookSystem) {
+            deps.hookSystem.emit('task_created', { taskId: newTask.id, task: newTask });
+          }
         }
 
         helpers.writeBoard(board);

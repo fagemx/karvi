@@ -21,6 +21,7 @@ const usage = require('./usage');
 const { createServiceManager } = require('./service-manager');
 
 const vault = require('./vault').createVault({ vaultDir: path.join(__dirname, 'vaults') });
+const hookSystem = require('./hook-system');
 
 const opt = loadModules([
   { name: 'runtimeCodex',     path: './runtime-codex',       optional: true },
@@ -199,6 +200,14 @@ const server = bb.createServer(ctx, (req, res, helpers) => {
     return json(res, 200, serviceManager.status());
   }
 
+  // GET /api/hooks — list registered hooks
+  if (req.method === 'GET' && req.url === '/api/hooks') {
+    return json(res, 200, {
+      supportedEvents: hookSystem.getSupportedEvents(),
+      hooks: hookSystem.listHooks(),
+    });
+  }
+
   // POST /api/shutdown — graceful shutdown (critical for Windows where SIGTERM kills immediately)
   if (req.method === 'POST' && req.url === '/api/shutdown') {
     // Admin-only: shutdown requires highest privilege
@@ -272,6 +281,11 @@ if (migrationResult.applied.length > 0) {
 if (migrationResult.dirty) {
   writeBoard(initBoard);
 }
+
+// --- Hook System: 初始化輕量級 hook 系統 ---
+const hooksDir = hookSystem.getHooksDir(DIR);
+hookSystem.init(hooksDir);
+deps.hookSystem = hookSystem;
 
 // --- Service Manager: 統一管理所有 background services ---
 const serviceManager = createServiceManager();
