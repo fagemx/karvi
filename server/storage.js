@@ -14,7 +14,7 @@
  *
  * Environment:
  *   KARVI_STORAGE=json    (default) — JSON file backend with atomic writes
- *   KARVI_STORAGE=sqlite  (stub)    — future SQLite backend
+ *   KARVI_STORAGE=sqlite  (SQLite backend)
  */
 
 const BACKEND = (process.env.KARVI_STORAGE || 'json').toLowerCase();

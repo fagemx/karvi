@@ -256,24 +256,104 @@ function test_sqliteLoads() {
   });
 }
 
-function test_sqliteThrows() {
-  test('17. All sqlite methods throw "not yet implemented"', () => {
-    const methods = ['readBoard', 'writeBoard', 'appendLog', 'boardExists', 'ensureLogFile'];
-    for (const m of methods) {
-      assert.strictEqual(typeof storageSqlite[m], 'function', `${m} should be a function`);
-      assert.throws(() => {
-        storageSqlite[m]('dummy');
-      }, /not yet implemented/i, `${m} should throw NOT_IMPLEMENTED`);
-    }
+function test_sqliteInterfaceShape() {
+  test('17. storage-sqlite exports same core interface as storage-json', () => {
+    const jsonKeys = Object.keys(storageJson).sort();
+    const sqliteKeys = Object.keys(storageSqlite).filter(k => k !== 'closeAll').sort();
+    assert.deepStrictEqual(sqliteKeys, jsonKeys,
+      'both backends should export the same set of core keys');
   });
 }
 
-function test_sqliteInterfaceShape() {
-  test('18. storage-sqlite exports same interface shape as storage-json', () => {
-    const jsonKeys = Object.keys(storageJson).sort();
-    const sqliteKeys = Object.keys(storageSqlite).sort();
-    assert.deepStrictEqual(sqliteKeys, jsonKeys,
-      'both backends should export the same set of keys');
+function test_sqliteBoardRoundtrip() {
+  test('18. sqlite: writeBoard + readBoard roundtrip', () => {
+    const bp = boardPath('sqlite-roundtrip.json');
+    const board = sampleBoard({ _version: 0 });
+    storageSqlite.writeBoard(bp, board);
+    const loaded = storageSqlite.readBoard(bp);
+    assert.strictEqual(loaded.projectName, 'test-project');
+    assert.strictEqual(loaded._version, 1);
+    assert.strictEqual(loaded.tasks.length, 2);
+  });
+}
+
+function test_sqliteBoardExists() {
+  test('19. sqlite: boardExists false then true', () => {
+    const bp = boardPath('sqlite-exists.json');
+    assert.strictEqual(storageSqlite.boardExists(bp), false);
+    storageSqlite.writeBoard(bp, sampleBoard({ _version: 0 }));
+    assert.strictEqual(storageSqlite.boardExists(bp), true);
+  });
+}
+
+function test_sqliteReadBoardMissing() {
+  test('20. sqlite: readBoard throws ENOENT for missing board', () => {
+    const bp = boardPath('sqlite-missing.json');
+    assert.throws(() => storageSqlite.readBoard(bp), (err) => err.code === 'ENOENT');
+  });
+}
+
+function test_sqliteOptimisticLock() {
+  test('21. sqlite: optimistic locking detects conflict', () => {
+    const bp = boardPath('sqlite-lock.json');
+    storageSqlite.writeBoard(bp, { projectName: 'test', _version: 0 });
+    const copy1 = storageSqlite.readBoard(bp);
+    const copy2 = storageSqlite.readBoard(bp);
+    copy1.projectName = 'handler1';
+    storageSqlite.writeBoard(bp, copy1);
+    copy2.projectName = 'handler2';
+    assert.throws(() => storageSqlite.writeBoard(bp, copy2), (err) => err.code === 'VERSION_CONFLICT');
+  });
+}
+
+async function test_sqliteAppendLog() {
+  const lp = logPath('sqlite-log.jsonl');
+  storageSqlite.ensureLogFile(lp);
+  storageSqlite.appendLog(lp, { event: 'create', taskId: 'T1', ts: '2026-01-01' });
+  storageSqlite.appendLog(lp, { event: 'update', taskId: 'T2', ts: '2026-01-05' });
+  // verify by reading back
+  const r = await storageSqlite.readLogEntries(lp, {});
+  assert.strictEqual(r.length, 2, 'should have 2 entries');
+  console.log('  PASS  22. sqlite: appendLog + ensureLogFile');
+  passed++;
+}
+
+async function test_sqliteReadLogEntries() {
+  const lp = logPath('sqlite-read-log.jsonl');
+  storageSqlite.appendLog(lp, { event: 'create', taskId: 'T1', ts: '2026-01-01' });
+  storageSqlite.appendLog(lp, { event: 'update', taskId: 'T2', ts: '2026-01-05' });
+  storageSqlite.appendLog(lp, { event: 'create', taskId: 'T3', ts: '2026-01-10' });
+
+  const all = await storageSqlite.readLogEntries(lp, {});
+  assert.strictEqual(all.length, 3);
+
+  const byTask = await storageSqlite.readLogEntries(lp, { taskId: 'T2' });
+  assert.strictEqual(byTask.length, 1);
+
+  const byEvent = await storageSqlite.readLogEntries(lp, { event: 'create' });
+  assert.strictEqual(byEvent.length, 2);
+
+  const byTime = await storageSqlite.readLogEntries(lp, { from: '2026-01-03', to: '2026-01-07' });
+  assert.strictEqual(byTime.length, 1);
+
+  console.log('  PASS  23. sqlite: readLogEntries filtering');
+  passed++;
+}
+
+function test_sqliteReadArchiveEntries() {
+  test('24. sqlite: readArchiveEntries pagination', () => {
+    const ap = logPath('sqlite-archive.jsonl');
+    for (let i = 0; i < 10; i++) {
+      storageSqlite.appendLog(ap, { id: `sig-${i}`, ts: `2026-01-${String(i + 1).padStart(2, '0')}` });
+    }
+    const page1 = storageSqlite.readArchiveEntries(ap, { offset: 0, limit: 3 });
+    assert.strictEqual(page1.total, 10);
+    assert.strictEqual(page1.entries.length, 3);
+    assert.strictEqual(page1.entries[0].id, 'sig-0');
+
+    const page2 = storageSqlite.readArchiveEntries(ap, { offset: 8, limit: 5 });
+    assert.strictEqual(page2.entries.length, 2);
+    assert.strictEqual(page2.entries[0].id, 'sig-8');
   });
 }
 
@@ -497,8 +577,17 @@ async function main() {
     // storage-sqlite.js
     console.log('\n--- storage-sqlite.js ---\n');
     test_sqliteLoads();
-    test_sqliteThrows();
     test_sqliteInterfaceShape();
+    test_sqliteBoardRoundtrip();
+    test_sqliteBoardExists();
+    test_sqliteReadBoardMissing();
+    test_sqliteOptimisticLock();
+    await test_sqliteAppendLog();
+    await test_sqliteReadLogEntries();
+    test_sqliteReadArchiveEntries();
+
+    // 清理 SQLite 連線
+    storageSqlite.closeAll();
 
     // storage.js factory
     console.log('\n--- storage.js (factory) ---\n');
