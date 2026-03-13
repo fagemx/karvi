@@ -95,6 +95,7 @@ export function CreateTaskSheet({ visible, onClose, onSuccess }: CreateTaskSheet
             placeholderTextColor={t.placeholder}
             autoCapitalize="sentences"
             autoCorrect
+            maxLength={200}
           />
         </View>
         {errors.title && <Text style={[styles.errorText, { color: t.danger }]}>{errors.title}</Text>}
@@ -107,6 +108,7 @@ export function CreateTaskSheet({ visible, onClose, onSuccess }: CreateTaskSheet
             onChangeText={setDescription}
             placeholder="Enter task description (optional)"
             placeholderTextColor={t.placeholder}
+            maxLength={2000}
             multiline
             numberOfLines={4}
             textAlignVertical="top"

@@ -204,17 +204,26 @@ export interface CreateTaskPayload {
 }
 
 export async function createTask(task: CreateTaskPayload) {
+  const taskId = `MOBILE-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+  const descParts: string[] = [];
+  if (task.priority && task.priority !== 'medium') {
+    descParts.push(`[${task.priority.toUpperCase()}]`);
+  }
+  if (task.description) descParts.push(task.description);
+  const description = descParts.join(' ') || undefined;
+
   const res = await fetch(`${getBaseUrl()}/api/projects`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...authHeaders() },
     body: JSON.stringify({
+      title: task.title,
+      goal: task.description || task.title,
       tasks: [
         {
-          id: `task-${Date.now()}`,
+          id: taskId,
           title: task.title,
-          description: task.description,
-          assignee: task.assignee,
-          priority: task.priority,
+          description,
+          assignee: task.assignee || 'engineer_lite',
         },
       ],
     }),
