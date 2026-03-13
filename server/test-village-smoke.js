@@ -584,6 +584,113 @@ const testRunId = `smoke-${Date.now()}`;
   });
 
   // ══════════════════════════════════════════════════════
+  // DoD 8: Tool tier governance system (#162)
+  // ══════════════════════════════════════════════════════
+  console.log('\n── DoD 8: tool tier governance (#162) ──');
+
+  const toolTiers = require('./village/tool-tiers');
+
+  await test('resolvePolicy returns defaults when no board config', () => {
+    const board = createVillageBoard();
+    const policy = toolTiers.resolvePolicy(board);
+    assert.strictEqual(policy.chief_max_tier, 'T2');
+    assert.strictEqual(policy.proposal_max_tier, 'T1');
+    assert.strictEqual(policy.default_worker_tier, 'T3');
+  });
+
+  await test('resolvePolicy merges board-level overrides', () => {
+    const board = createVillageBoard();
+    board.village.tool_tier_policy = { chief_max_tier: 'T1', default_worker_tier: 'T2' };
+    const policy = toolTiers.resolvePolicy(board);
+    assert.strictEqual(policy.chief_max_tier, 'T1');
+    assert.strictEqual(policy.default_worker_tier, 'T2');
+    assert.strictEqual(policy.proposal_max_tier, 'T1'); // still default
+  });
+
+  await test('resolveTaskTier uses kind mapping', () => {
+    const policy = toolTiers.defaultPolicy();
+    assert.strictEqual(toolTiers.resolveTaskTier({ kind: 'code_change' }, policy), 'T3');
+    assert.strictEqual(toolTiers.resolveTaskTier({ kind: 'research' }, policy), 'T1');
+    assert.strictEqual(toolTiers.resolveTaskTier({ kind: 'discussion' }, policy), 'T0');
+    assert.strictEqual(toolTiers.resolveTaskTier({ kind: 'ops' }, policy), 'T4');
+  });
+
+  await test('resolveTaskTier uses role for chief/proposal', () => {
+    const policy = toolTiers.defaultPolicy();
+    assert.strictEqual(toolTiers.resolveTaskTier({ role: 'chief' }, policy), 'T2');
+    assert.strictEqual(toolTiers.resolveTaskTier({ role: 'proposal' }, policy), 'T1');
+  });
+
+  await test('checkTierAccess allows matching tier', () => {
+    assert.deepStrictEqual(toolTiers.checkTierAccess('T3', 'T3'), { allowed: true });
+    assert.deepStrictEqual(toolTiers.checkTierAccess('T4', 'T3'), { allowed: true });
+  });
+
+  await test('checkTierAccess denies insufficient tier', () => {
+    const result = toolTiers.checkTierAccess('T2', 'T3');
+    assert.strictEqual(result.allowed, false);
+    assert.ok(result.reason.includes('T3'));
+    assert.ok(result.reason.includes('T2'));
+  });
+
+  await test('checkTierAccess rejects unknown max_tier (fail-closed)', () => {
+    const result = toolTiers.checkTierAccess('T99', 'T3');
+    assert.strictEqual(result.allowed, false, 'unknown max_tier must be denied');
+    assert.ok(result.reason.includes('T99'), 'reason should mention the unknown tier');
+  });
+
+  await test('checkTierAccess rejects unknown requiredTier (fail-closed)', () => {
+    const result = toolTiers.checkTierAccess('T3', 'T99');
+    assert.strictEqual(result.allowed, false, 'unknown requiredTier must be denied');
+    assert.ok(result.reason.includes('T99'), 'reason should mention the unknown tier');
+  });
+
+  await test('resolvePolicy replaces invalid board tier with default', () => {
+    const board = createVillageBoard();
+    board.village.tool_tier_policy = { chief_max_tier: 'T99', default_worker_tier: 'BOGUS' };
+    const policy = toolTiers.resolvePolicy(board);
+    assert.strictEqual(policy.chief_max_tier, 'T2', 'invalid tier should fall back to default T2');
+    assert.strictEqual(policy.default_worker_tier, 'T3', 'invalid tier should fall back to default T3');
+  });
+
+  await test('requiredTierForStep maps step types correctly', () => {
+    assert.strictEqual(toolTiers.requiredTierForStep('plan'), 'T0');
+    assert.strictEqual(toolTiers.requiredTierForStep('propose'), 'T1');
+    assert.strictEqual(toolTiers.requiredTierForStep('synthesize'), 'T2');
+    assert.strictEqual(toolTiers.requiredTierForStep('implement'), 'T3');
+    assert.strictEqual(toolTiers.requiredTierForStep('deploy'), 'T4');
+  });
+
+  await test('generateMeetingTasks attaches max_tier to proposals and synthesis', () => {
+    const board = createVillageBoard();
+    const tasks = villageMeeting.generateMeetingTasks(board, 'weekly_planning');
+    const proposals = tasks.filter(t => t.id.includes('proposal'));
+    const synthesis = tasks.filter(t => t.id.includes('synthesis'));
+
+    for (const p of proposals) {
+      assert.strictEqual(p.max_tier, 'T1', `proposal ${p.id} should be T1`);
+    }
+    assert.strictEqual(synthesis[0].max_tier, 'T2', 'synthesis should be T2');
+  });
+
+  await test('generateMeetingTasks attaches max_tier to checkin', () => {
+    const board = createVillageBoard();
+    board.village.currentCycle = { cycleId: `cycle-${villageMeeting.getWeekId()}`, phase: 'execution' };
+    const tasks = villageMeeting.generateMeetingTasks(board, 'midweek_checkin');
+    assert.strictEqual(tasks[0].max_tier, 'T2', 'checkin should be T2');
+  });
+
+  await test('tierRestrictionPrompt generates correct restrictions', () => {
+    const t1 = toolTiers.tierRestrictionPrompt('T1');
+    assert.ok(t1.includes('MUST NOT modify code'), 'T1 should prohibit code changes');
+    assert.ok(t1.includes('MAY read the repository'), 'T1 should allow read');
+
+    const t3 = toolTiers.tierRestrictionPrompt('T3');
+    assert.ok(t3.includes('MUST NOT deploy'), 'T3 should prohibit deploy');
+    assert.ok(t3.includes('MAY modify code'), 'T3 should allow code changes');
+  });
+
+  // ══════════════════════════════════════════════════════
   // SUMMARY
   // ══════════════════════════════════════════════════════
   console.log('\n════════════════════════════════════════');

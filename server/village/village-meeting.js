@@ -9,6 +9,7 @@
  */
 const fs = require('fs');
 const path = require('path');
+const { resolvePolicy } = require('./tool-tiers');
 
 const ROLES_DIR = path.join(__dirname, 'roles');
 
@@ -233,6 +234,8 @@ function generateMeetingTasks(board, meetingType) {
 
   const chiefPrompt = readRoleFile('village/roles/chief.md');
 
+  const tierPolicy = resolvePolicy(board);
+
   // ── midweek_checkin: single task, no department proposals ──
   if (meetingType === 'midweek_checkin') {
     const execTasks = (board.taskPlan?.tasks || [])
@@ -248,6 +251,7 @@ function generateMeetingTasks(board, meetingType) {
       assignee: 'engineer_lite',
       status: 'dispatched',
       depends: [],
+      max_tier: tierPolicy.chief_max_tier || 'T2',
       pipeline: [{
         type: 'checkin',
         instruction,
@@ -275,6 +279,7 @@ function generateMeetingTasks(board, meetingType) {
       assignee: dept.assignee || 'engineer_lite',
       status: 'dispatched',
       depends: [],
+      max_tier: tierPolicy.proposal_max_tier || 'T1',
       pipeline: [{
         type: 'propose',
         instruction: buildProposalInstruction(rolePrompt, deptGoals, recentSignals),
@@ -291,6 +296,7 @@ function generateMeetingTasks(board, meetingType) {
     assignee: 'engineer_pro',
     status: 'pending',
     depends: proposalIds,
+    max_tier: tierPolicy.chief_max_tier || 'T2',
     pipeline: [{
       type: 'synthesize',
       instruction: buildSynthesisInstruction(chiefPrompt, goals),
