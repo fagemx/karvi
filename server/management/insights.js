@@ -5,6 +5,7 @@
  */
 const bb = require('../blackboard-server');
 const { nowIso, uid } = bb;
+const { createSignal } = require('../signal');
 
 // Schema validation constants (shared with parent)
 const VALID_ACTION_TYPES = ['controls_patch', 'dispatch_hint', 'lesson_write', 'set_pipeline', 'noop'];
@@ -126,9 +127,7 @@ function autoApplyInsights(board) {
     ins.status = 'applied';
     ins.appliedAt = nowIso();
 
-    board.signals.push({
-      id: uid('sig'),
-      ts: nowIso(),
+    board.signals.push(createSignal({
       by: 'gate',
       type: 'insight_applied',
       content: `Auto-applied: ${ins.judgement}`,
@@ -139,7 +138,7 @@ function autoApplyInsights(board) {
         auto: true,
         snapshot: ins.snapshot || null,
       },
-    });
+    }, { uid, nowIso }));
 
     break; // apply one at a time
   }
@@ -200,15 +199,13 @@ function verifyAppliedInsights(board) {
         supersededBy: null,
       });
 
-      board.signals.push({
-        id: uid('sig'),
-        ts: nowIso(),
+      board.signals.push(createSignal({
         by: 'gate',
         type: 'lesson_validated',
         content: `Insight ${ins.id} verified: avg score ${avgBefore} → ${avgAfter}`,
         refs: [ins.id],
         data: { insightId: ins.id, avgBefore, avgAfter, delta },
-      });
+      }, { uid, nowIso }));
 
     } else if (delta <= -5) {
       // Degradation → rollback
@@ -227,15 +224,13 @@ function verifyAppliedInsights(board) {
 
       ins.status = 'rolled_back';
 
-      board.signals.push({
-        id: uid('sig'),
-        ts: nowIso(),
+      board.signals.push(createSignal({
         by: 'gate',
         type: 'insight_rolled_back',
         content: `Rolled back insight ${ins.id}: avg score ${avgBefore} → ${avgAfter} (${delta})`,
         refs: [ins.id],
         data: { insightId: ins.id, avgBefore, avgAfter, delta, restoredControls: ins.snapshot },
-      });
+      }, { uid, nowIso }));
 
     } else {
       // Neutral → wait more; accept after 3x reviews
