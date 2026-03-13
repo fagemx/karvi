@@ -191,3 +191,37 @@ export async function updateGithubIntegration(config: Record<string, any>) {
   }
   return res.json();
 }
+
+// ---------------------------------------------------------------------------
+// Task Creation
+// ---------------------------------------------------------------------------
+
+export interface CreateTaskPayload {
+  title: string;
+  description?: string;
+  assignee?: string;
+  priority?: string;
+}
+
+export async function createTask(task: CreateTaskPayload) {
+  const res = await fetch(`${getBaseUrl()}/api/projects`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...authHeaders() },
+    body: JSON.stringify({
+      tasks: [
+        {
+          id: `task-${Date.now()}`,
+          title: task.title,
+          description: task.description,
+          assignee: task.assignee,
+          priority: task.priority,
+        },
+      ],
+    }),
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({ error: `HTTP ${res.status}` }));
+    throw new Error(body.error || `createTask: ${res.status}`);
+  }
+  return res.json();
+}
