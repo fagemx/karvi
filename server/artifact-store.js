@@ -8,9 +8,14 @@
  *   server/artifacts/{run_id}/{step_id}.input.json
  *   server/artifacts/{run_id}/{step_id}.output.json
  *   server/artifacts/{run_id}/{step_id}.log
+ *
+ * Encryption:
+ *   When encryption is enabled, artifact content is encrypted at rest
+ *   using AES-256-GCM. The encryption module must be initialized first.
  */
 const fs = require('fs');
 const path = require('path');
+const enc = require('./encryption');
 
 const ARTIFACT_DIR = process.env.DATA_DIR
   ? path.join(path.resolve(process.env.DATA_DIR), 'artifacts')
@@ -22,12 +27,55 @@ function artifactPath(runId, stepId, kind) {
   return path.join(ARTIFACT_DIR, runId, `${safeStepId}.${kind}.json`);
 }
 
+function encryptContent(content, context) {
+  if (!enc.isEnabled()) return content;
+  if (typeof content === 'string') {
+    return enc.encryptField(content, context);
+  }
+  if (typeof content === 'object' && content !== null) {
+    return enc.encryptField(JSON.stringify(content), context);
+  }
+  return content;
+}
+
+function decryptContent(entry, context) {
+  if (!enc.isEnabled()) return entry;
+  if (entry && entry._encrypted) {
+    const decrypted = enc.decryptField(entry, context);
+    try {
+      return JSON.parse(decrypted);
+    } catch {
+      return decrypted;
+    }
+  }
+  return entry;
+}
+
 function writeArtifact(runId, stepId, kind, data) {
   const filePath = artifactPath(runId, stepId, kind);
   const dir = path.dirname(filePath);
   fs.mkdirSync(dir, { recursive: true });
   const tmpPath = `${filePath}.${process.pid}.tmp`;
-  fs.writeFileSync(tmpPath, JSON.stringify(data, null, 2), 'utf8');
+  
+  let dataToWrite = data;
+  if (enc.isEnabled() && data) {
+    const context = `artifact:${runId}:${stepId}:${kind}`;
+    dataToWrite = {
+      ...data,
+      _encrypted: true,
+    };
+    if (data.content) {
+      dataToWrite.content = encryptContent(data.content, `${context}:content`);
+    }
+    if (data.prompt) {
+      dataToWrite.prompt = encryptContent(data.prompt, `${context}:prompt`);
+    }
+    if (data.response) {
+      dataToWrite.response = encryptContent(data.response, `${context}:response`);
+    }
+  }
+  
+  fs.writeFileSync(tmpPath, JSON.stringify(dataToWrite, null, 2), 'utf8');
   fs.renameSync(tmpPath, filePath);
   return filePath;
 }
@@ -35,7 +83,27 @@ function writeArtifact(runId, stepId, kind, data) {
 function readArtifact(runId, stepId, kind) {
   const filePath = artifactPath(runId, stepId, kind);
   try {
-    return JSON.parse(fs.readFileSync(filePath, 'utf8'));
+    const data = JSON.parse(fs.readFileSync(filePath, 'utf8'));
+    
+    if (data._encrypted && enc.isEnabled()) {
+      const context = `artifact:${runId}:${stepId}:${kind}`;
+      const decrypted = { ...data };
+      delete decrypted._encrypted;
+      
+      if (data.content && data.content._encrypted) {
+        decrypted.content = decryptContent(data.content, `${context}:content`);
+      }
+      if (data.prompt && data.prompt._encrypted) {
+        decrypted.prompt = decryptContent(data.prompt, `${context}:prompt`);
+      }
+      if (data.response && data.response._encrypted) {
+        decrypted.response = decryptContent(data.response, `${context}:response`);
+      }
+      
+      return decrypted;
+    }
+    
+    return data;
   } catch {
     return null;
   }
