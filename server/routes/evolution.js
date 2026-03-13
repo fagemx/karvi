@@ -58,15 +58,11 @@ module.exports = function evolutionRoutes(req, res, helpers, deps) {
       }
       const board = helpers.readBoard();
       mgmt.ensureEvolutionFields(board);
-      const signal = {
-        id: helpers.uid('sig'),
-        ts: helpers.nowIso(),
-        by,
-        type,
-        content,
-      };
-      if (payload.refs) signal.refs = payload.refs;
-      if (payload.data) signal.data = payload.data;
+      const signal = createSignal({
+        by, type, content,
+        refs: payload.refs,
+        data: payload.data,
+      }, req, helpers);
       board.signals.push(signal);
       mgmt.trimSignals(board, helpers.signalArchivePath);
 
