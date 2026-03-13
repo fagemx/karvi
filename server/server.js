@@ -153,6 +153,7 @@ const marketplaceRoutes = require('./routes/marketplace');
 const configRoutes = require('./routes/config');
 const reposRoutes = require('./routes/repos');
 const healthRoutes = require('./routes/health');
+const chiefRoutes = require('./routes/chief');
 
 const postmortem = require('./postmortem');
 
@@ -186,6 +187,7 @@ const routes = [
   configRoutes,
   reposRoutes,
   healthRoutes,
+  chiefRoutes,
 ];
 
 const { json } = bb;
