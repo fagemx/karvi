@@ -135,6 +135,7 @@ function emitWebhookEvent(board, eventType, payload, helpers = null) {
       const dlPath = helpers?.dataDir
         ? path.join(helpers.dataDir, 'webhook-dead-letter.jsonl')
         : path.join(__dirname, '..', 'data', 'webhook-dead-letter.jsonl');
+      fs.mkdirSync(path.dirname(dlPath), { recursive: true });
       fs.appendFileSync(dlPath, JSON.stringify(deadLetterEntry) + '\n');
     } catch (dlErr) {
       console.error(`[webhook] failed to write dead letter:`, dlErr.message);
