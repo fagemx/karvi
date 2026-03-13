@@ -159,7 +159,9 @@ async function runTests() {
     const stepsRes = await get('/api/tasks/T-STEP-TEST/steps');
     const implementStep = (stepsRes.steps || []).find(s => s.step_id === 'T-STEP-TEST:implement');
     
-    if (implementStep && implementStep.state === 'queued') {
+    if (!implementStep) {
+      fail('Implement step exists', 'implement step not found');
+    } else if (implementStep.state === 'queued') {
       // Test invalid transition: queued → succeeded
       const res = await patch('/api/tasks/T-STEP-TEST/steps/T-STEP-TEST:implement', { state: 'succeeded' });
       if (res.status === 400 && res.body.error && res.body.error.includes('Invalid step transition')) {
@@ -168,8 +170,13 @@ async function runTests() {
         fail('PATCH invalid transition', JSON.stringify(res));
       }
     } else {
-      // Step worker already executed the step, skip this test
-      console.log('  \u26A0\uFE0F  Skipped: implement step already executed by step worker');
+      // Step worker already moved step past queued — test the transition it's in
+      const res = await patch('/api/tasks/T-STEP-TEST/steps/T-STEP-TEST:implement', { state: 'queued' });
+      if (res.status === 400 && res.body.error && res.body.error.includes('Invalid step transition')) {
+        ok(`PATCH invalid transition (${implementStep.state} \u2192 queued) returns 400`);
+      } else {
+        fail('PATCH invalid transition', `step in state ${implementStep.state}, got: ${JSON.stringify(res)}`);
+      }
     }
   }
 

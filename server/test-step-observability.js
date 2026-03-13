@@ -238,7 +238,7 @@ async function testStepProgressOnDispatch() {
     if (planStep.progress && planStep.progress.dispatched_at) {
       ok('Step progress has dispatched_at after dispatch');
     } else {
-      console.warn('  ⚠ Step transitioned but progress.dispatched_at not set (set by step-worker)');
+      fail('Step progress.dispatched_at', 'step transitioned but progress.dispatched_at not set');
     }
   } else if (planStep.state === 'queued') {
     fail('Step dispatch', 'step still queued after dispatch — expected running or beyond');
@@ -292,7 +292,7 @@ async function testDeadLetterViaStepTransition() {
   if (deadSignals.length >= 1) {
     ok('Dead letter signal emitted');
   } else {
-    console.warn('  ⚠ No step_dead signal found (emitted by step-worker, not transition API)');
+    fail('Dead letter signal', 'no step_dead signal found after step reached dead state');
   }
 }
 

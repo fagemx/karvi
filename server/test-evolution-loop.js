@@ -202,7 +202,7 @@ async function main() {
     if (anyLesson) {
       ok(`Lesson found (status: ${anyLesson.status}): "${anyLesson.rule}"`);
     } else {
-      console.log('  ⚠️ No lesson yet — verify that verifyAppliedInsights runs on review_result signals');
+      fail('Validated lesson', 'no lesson found — verifyAppliedInsights should run on review_result signals');
     }
   }
 
@@ -225,8 +225,7 @@ async function main() {
   const insights3 = await get('/api/insights');
   const badApplied = insights3.find(i => i.judgement?.includes('降到 30') && i.status === 'applied');
   if (!badApplied) {
-    console.log('  ⚠️ Bad insight not auto-applied (might be blocked by safety valve)');
-    console.log('  Skipping rollback test');
+    fail('Bad insight auto-apply', 'insight not auto-applied — expected status "applied"');
   } else {
     ok(`Applied: ${badApplied.id}, snapshot: ${JSON.stringify(badApplied.snapshot)}`);
 
@@ -247,9 +246,9 @@ async function main() {
     const insights4 = await get('/api/insights');
     const rolledBack = insights4.find(i => i.id === badApplied.id);
     if (rolledBack?.status === 'rolled_back') {
-      ok('Insight rolled back ✅');
+      ok('Insight rolled back');
     } else {
-      console.log(`  ⚠️ Status: ${rolledBack?.status} (expected: rolled_back)`);
+      fail('Insight rollback', `expected status "rolled_back", got "${rolledBack?.status}"`);
     }
 
     // 確認 controls 恢復
