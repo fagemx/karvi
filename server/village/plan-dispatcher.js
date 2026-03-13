@@ -147,6 +147,7 @@ async function parsePlanAndDispatch(board, planData, helpers, deps, synthesisTas
           type: 'village_plan',
           cycleId,
           synthesisTaskId: synthesisTask?.id || null,
+          villageId: synthesisTask?.villageId || null,
         },
         history: [{
           ts: now,
