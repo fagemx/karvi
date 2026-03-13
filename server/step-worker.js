@@ -7,9 +7,12 @@
  *
  * Extracted from kernel.js:dispatchStep() (issue #92).
  * Kernel = routing decisions, StepWorker = execution.
+ *
+ * Sub-modules (issue #473 SRP split):
+ *   webhook-emitter.js — Thyra-aligned webhook envelope + retry
+ *   post-check.js      — scope guard, contract validation, auto-finalize
  */
 const { execSync, execFileSync } = require('child_process');
-const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
 const mgmt = require('./management');
@@ -18,139 +21,13 @@ const { runHook } = require('./hook-runner');
 const { createSignal } = require('./signal');
 const { retryOnConflict } = require('./helpers/retry');
 const { checkTierAccess, requiredTierForStep, tierRestrictionPrompt } = require('./village/tool-tiers');
+const { emitWebhookEvent } = require('./webhook-emitter');
+const { runPostCheck, autoFinalize, applyScopeGuard, isOutOfScope, revertFile, validateContract } = require('./post-check');
+
 const LOCK_GRACE_MS = 30_000; // 30s grace on top of step timeout
 const HEARTBEAT_DEBOUNCE_MS = 10_000; // Debounce heartbeat writes to 10s interval
 
 const MAX_SESSIONS = 50;
-
-// --- Webhook event emission (#333/#443/#444) — Thyra-aligned envelope + retry ---
-
-// Map internal signal types to Thyra event_type values
-function mapEventType(type) {
-  if (type === 'step_succeeded' || type === 'step_failed' || type === 'step_dead') return 'step_completed';
-  return type; // step_started, step_cancelled pass through
-}
-
-// Map internal step state to Thyra state values
-function mapState(state) {
-  if (state === 'succeeded') return 'done';
-  if (state === 'dead') return 'failed';
-  return state; // 'failed', 'cancelled' 保持不變
-}
-
-// Compute 0-based step index from task's steps array
-function computeStepIndex(board, taskId, stepId) {
-  const task = (board.taskPlan?.tasks || []).find(t => t.id === taskId);
-  const idx = (task?.steps || []).findIndex(s => s.step_id === stepId);
-  return idx >= 0 ? idx : -1;
-}
-
-const WEBHOOK_MAX_RETRIES = 3;
-const WEBHOOK_BACKOFF_MS = [1000, 2000, 4000]; // 1s, 2s, 4s exponential backoff
-
-function emitWebhookEvent(board, eventType, payload, helpers = null) {
-  const url = mgmt.getControls(board).event_webhook_url;
-  if (!url) return;
-
-  let parsed;
-  try {
-    parsed = new URL(url);
-  } catch (err) {
-    console.error(`[webhook] malformed URL, skipping ${eventType}:`, err.message);
-    return;
-  }
-
-  const now = new Date().toISOString();
-  // 巢狀 payload，snake_case 欄位名，符合 Thyra KarviWebhookPayloadSchema
-  const nestedPayload = {
-    task_id: payload.taskId,
-    step_id: payload.stepId,
-    step_index: computeStepIndex(board, payload.taskId, payload.stepId),
-  };
-  // Default state for step_started (call site omits state)
-  const rawState = payload.state || (eventType === 'step_started' ? 'running' : undefined);
-  if (rawState) nestedPayload.state = mapState(rawState);
-  if (payload.stepType) nestedPayload.step_type = payload.stepType;
-  if (payload.error) nestedPayload.error = payload.error;
-
-  const envelope = {
-    event_type: mapEventType(eventType),
-    event_id: `evt_${crypto.randomUUID()}`,
-    timestamp: now,
-    version: 'karvi.event.v1',
-    payload: nestedPayload,
-    // Deprecated compat fields — will be removed in v2
-    occurred_at: now,
-    ts: now,
-    event: eventType,
-  };
-  const body = JSON.stringify(envelope);
-  const mod = parsed.protocol === 'https:' ? require('https') : require('http');
-
-  // Non-blocking async retry loop
-  (async () => {
-    let lastError = null;
-    for (let attempt = 0; attempt < WEBHOOK_MAX_RETRIES; attempt++) {
-      try {
-        const result = await new Promise((resolve, reject) => {
-          const req = mod.request(parsed, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body) },
-            timeout: 5000,
-          }, (res) => {
-            res.resume(); // drain response body to free socket
-            if (res.statusCode >= 500) {
-              reject(new Error(`HTTP ${res.statusCode}`));
-            } else if (res.statusCode >= 400) {
-              console.error(`[webhook] ${eventType} POST failed: HTTP ${res.statusCode} (not retrying)`);
-              resolve({ ok: false, retryable: false });
-            } else {
-              resolve({ ok: true });
-            }
-          });
-          req.on('error', reject);
-          req.on('timeout', () => {
-            req.destroy();
-            reject(new Error('timeout'));
-          });
-          req.end(body);
-        });
-
-        if (result.ok) return; // Success
-        if (!result.retryable) return; // 4xx, stop retrying
-      } catch (err) {
-        lastError = err;
-        if (attempt < WEBHOOK_MAX_RETRIES - 1) {
-          const delay = WEBHOOK_BACKOFF_MS[attempt];
-          console.error(`[webhook] ${eventType} attempt ${attempt + 1}/${WEBHOOK_MAX_RETRIES} failed: ${err.message}, retrying in ${delay}ms`);
-          await new Promise(r => setTimeout(r, delay));
-        }
-      }
-    }
-
-    // Total failure after all retries
-    console.error(`[webhook] ${eventType} POST failed after ${WEBHOOK_MAX_RETRIES} retries:`, lastError?.message || 'unknown error');
-
-    // Write signal to board if helpers available
-    if (helpers && helpers.readBoard && helpers.writeBoard) {
-      try {
-        const failBoard = helpers.readBoard();
-        failBoard.signals = failBoard.signals || [];
-        failBoard.signals.push(createSignal({
-          by: 'webhook',
-          type: 'webhook_delivery_failed',
-          content: `Webhook delivery failed for ${eventType}: ${lastError?.message || 'unknown error'}`,
-          refs: payload.taskId ? [payload.taskId] : [],
-          data: { event_type: eventType, error: lastError?.message, attempts: WEBHOOK_MAX_RETRIES },
-        }, helpers));
-        mgmt.trimSignals(failBoard, helpers.signalArchivePath);
-        helpers.writeBoard(failBoard);
-      } catch (signalErr) {
-        console.error(`[webhook] failed to write failure signal:`, signalErr.message);
-      }
-    }
-  })();
-}
 
 // Strip <think>...</think> blocks from model output (some providers leak reasoning tokens)
 const THINK_TAG_RE = /<think>[\s\S]*?<\/think>/g;
@@ -503,6 +380,8 @@ function createStepWorker(deps) {
       // Enforce step_timeout_sec: abort the runtime after timeoutMs
       let timedOut = false;
       let timeoutTimer;
+      let dispatchErr = null;
+      let candidateIdx = 0;
       try {
       timeoutTimer = setTimeout(() => {
         timedOut = true;
@@ -525,8 +404,6 @@ function createStepWorker(deps) {
       }
 
       // Fallback loop: 嘗試主 runtime，PROVIDER 錯誤時依序嘗試 fallback chain 中的下一個
-      let dispatchErr = null;
-      let candidateIdx = 0;
       while (candidateIdx < runtimeCandidates.length) {
         try {
           result = await rt.dispatch(plan);
@@ -1001,7 +878,7 @@ function createStepWorker(deps) {
 /**
  * Classify error based on dispatch error or agent output.
  * Returns ErrorKind string (TEMPORARY, PROVIDER, AGENT_ERROR, etc.)
- * 
+ *
  * @param {Error|null} err - Dispatch error object
  * @param {object|null} agentOutput - Agent output with failure info
  * @returns {string} ErrorKind
@@ -1015,7 +892,7 @@ function classifyError(err, agentOutput) {
       }
     }
   }
-  
+
   // Check dispatch error patterns
   if (err?.message) {
     for (const rule of ERROR_PATTERNS) {
@@ -1024,246 +901,8 @@ function classifyError(err, agentOutput) {
       }
     }
   }
-  
+
   return 'UNKNOWN';
-}
-
-/**
- * Check working directory for uncommitted git changes.
- * Returns { hasUncommittedChanges, files }.
- * If the directory is not a git repo, returns a clean result (no-op).
- */
-async function runPostCheck(workDir) {
-  const opts = { cwd: workDir, encoding: 'utf8', timeout: 10000 };
-  const result = { hasUncommittedChanges: false, files: [], hasNewCommit: false };
-
-  if (!workDir) return result;
-
-  try {
-    const porcelain = execSync('git status --porcelain', opts).trim();
-    if (porcelain) {
-      result.hasUncommittedChanges = true;
-      result.files = porcelain.split('\n').map(l => l.trim()).filter(Boolean);
-    }
-  } catch (err) {
-    // Not a git repo or git not available — skip post-check
-    return result;
-  }
-
-  return result;
-}
-
-/**
- * Attempt to commit all uncommitted changes on behalf of the agent.
- * Returns { ok, commitHash } on success or { ok, error } on failure.
- */
-function autoFinalize(workDir, envelope) {
-  const opts = { cwd: workDir, encoding: 'utf8', timeout: 30000 };
-  try {
-    execSync('git add -A', opts);
-    const msg = `chore: auto-finalize step ${envelope.step_id} for ${envelope.task_id}`;
-    execFileSync('git', ['commit', '-m', msg], opts);
-    const hash = execSync('git log -1 --format=%h', opts).trim();
-
-    // Try to push if on a branch
-    let pushed = false;
-    try {
-      execSync('git push', opts);
-      pushed = true;
-    } catch {
-      // Push failed — try setting upstream
-      try {
-        const branch = execSync('git branch --show-current', opts).trim();
-        if (branch) {
-          execFileSync('git', ['push', '-u', 'origin', branch], opts);
-          pushed = true;
-        }
-      } catch {
-        // Push truly failed — still consider commit as success
-      }
-    }
-
-    // If push succeeded and this is an implement step, try to create PR (GH-329)
-    let prUrl = null;
-    if (pushed && envelope.step_type === 'implement') {
-      try {
-        const branch = execSync('git branch --show-current', opts).trim();
-        // Check if PR already exists
-        const existing = execFileSync('gh', ['pr', 'list', '--head', branch, '--json', 'url', '--limit', '1'], opts).trim();
-        const prs = JSON.parse(existing || '[]');
-        if (prs.length > 0) {
-          prUrl = prs[0].url;
-        } else {
-          const title = `${envelope.task_id}: auto-finalized implementation`;
-          const body = `Auto-created PR for ${envelope.task_id}.\\n\\nAgent wrote code but did not complete git workflow. Auto-finalized by Karvi step-worker.`;
-          const out = execFileSync('gh', ['pr', 'create', '--title', title, '--body', body, '--head', branch], opts).trim();
-          prUrl = out; // gh pr create outputs the PR URL
-        }
-      } catch (prErr) {
-        console.warn(`[step-worker] auto-finalize PR creation failed for ${envelope.task_id}:`, prErr.message?.slice(0, 200));
-      }
-    }
-
-    return { ok: true, commitHash: hash, prUrl };
-  } catch (err) {
-    return { ok: false, error: err.message?.slice(0, 200) || 'unknown' };
-  }
-}
-
-/**
- * Revert files that fall outside the task's scope config.
- * Default deny: .claude/** (most common agent scope creep target).
- * Returns { reverted: string[], kept: string[] }.
- */
-function applyScopeGuard(workDir, scopeConfig, changedFiles) {
-  const DEFAULT_DENY = ['.claude/**'];
-  const deny = (scopeConfig?.deny || []).concat(DEFAULT_DENY);
-  const allow = scopeConfig?.allow || [];
-
-  const reverted = [];
-  const kept = [];
-
-  for (const entry of changedFiles) {
-    // git status --porcelain format: "XY filename" (first 2 chars = status, char 3 = space)
-    const statusCode = entry.slice(0, 2).trim();
-    const filePath = entry.slice(3);
-
-    if (isOutOfScope(filePath, allow, deny)) {
-      revertFile(workDir, filePath, statusCode);
-      reverted.push(filePath);
-    } else {
-      kept.push(filePath);
-    }
-  }
-
-  return { reverted, kept };
-}
-
-function isOutOfScope(filePath, allow, deny) {
-  // Deny takes priority
-  for (const pattern of deny) {
-    if (path.matchesGlob(filePath, pattern)) return true;
-  }
-  // If allow list exists, file must match at least one
-  if (allow.length > 0) {
-    return !allow.some(pattern => path.matchesGlob(filePath, pattern));
-  }
-  return false;
-}
-
-function revertFile(workDir, filePath, statusCode) {
-  const opts = { cwd: workDir, encoding: 'utf8', timeout: 5000 };
-
-  if (statusCode === '??' || statusCode === 'A') {
-    // Untracked or newly added — delete
-    const fullPath = path.join(workDir, filePath);
-    if (fs.existsSync(fullPath)) {
-      fs.statSync(fullPath).isDirectory()
-        ? fs.rmSync(fullPath, { recursive: true })
-        : fs.unlinkSync(fullPath);
-    }
-  } else {
-    // Modified or deleted — restore from HEAD
-    execFileSync('git', ['checkout', '--', filePath], opts);
-  }
-}
-
-/**
- * Validate a deliverable contract after agent reports success.
- * Returns { ok: true } or { ok: false, reason: "..." }.
- *
- * @param {object} contract      - { deliverable, acceptance, file_path? }
- * @param {object} agentOutput   - { status, summary, payload, failure }
- * @param {object} postCheckResult - From runPostCheck()
- * @param {string} workDir       - Working directory
- */
-function validateContract(contract, agentOutput, postCheckResult, workDir) {
-  if (!contract || !contract.deliverable) return { ok: true };
-
-  switch (contract.deliverable) {
-    case 'pr':             return validatePrDeliverable(agentOutput, workDir);
-    case 'file':           return validateFileDeliverable(contract, workDir);
-    case 'artifact':       return validateArtifactDeliverable(agentOutput);
-    case 'command_result': return validateCommandResultDeliverable(agentOutput);
-    case 'issue':          return validateIssueDeliverable(agentOutput);
-    default:               return { ok: true }; // unknown type → pass (forward-compat)
-  }
-}
-
-function validatePrDeliverable(agentOutput, workDir) {
-  if (!workDir) return { ok: false, reason: 'deliverable pr: no working directory' };
-  const opts = { cwd: workDir, encoding: 'utf8', timeout: 15000 };
-
-  // Check for new commits
-  try {
-    const log = execSync('git log --oneline -1', opts).trim();
-    if (!log) return { ok: false, reason: 'deliverable pr: no commits found' };
-  } catch {
-    return { ok: false, reason: 'deliverable pr: git log failed (not a git repo?)' };
-  }
-
-  // Check for PR URL in agent summary or try gh pr list
-  const text = agentOutput.summary || '';
-  const hasPrUrl = /github\.com\/[^/]+\/[^/]+\/pull\/\d+/i.test(text);
-  if (hasPrUrl) return { ok: true };
-
-  try {
-    const branch = execSync('git branch --show-current', opts).trim();
-    if (branch) {
-      const prList = execFileSync('gh', ['pr', 'list', '--head', branch, '--json', 'url', '--limit', '1'], opts).trim();
-      const prs = JSON.parse(prList || '[]');
-      if (prs.length > 0) return { ok: true };
-    }
-  } catch {
-    // gh CLI not available — fall through
-  }
-
-  return { ok: false, reason: 'deliverable pr: no PR found for current branch' };
-}
-
-function validateFileDeliverable(contract, workDir) {
-  if (!workDir) return { ok: false, reason: 'deliverable file: no working directory' };
-  const filePath = contract.file_path;
-  if (!filePath) return { ok: false, reason: 'deliverable file: contract.file_path not specified' };
-
-  const fs = require('fs');
-  const path = require('path');
-  const resolved = path.resolve(workDir, filePath);
-
-  if (!fs.existsSync(resolved)) {
-    return { ok: false, reason: `deliverable file: ${filePath} does not exist` };
-  }
-  const stat = fs.statSync(resolved);
-  if (stat.size === 0) {
-    return { ok: false, reason: `deliverable file: ${filePath} is empty` };
-  }
-  return { ok: true };
-}
-
-function validateArtifactDeliverable(agentOutput) {
-  if (!agentOutput.payload) {
-    return { ok: false, reason: 'deliverable artifact: payload is null/empty' };
-  }
-  const summary = agentOutput.summary || '';
-  if (summary.length < 50) {
-    return { ok: false, reason: `deliverable artifact: summary too short (${summary.length} chars, need 50+)` };
-  }
-  return { ok: true };
-}
-
-function validateCommandResultDeliverable(agentOutput) {
-  const summary = agentOutput.summary || '';
-  if (!summary) {
-    return { ok: false, reason: 'deliverable command_result: summary is empty' };
-  }
-  return { ok: true };
-}
-
-function validateIssueDeliverable(agentOutput) {
-  const text = [agentOutput.summary || '', JSON.stringify(agentOutput.payload || '')].join(' ');
-  const hasIssueUrl = /github\.com\/[^/]+\/[^/]+\/issues\/\d+/i.test(text);
-  if (hasIssueUrl) return { ok: true };
-  return { ok: false, reason: 'deliverable issue: no GitHub issue URL found in output' };
 }
 
 /**
@@ -1280,8 +919,6 @@ function runPreflight(envelope, workDir) {
   if (targets.length === 0) return result; // No targets to check, proceed normally
 
   const opts = { cwd: workDir, encoding: 'utf8', timeout: 5000 };
-  const fs = require('fs');
-  const path = require('path');
 
   let matched = 0;
   for (const target of targets) {
@@ -1622,19 +1259,19 @@ function buildStepMessage(envelope, upstreamArtifacts, board, task) {
     lines.push('', '## Upstream Task Outputs');
     for (const u of upstreamArtifacts) {
       lines.push(`### ${u.id} — ${u.title || '(untitled)'} [${u.status}]`);
-      
+
       // Include summary if relevant
       if (relevance.include.includes('summary') && u.summary) {
         lines.push(u.summary);
       }
-      
+
       // Include payload if relevant
       if (relevance.include.includes('payload') && u.payload) {
         lines.push('```json');
         lines.push(JSON.stringify(u.payload, null, 2));
         lines.push('```');
       }
-      
+
       // Always add reference to full output file
       if (u.output_ref) {
         lines.push(`(Full output: ${u.output_ref})`);
@@ -1671,7 +1308,7 @@ function buildStepMessage(envelope, upstreamArtifacts, board, task) {
     if (envelope.retry_context.previous_error) lines.push(`  Previous error: ${envelope.retry_context.previous_error}`);
     if (envelope.retry_context.failure_mode) lines.push(`  Failure mode: ${envelope.retry_context.failure_mode}`);
     if (envelope.retry_context.remediation_hint) lines.push(`  Hint: ${envelope.retry_context.remediation_hint}`);
-    
+
     lines.push('', '## Before Starting');
     lines.push('Do NOT start over. Check existing work to avoid repeating:');
     const checklist = RETRY_CHECKLISTS[envelope.step_type];
@@ -1744,4 +1381,20 @@ function recoverExpiredLocks(board) {
   return recovered;
 }
 
-module.exports = { createStepWorker, parseStepResult, buildStepMessage, recoverExpiredLocks, runPreflight, extractPreflightTargets, validateContract, classifyError, applyScopeGuard, isOutOfScope, revertFile, renderTemplate, loadTemplate };
+module.exports = {
+  createStepWorker,
+  parseStepResult,
+  buildStepMessage,
+  recoverExpiredLocks,
+  runPreflight,
+  extractPreflightTargets,
+  // Re-exported from post-check.js for backward compatibility
+  validateContract,
+  classifyError,
+  applyScopeGuard,
+  isOutOfScope,
+  revertFile,
+  // Re-exported from webhook-emitter.js for backward compatibility (internal use)
+  renderTemplate,
+  loadTemplate,
+};
