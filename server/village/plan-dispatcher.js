@@ -15,6 +15,7 @@ const { uid, nowIso } = bb;
 const mgmt = require('../management');
 const { retryOnConflict } = require('../helpers/retry');
 const { buildContract } = require('./deliverable-contracts');
+const { resolvePolicy, resolveTaskTier } = require('./tool-tiers');
 const { createSignal } = require('../signal');
 
 /**
@@ -125,6 +126,13 @@ async function parsePlanAndDispatch(board, planData, helpers, deps, synthesisTas
       // Build deliverable contract from kind (if chief provided it)
       const contract = buildContract(pt.kind, pt.acceptance);
 
+      // Resolve tool tier based on kind/role/assignee
+      const tierPolicy = resolvePolicy(latestBoard);
+      const maxTier = pt.max_tier || resolveTaskTier(
+        { kind: pt.kind, assignee: pt.assignee, role: null },
+        tierPolicy
+      );
+
       const task = {
         id: taskId,
         title: pt.title || `Task ${i + 1}`,
@@ -133,6 +141,7 @@ async function parsePlanAndDispatch(board, planData, helpers, deps, synthesisTas
         depends: resolvedDepends,
         priority: pt.priority || 'P2',
         department: pt.department || null,
+        max_tier: maxTier,
         pipeline,
         source: {
           type: 'village_plan',

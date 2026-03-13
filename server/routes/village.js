@@ -432,9 +432,28 @@ module.exports = function villageRoutes(req, res, helpers, deps) {
           village.auto_approve = Boolean(body.auto_approve);
         }
 
+        // Tool tier policy: merge provided fields into existing policy
+        if (body.tool_tier_policy && typeof body.tool_tier_policy === 'object') {
+          const validTiers = new Set(['T0', 'T1', 'T2', 'T3', 'T4']);
+          const policy = body.tool_tier_policy;
+          const merged = village.tool_tier_policy || {};
+          for (const key of ['chief_max_tier', 'proposal_max_tier', 'default_worker_tier']) {
+            if (policy[key] !== undefined) {
+              if (!validTiers.has(policy[key])) {
+                return json(res, 400, { error: `invalid tier "${policy[key]}" for ${key}` });
+              }
+              merged[key] = policy[key];
+            }
+          }
+          if (policy.tier_upgrade_requires !== undefined) {
+            merged.tier_upgrade_requires = policy.tier_upgrade_requires;
+          }
+          village.tool_tier_policy = merged;
+        }
+
         helpers.writeBoard(board);
-        helpers.appendLog({ ts: now, event: 'village_config_updated', config: { auto_approve: village.auto_approve } });
-        return json(res, 200, { ok: true, auto_approve: village.auto_approve });
+        helpers.appendLog({ ts: now, event: 'village_config_updated', config: { auto_approve: village.auto_approve, tool_tier_policy: village.tool_tier_policy || null } });
+        return json(res, 200, { ok: true, auto_approve: village.auto_approve, tool_tier_policy: village.tool_tier_policy || null });
       } catch (error) {
         return json(res, 500, { error: error.message });
       }

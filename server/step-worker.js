@@ -17,6 +17,7 @@ const { resolveRepoRoot } = require('./repo-resolver');
 const { runHook } = require('./hook-runner');
 const { createSignal } = require('./signal');
 const { retryOnConflict } = require('./helpers/retry');
+const { checkTierAccess, requiredTierForStep, tierRestrictionPrompt } = require('./village/tool-tiers');
 const LOCK_GRACE_MS = 30_000; // 30s grace on top of step timeout
 const HEARTBEAT_DEBOUNCE_MS = 10_000; // Debounce heartbeat writes to 10s interval
 
@@ -351,7 +352,30 @@ function createStepWorker(deps) {
         : resultPrompt;
     }
 
-    // 3b. Preflight: check if work is already done (zero tokens)
+    // 3c. Tool tier enforcement: check task.max_tier vs step type requirement
+    if (task.max_tier) {
+      const stepRequired = requiredTierForStep(envelope.step_type);
+      const tierCheck = checkTierAccess(task.max_tier, stepRequired);
+      if (!tierCheck.allowed) {
+        console.warn(`[step-worker] tier violation: ${envelope.step_id} — ${tierCheck.reason}`);
+        return {
+          status: 'failed',
+          failure: { mode: 'TIER_VIOLATION', message: tierCheck.reason, retryable: false },
+          summary: `Tier violation: ${tierCheck.reason}`,
+          durationMs: 0,
+        };
+      }
+
+      // Inject tier restriction into system prompt so agent self-limits
+      const tierPrompt = tierRestrictionPrompt(task.max_tier);
+      if (tierPrompt) {
+        plan.systemPrompt = plan.systemPrompt
+          ? plan.systemPrompt + '\n\n' + tierPrompt
+          : tierPrompt;
+      }
+    }
+
+    // 3d. Preflight: check if work is already done (zero tokens)
     const preflightResult = runPreflight(envelope, plan.workingDir || plan.cwd);
 
     let status, failure, summary, durationMs, usage, postCheckResult, stepResult, sessionId;
