@@ -14,7 +14,7 @@ const http = require('http');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
-const { spawn, spawnSync } = require('child_process');
+const { spawn } = require('child_process');
 
 let PORT = Number(process.env.TEST_PORT) || 0;
 const API_TOKEN = process.env.KARVI_API_TOKEN || null;
@@ -207,7 +207,8 @@ async function testSSEContentVerification() {
 async function testConcurrentBoardWrite() {
   console.log('\n--- Test 2: Concurrent board.json write with optimistic locking ---');
 
-  // 直接測試 storage-json 的併發安全性（不透過 server API）
+  // 直接 require 內部模組：併發 race condition 測試需要控制兩個 writer 的精確時序，
+  // 無法透過 HTTP API 重現（API 是序列化的）
   const storageJson = require('./storage-json');
   const { OptimisticLockError } = require('./errors');
   const testBoardPath = path.join(tmpDataDir, 'test-concurrent-board.json');
@@ -384,9 +385,9 @@ async function testAutoDispatchLifecycle() {
   }
 
   // 3f: 模擬 step 推進 — plan → running → succeeded
+  // 直接 require：step state machine 的合法/非法轉換需要逐一驗證，
+  // 走 HTTP 需要實際 agent runtime 才能推進 step 狀態
   const { transitionStep, createStep } = require('./step-schema');
-
-  // 直接測試 step state machine（不走 HTTP，因為 runtime dispatch 需要實際 agent）
   const testStep = createStep('TEST-SM', 'run-sm', 'plan');
   if (testStep.state === 'queued') {
     ok('createStep() returns step in queued state');
@@ -435,6 +436,8 @@ async function testAutoDispatchLifecycle() {
 async function testTimeoutRetryDeadLetter() {
   console.log('\n--- Test 4: Runtime timeout -> retry -> dead letter ---');
 
+  // 直接 require：retry policy / backoff / error kind 是純邏輯，
+  // 無對應 HTTP endpoint，只能直接測試模組匯出
   const { createStep, transitionStep, ERROR_KINDS, computeBackoff, DEFAULT_RETRY_POLICY } = require('./step-schema');
 
   // 4a: TIMEOUT error kind 是 non-retryable
@@ -549,12 +552,11 @@ async function testTimeoutRetryDeadLetter() {
 
   // 跑完 3 次 failed → dead
   for (let i = 0; i < 3; i++) {
-    const patchMod = require('http');
     await new Promise((resolve, reject) => {
       const data = JSON.stringify({ state: 'running', locked_by: `w-${i}` });
       const headers = { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(data) };
       if (API_TOKEN) headers['Authorization'] = `Bearer ${API_TOKEN}`;
-      const req = patchMod.request({ hostname: 'localhost', port: PORT, path: '/api/tasks/T-DL-477/steps/T-DL-477:plan', method: 'PATCH', headers },
+      const req = http.request({ hostname: 'localhost', port: PORT, path: '/api/tasks/T-DL-477/steps/T-DL-477:plan', method: 'PATCH', headers },
         res => { let d = ''; res.on('data', c => d += c); res.on('end', () => resolve(d)); });
       req.on('error', reject);
       req.end(data);
@@ -563,7 +565,7 @@ async function testTimeoutRetryDeadLetter() {
       const data = JSON.stringify({ state: 'failed', error: `fail-${i}` });
       const headers = { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(data) };
       if (API_TOKEN) headers['Authorization'] = `Bearer ${API_TOKEN}`;
-      const req = patchMod.request({ hostname: 'localhost', port: PORT, path: '/api/tasks/T-DL-477/steps/T-DL-477:plan', method: 'PATCH', headers },
+      const req = http.request({ hostname: 'localhost', port: PORT, path: '/api/tasks/T-DL-477/steps/T-DL-477:plan', method: 'PATCH', headers },
         res => { let d = ''; res.on('data', c => d += c); res.on('end', () => resolve(d)); });
       req.on('error', reject);
       req.end(data);
@@ -585,6 +587,8 @@ async function testTimeoutRetryDeadLetter() {
 async function testHookErrorIsolation() {
   console.log('\n--- Test 5: Hook system error isolation ---');
 
+  // 直接 require：hook 錯誤隔離需要注入會 throw 的 hook 並驗證主流程不中斷，
+  // 無法透過 API 觸發特定 hook 失敗場景
   const hookSystem = require('./hook-system');
 
   // 5a: 建立會 throw 的 hook
