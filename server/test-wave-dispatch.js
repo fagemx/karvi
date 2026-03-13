@@ -177,11 +177,11 @@ async function runTests() {
     const board = await get('/api/tasks');
     const tasks = board.tasks || board.taskPlan?.tasks || [];
     const w1 = tasks.find(t => t.id === 'T-WAVE-1');
-    // wave-1 should proceed past wave filter (may or may not fully dispatch depending on worktree setup)
-    if (w1 && (w1.status === 'in_progress' || w1.status === 'dispatched' || w1.status === 'dispatching')) {
-      ok('Wave 1 task passed wave filter (status: ' + w1.status + ')');
+    // wave-1 should proceed past wave filter — status should be dispatched after POST status
+    if (w1 && w1.status === 'dispatched') {
+      ok('Wave 1 task passed wave filter (status: dispatched)');
     } else {
-      fail('Wave 1 dispatch', `expected dispatched/in_progress, got ${w1?.status}`);
+      fail('Wave 1 dispatch', `expected status "dispatched", got "${w1?.status}"`);
     }
   }
 

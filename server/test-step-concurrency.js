@@ -196,10 +196,10 @@ async function runTests() {
     const res = await post('/api/tasks/T-CONC-B/steps/dispatch-batch', {});
     if (res.ok && res.results) {
       const planResult = res.results.find(r => r.step_id === 'T-CONC-B:plan');
-      if (planResult && (planResult.status === 'dispatched' || planResult.status === 'skipped')) {
-        ok('Task B plan dispatchable after A completed (status: ' + planResult.status + ')');
+      if (planResult && planResult.status === 'dispatched') {
+        ok('Task B plan dispatched after A completed');
       } else {
-        fail('Concurrency slot freed', 'unexpected plan result: ' + JSON.stringify(planResult));
+        fail('Concurrency slot freed', `expected status "dispatched", got: ${JSON.stringify(planResult)}`);
       }
     } else {
       fail('Batch dispatch after completion', 'unexpected response: ' + JSON.stringify(res).slice(0, 100));
