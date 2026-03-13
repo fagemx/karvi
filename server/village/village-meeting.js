@@ -221,9 +221,11 @@ function buildSynthesisInstruction(chiefPrompt, goals) {
  *
  * @param {object} board - the full board object
  * @param {string} meetingType - "weekly_planning" | "midweek_checkin" | "emergency"
+ * @param {object} [opts] - optional { villageId } for multi-village support
  * @returns {object[]} array of task objects ready to be added to board.taskPlan.tasks
  */
-function generateMeetingTasks(board, meetingType) {
+function generateMeetingTasks(board, meetingType, opts) {
+  const villageId = opts?.villageId || null;
   // midweek_checkin reuses the active cycle's id; other types generate a new one
   const activeCycleId = board.village?.currentCycle?.cycleId;
   const cycleId = (meetingType === 'midweek_checkin' && activeCycleId)
@@ -256,7 +258,7 @@ function generateMeetingTasks(board, meetingType) {
     const taskId = `MTG-${cycleId}-checkin`;
     const instruction = buildCheckinInstruction(chiefPrompt, goals, execTasks);
 
-    return [{
+    const task = {
       id: taskId,
       title: 'Village Chief: Mid-week Check-in',
       assignee: 'engineer_lite',
@@ -269,7 +271,9 @@ function generateMeetingTasks(board, meetingType) {
         runtime_hint: 'claude',
       }],
       history: [{ ts: new Date().toISOString(), status: 'dispatched', reason: `meeting:${meetingType}` }],
-    }];
+    };
+    if (villageId) task.villageId = villageId;
+    return [task];
   }
 
   const proposalTasks = [];
@@ -284,7 +288,7 @@ function generateMeetingTasks(board, meetingType) {
     const taskId = `MTG-${cycleId}-proposal-${dept.id}`;
     proposalIds.push(taskId);
 
-    proposalTasks.push({
+    const proposalTask = {
       id: taskId,
       title: `${dept.name} Weekly Proposal`,
       assignee: dept.assignee || 'engineer_lite',
@@ -297,7 +301,9 @@ function generateMeetingTasks(board, meetingType) {
         runtime_hint: 'claude',
       }],
       history: [{ ts: new Date().toISOString(), status: 'dispatched', reason: `meeting:${meetingType}` }],
-    });
+    };
+    if (villageId) proposalTask.villageId = villageId;
+    proposalTasks.push(proposalTask);
   }
 
   // Synthesis task — depends on all proposals
@@ -315,6 +321,7 @@ function generateMeetingTasks(board, meetingType) {
     }],
     history: [{ ts: new Date().toISOString(), status: 'pending', reason: `meeting:${meetingType}` }],
   };
+  if (villageId) synthesisTask.villageId = villageId;
 
   return [...proposalTasks, synthesisTask];
 }

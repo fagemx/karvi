@@ -19,6 +19,7 @@ const { createScheduler } = require('./village/village-scheduler');
 const githubApi = require('./github-api');
 const usage = require('./usage');
 const { createServiceManager } = require('./service-manager');
+const { createRegistry } = require('./board-registry');
 
 const vault = require('./vault').createVault({ vaultDir: path.join(__dirname, 'vaults') });
 const hookSystem = require('./hook-system');
@@ -75,6 +76,15 @@ const ctx = bb.createContext({
   boardType: 'task-engine',
 });
 
+// --- Board Registry (multi-village support) ---
+const boardRegistry = createRegistry({
+  dataDir: DATA_DIR,
+  bb,
+  boardType: 'task-engine',
+  defaultCtx: ctx,
+});
+boardRegistry.discoverExistingVillages();
+
 // --- Dependency injection object ---
 const deps = {
   // External modules
@@ -97,6 +107,7 @@ const deps = {
   PUSH_TOKENS_PATH,
   DIR,
   DATA_DIR,
+  boardRegistry,
 
   // Step-level modules
   stepSchema: require('./step-schema'),
@@ -140,6 +151,7 @@ const briefsRoutes = require('./routes/briefs');
 const chatRoutes = require('./routes/chat');
 const jiraRoutes = require('./routes/jira');
 const villageRoutes = require('./routes/village');
+const villagesRoutes = require('./routes/villages');
 const projectsRoutes = require('./routes/projects');
 const tasksRoutes = require('./routes/tasks');
 const statusRoutes = require('./routes/status');
@@ -173,6 +185,7 @@ const routes = [
   chatRoutes,
   jiraRoutes,
   villageRoutes,
+  villagesRoutes,
   projectsRoutes,
   tasksRoutes,
   postmortemRoute,
