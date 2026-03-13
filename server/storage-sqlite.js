@@ -104,29 +104,40 @@ function writeBoard(boardPath, board) {
   }
 
   const db = getDb(boardPath);
-  const existing = db.prepare('SELECT version FROM boards WHERE board_key = ?').get(boardPath);
-  const currentVersion = existing ? existing.version : 0;
 
-  if (existing && board._version !== currentVersion) {
-    throw new OptimisticLockError(
-      `Version conflict: expected ${currentVersion}, got ${board._version}`,
-      currentVersion,
-      board._version
-    );
-  }
+  // BEGIN IMMEDIATE 取得 write lock，防止兩個 concurrent writer
+  // 同時讀到相同 version 的 TOCTOU race
+  db.exec('BEGIN IMMEDIATE');
+  try {
+    const existing = db.prepare('SELECT version FROM boards WHERE board_key = ?').get(boardPath);
+    const currentVersion = existing ? existing.version : 0;
 
-  board._version = currentVersion + 1;
-  const now = new Date().toISOString();
-  const data = JSON.stringify(board, null, 2);
+    if (existing && board._version !== currentVersion) {
+      throw new OptimisticLockError(
+        `Version conflict: expected ${currentVersion}, got ${board._version}`,
+        currentVersion,
+        board._version
+      );
+    }
 
-  if (existing) {
-    db.prepare(
-      'UPDATE boards SET data = ?, version = ?, updated_at = ? WHERE board_key = ?'
-    ).run(data, board._version, now, boardPath);
-  } else {
-    db.prepare(
-      'INSERT INTO boards (board_key, data, version, updated_at) VALUES (?, ?, ?, ?)'
-    ).run(boardPath, data, board._version, now);
+    board._version = currentVersion + 1;
+    const now = new Date().toISOString();
+    const data = JSON.stringify(board, null, 2);
+
+    if (existing) {
+      db.prepare(
+        'UPDATE boards SET data = ?, version = ?, updated_at = ? WHERE board_key = ?'
+      ).run(data, board._version, now, boardPath);
+    } else {
+      db.prepare(
+        'INSERT INTO boards (board_key, data, version, updated_at) VALUES (?, ?, ?, ?)'
+      ).run(boardPath, data, board._version, now);
+    }
+
+    db.exec('COMMIT');
+  } catch (e) {
+    db.exec('ROLLBACK');
+    throw e;
   }
 }
 

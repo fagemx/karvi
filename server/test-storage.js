@@ -306,17 +306,16 @@ function test_sqliteOptimisticLock() {
   });
 }
 
-function test_sqliteAppendLog() {
-  test('22. sqlite: appendLog + ensureLogFile', () => {
-    const lp = logPath('sqlite-log.jsonl');
-    storageSqlite.ensureLogFile(lp);
-    storageSqlite.appendLog(lp, { event: 'create', taskId: 'T1', ts: '2026-01-01' });
-    storageSqlite.appendLog(lp, { event: 'update', taskId: 'T2', ts: '2026-01-05' });
-    // verify by reading back
-    storageSqlite.readLogEntries(lp, {}).then(r => {
-      assert.strictEqual(r.length, 2, 'should have 2 entries');
-    });
-  });
+async function test_sqliteAppendLog() {
+  const lp = logPath('sqlite-log.jsonl');
+  storageSqlite.ensureLogFile(lp);
+  storageSqlite.appendLog(lp, { event: 'create', taskId: 'T1', ts: '2026-01-01' });
+  storageSqlite.appendLog(lp, { event: 'update', taskId: 'T2', ts: '2026-01-05' });
+  // verify by reading back
+  const r = await storageSqlite.readLogEntries(lp, {});
+  assert.strictEqual(r.length, 2, 'should have 2 entries');
+  console.log('  PASS  22. sqlite: appendLog + ensureLogFile');
+  passed++;
 }
 
 async function test_sqliteReadLogEntries() {
@@ -583,7 +582,7 @@ async function main() {
     test_sqliteBoardExists();
     test_sqliteReadBoardMissing();
     test_sqliteOptimisticLock();
-    test_sqliteAppendLog();
+    await test_sqliteAppendLog();
     await test_sqliteReadLogEntries();
     test_sqliteReadArchiveEntries();
 
