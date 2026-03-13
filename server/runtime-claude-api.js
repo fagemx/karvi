@@ -190,9 +190,10 @@ function safePath(workingDir, relativePath) {
  * @param {string} toolName - Name of the tool to execute
  * @param {object} toolInput - Tool input parameters
  * @param {string} workingDir - Working directory for file/command operations
+ * @param {object} [sandboxOpts] - Optional sandbox config { mode, config: { image, limits } }
  * @returns {string} Tool execution result as string
  */
-function executeToolCall(toolName, toolInput, workingDir) {
+function executeToolCall(toolName, toolInput, workingDir, sandboxOpts) {
   try {
     switch (toolName) {
       case 'read_file': {
@@ -210,8 +211,20 @@ function executeToolCall(toolName, toolInput, workingDir) {
 
       case 'bash': {
         const cmd = toolInput.command;
-        // Windows-first: use execFileSync with array args to prevent injection
-        // (LLM-generated cmd may contain crafted double quotes)
+
+        // Container sandbox mode: execute bash inside Docker container
+        if (sandboxOpts?.mode === 'container') {
+          const sandbox = require('./sandbox');
+          return sandbox.execInContainer({
+            image: sandboxOpts.config.image,
+            limits: sandboxOpts.config.limits,
+            workingDir,
+            command: cmd,
+            timeoutMs: TOOL_EXEC_TIMEOUT_MS,
+          });
+        }
+
+        // Direct mode: execute bash on host (existing behavior)
         const execOpts = {
           cwd: workingDir,
           timeout: TOOL_EXEC_TIMEOUT_MS,
@@ -257,6 +270,7 @@ function executeToolCall(toolName, toolInput, workingDir) {
  * @param {number} opts.maxTurns - Maximum conversation turns
  * @param {number} opts.timeoutSec - Total timeout in seconds
  * @param {number} opts.maxTokens - Max tokens per response
+ * @param {object} [opts.sandbox] - Sandbox execution mode { mode, config }
  * @returns {Promise<{response: object, usage: {input_tokens: number, output_tokens: number}, turns: number}>}
  */
 async function runConversationLoop(opts) {
@@ -270,6 +284,7 @@ async function runConversationLoop(opts) {
     maxTurns = DEFAULT_MAX_TURNS,
     timeoutSec = DEFAULT_TIMEOUT_SEC,
     maxTokens = DEFAULT_MAX_TOKENS,
+    sandbox = null,
   } = opts;
 
   const deadline = Date.now() + timeoutSec * 1000;
@@ -325,7 +340,7 @@ async function runConversationLoop(opts) {
 
     // Execute each tool call and collect results
     const toolResults = toolUseBlocks.map(block => {
-      const result = executeToolCall(block.name, block.input, workingDir);
+      const result = executeToolCall(block.name, block.input, workingDir, sandbox);
       return {
         type: 'tool_result',
         tool_use_id: block.id,
@@ -404,6 +419,7 @@ function create(opts = {}) {
       maxTurns: DEFAULT_MAX_TURNS,
       timeoutSec: plan.timeoutSec || DEFAULT_TIMEOUT_SEC,
       maxTokens: DEFAULT_MAX_TOKENS,
+      sandbox: plan.sandbox || null,
     });
 
     // 6. Surface accumulated usage for extractUsage() to find on parsed

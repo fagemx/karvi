@@ -284,6 +284,16 @@ function createStepWorker(deps) {
     plan.stepId = envelope.step_id;
     plan.stepType = envelope.step_type;
 
+    // 1b. Resolve sandbox configuration — attach to plan for runtime use
+    const sandbox = require('./sandbox');
+    const sandboxMode = sandbox.resolveExecutionMode(mgmt.getControls(board));
+    plan.sandbox = sandboxMode;
+    if (sandboxMode.mode === 'container') {
+      console.log(`[step-worker] sandbox: container mode (image=${sandboxMode.config.image})`);
+    } else if (sandboxMode.degraded) {
+      console.log(`[step-worker] sandbox: degraded to direct (Docker unavailable)`);
+    }
+
     // 2. Set lock with expiry before dispatch (uses same timeoutMs as runtime)
     const lockBoard = helpers.readBoard();
     const lockTask = (lockBoard.taskPlan?.tasks || []).find(t => t.id === envelope.task_id);
