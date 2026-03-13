@@ -459,13 +459,15 @@ function tasksLifecycleRoutes(req, res, helpers, deps, internals) {
             .catch(err => console.error('[jira] notify failed:', err.message));
         }
 
-        if (['completed', 'blocked', 'needs_revision', 'approved', 'cancelled'].includes(newStatus)) {
-          push.notifyTaskEvent(PUSH_TOKENS_PATH, task, `task.${newStatus}`)
-            .catch(err => console.error('[push] notify failed:', err.message));
-        }
-        if (allApproved) {
-          push.notifyTaskEvent(PUSH_TOKENS_PATH, task, 'all.approved')
-            .catch(err => console.error('[push] all-approved notify failed:', err.message));
+        if (push && PUSH_TOKENS_PATH) {
+          if (['completed', 'blocked', 'needs_revision', 'approved', 'cancelled'].includes(newStatus)) {
+            push.notifyTaskEvent(PUSH_TOKENS_PATH, task, `task.${newStatus}`)
+              .catch(err => console.error('[push] notify failed:', err.message));
+          }
+          if (allApproved) {
+            push.notifyTaskEvent(PUSH_TOKENS_PATH, task, 'all.approved')
+              .catch(err => console.error('[push] all-approved notify failed:', err.message));
+          }
         }
 
         if (newStatus === 'completed') {
