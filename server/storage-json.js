@@ -13,17 +13,43 @@
  *   readArchiveEntries(archivePath, opts) → { total, entries }
  *   boardExists(boardPath) → boolean
  *   ensureLogFile(logPath) → void
+ *
+ * Encryption:
+ *   When board.meta.encryption_enabled is true, sensitive fields are
+ *   encrypted at rest using AES-256-GCM. Key from KARVI_ENCRYPTION_KEY
+ *   or board.meta.encryption_key_path file.
  */
 const fs = require('fs');
 const readline = require('readline');
 const path = require('path');
 const os = require('os');
+const enc = require('./encryption');
+
+function ensureEncryptionInitialized(boardPath, board) {
+  if (board?.meta?.encryption_key_path) {
+    const keyPath = path.resolve(path.dirname(boardPath), board.meta.encryption_key_path);
+    if (enc.getKeyPath() !== keyPath) {
+      enc.initialize({ keyPath });
+    }
+  }
+}
 
 function readBoard(boardPath) {
   const board = JSON.parse(fs.readFileSync(boardPath, 'utf8'));
   
   if (typeof board._version !== 'number') {
     board._version = 0;
+  }
+  
+  ensureEncryptionInitialized(boardPath, board);
+  
+  if (board.meta?.encryption_enabled && enc.isEnabled()) {
+    try {
+      return enc.decryptBoard(board);
+    } catch (err) {
+      console.error('[storage] Decryption failed:', err.message);
+      throw err;
+    }
   }
   
   return board;
@@ -37,9 +63,10 @@ function writeBoard(boardPath, board) {
   }
   
   let currentVersion = 0;
+  let currentBoard = null;
   try {
-    const current = JSON.parse(fs.readFileSync(boardPath, 'utf8'));
-    currentVersion = current._version || 0;
+    currentBoard = JSON.parse(fs.readFileSync(boardPath, 'utf8'));
+    currentVersion = currentBoard._version || 0;
   } catch (err) {
     if (err.code !== 'ENOENT') {
       console.warn('[storage] warning: could not read board for version check:', err.message);
@@ -57,9 +84,16 @@ function writeBoard(boardPath, board) {
   
   board._version++;
   
+  ensureEncryptionInitialized(boardPath, board);
+  
+  let dataToWrite = board;
+  if (board.meta?.encryption_enabled && enc.isEnabled() && !board.meta.encrypted_at) {
+    dataToWrite = enc.encryptBoard(board);
+  }
+  
   const dir = path.dirname(boardPath);
   const tmpPath = path.join(dir, `.board-${process.pid}-${Date.now()}.tmp`);
-  const data = JSON.stringify(board, null, 2);
+  const data = JSON.stringify(dataToWrite, null, 2);
   fs.writeFileSync(tmpPath, data, 'utf8');
   fs.renameSync(tmpPath, boardPath);
 }
