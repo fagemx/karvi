@@ -413,6 +413,49 @@ async function main() {
   // Clean up: reset cost_routing
   await post('/api/controls', { cost_routing: null });
 
+  // Step 21: Governance Interaction Panel (#165)
+  console.log('\nStep 21: Testing governance interaction panel...');
+
+  // 21a: GET /api/village/chief/brief — status card
+  const brief = await get('/api/village/chief/brief');
+  if (brief.summary === undefined) { fail('brief should have summary', JSON.stringify(brief)); }
+  else { ok('GET /api/village/chief/brief returns status card'); }
+
+  // 21b: GET /api/village/chief/ask — no pending questions initially
+  const askList = await get('/api/village/chief/ask');
+  if (!Array.isArray(askList.questions)) { fail('ask should return questions array', JSON.stringify(askList)); }
+  else { ok('GET /api/village/chief/ask returns questions array'); }
+
+  // 21c: POST /api/village/chief/command — unknown command
+  const badCmd = await post('/api/village/chief/command', { command: 'nonexistent' });
+  if (!badCmd.error) { fail('unknown command should error', JSON.stringify(badCmd)); }
+  else { ok('Unknown command returns error'); }
+
+  // 21d: POST /api/village/chief/command — set_budget
+  const setBudget = await post('/api/village/chief/command', { command: 'set_budget', limit: 50 });
+  if (!setBudget.ok || setBudget.result?.budget_limit !== 50) { fail('set_budget should succeed', JSON.stringify(setBudget)); }
+  else { ok('set_budget command sets budget_limit'); }
+
+  // 21e: Verify brief reflects budget
+  const brief2 = await get('/api/village/chief/brief');
+  if (!brief2.budget || brief2.budget.limit !== 50) { fail('brief should show budget', JSON.stringify(brief2)); }
+  else { ok('Brief reflects budget after set_budget command'); }
+
+  // 21f: POST /api/village/chief/command — force_human_gate
+  const gate = await post('/api/village/chief/command', { command: 'force_human_gate' });
+  if (!gate.ok) { fail('force_human_gate should succeed', JSON.stringify(gate)); }
+  else { ok('force_human_gate command succeeds'); }
+
+  // 21g: POST /api/village/chief/command — missing required field
+  const badPriority = await post('/api/village/chief/command', { command: 'override_priority' });
+  if (!badPriority.error) { fail('missing taskId should error', JSON.stringify(badPriority)); }
+  else { ok('Missing required field returns error'); }
+
+  // 21h: POST /api/village/chief/ask — answer validation
+  const badAnswer = await post('/api/village/chief/ask', { question_id: 'nonexistent', answer: 'x' });
+  if (!badAnswer.error) { fail('nonexistent question should 404', JSON.stringify(badAnswer)); }
+  else { ok('Answering nonexistent question returns error'); }
+
   console.log('\n=== Done ===');
   // RBAC tests are in server/test-rbac.js (dedicated test)
   stopServer();

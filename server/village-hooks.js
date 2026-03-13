@@ -5,13 +5,14 @@
  * out of the kernel so kernel.js only handles core step pipeline routing.
  *
  * Hook points:
- *   onTaskBlocked  — dead_letter / human_review with meeting task stall detection
- *   onTaskDone     — synthesis plan dispatch + cycle completion check
+ *   onTaskBlocked  — dead_letter / human_review with meeting task stall detection + governance question
+ *   onTaskDone     — synthesis plan dispatch + cycle completion check + budget threshold check
  *   onTaskUnlocked — proposals_ready push for synthesis tasks
  */
 const planDispatcher = require('./village/plan-dispatcher');
 const cycleWatchdog = require('./village/cycle-watchdog');
 const { createSignal } = require('./signal');
+const { createGovernanceQuestion } = require('./routes/village');
 
 /**
  * Check if a blocked/reviewed meeting task has stalled the cycle.
@@ -25,6 +26,32 @@ const { createSignal } = require('./signal');
  * @returns {boolean} true if cycle was stalled and closed (caller should return early)
  */
 function onTaskBlocked(board, taskId, task, helpers, deps) {
+  // Generate governance question for task failures (#165)
+  if (task && board.village) {
+    const blockerType = task.blocker?.type || 'unknown';
+    const blockerReason = task.blocker?.reason || 'Task failed';
+
+    // Build budget context if available
+    let budgetCtx = '';
+    if (task.budget?.used?.cost !== undefined) {
+      const limit = board.village.budget_limit || board.controls?.budget_limit;
+      if (limit) {
+        const remaining = Math.round((limit - task.budget.used.cost) * 100) / 100;
+        budgetCtx = ` Budget remaining: $${remaining}`;
+      }
+    }
+
+    createGovernanceQuestion(board, {
+      asked_by: 'system',
+      context: `${taskId} blocked: ${blockerReason}.${budgetCtx}`,
+      question: `Task ${taskId} failed (${blockerType}). How to proceed?`,
+      options: ['retry', 'retry_with_pro', 'mark_blocked', 'skip_task'],
+      default_answer: 'mark_blocked',
+      trigger: 'task_failure',
+      refs: [taskId],
+    }, helpers);
+  }
+
   if (!cycleWatchdog.isMeetingTask(taskId)) return false;
 
   const health = cycleWatchdog.checkCycleHealth(board);
@@ -84,6 +111,28 @@ async function onTaskDone(board, task, step, helpers, deps) {
           console.error(`[kernel] push error for village.plan_ready (needsApproval):`, err.message);
           _pushFailedSignal(board, null, 'village.plan_ready', err, helpers, deps);
         });
+      }
+    }
+  }
+
+  // --- Budget threshold check (#165) ---
+  if (task && board.village && task.budget?.used?.cost !== undefined) {
+    const budgetLimit = board.village.budget_limit || board.controls?.budget_limit;
+    if (budgetLimit && budgetLimit > 0) {
+      const pctUsed = (task.budget.used.cost / budgetLimit) * 100;
+      // If >80% budget consumed, generate governance question (once per task)
+      if (pctUsed >= 80 && !task._budget_question_asked) {
+        task._budget_question_asked = true;
+        const remaining = Math.round((budgetLimit - task.budget.used.cost) * 100) / 100;
+        createGovernanceQuestion(board, {
+          asked_by: 'system',
+          context: `Task ${task.id} has consumed ${Math.round(pctUsed)}% of budget. Remaining: $${remaining}`,
+          question: `Budget threshold exceeded (${Math.round(pctUsed)}%). Continue spending?`,
+          options: ['continue', 'pause_cycle', 'reduce_scope'],
+          default_answer: 'continue',
+          trigger: 'budget_threshold',
+          refs: [task.id],
+        }, helpers);
       }
     }
   }
