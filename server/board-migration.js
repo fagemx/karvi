@@ -61,6 +61,23 @@ function migrateEnsureVillage(board, deps) {
 }
 
 /**
+ * Migration: ensure village governance fields exist (#165)
+ */
+function migrateEnsureVillageGovernance(board) {
+  if (!board.village) return false;
+  let changed = false;
+  if (!Array.isArray(board.village.pending_questions)) {
+    board.village.pending_questions = [];
+    changed = true;
+  }
+  if (!Array.isArray(board.village.command_history)) {
+    board.village.command_history = [];
+    changed = true;
+  }
+  return changed;
+}
+
+/**
  * Migration: recover expired step locks
  */
 function migrateRecoverExpiredLocks(board, deps) {
@@ -79,6 +96,7 @@ const MIGRATIONS = [
   { name: 'ensure-lessons', fn: migrateEnsureLessons },
   { name: 'ensure-projects', fn: migrateEnsureProjects },
   { name: 'ensure-village', fn: migrateEnsureVillage },
+  { name: 'ensure-village-governance', fn: migrateEnsureVillageGovernance },
   { name: 'recover-expired-locks', fn: migrateRecoverExpiredLocks },
 ];
 

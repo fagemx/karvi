@@ -10,18 +10,38 @@
  * POST /api/village/approve      — approve pending plan and dispatch execution tasks
  * GET  /api/village/profile      — get active chief profile + list available profiles
  * PUT  /api/village/profile      — switch active chief profile
+ *
+ * --- Governance Interaction Panel (#165) ---
+ * GET  /api/village/chief/brief   — status card (pure data, no LLM)
+ * GET  /api/village/chief/ask     — list pending governance questions
+ * POST /api/village/chief/ask     — answer a governance question
+ * POST /api/village/chief/command — execute a governance command
  */
 const bb = require('../blackboard-server');
-const { json } = bb;
+const { json, uid, nowIso } = bb;
 const { requireRole } = require('./_shared');
 const { retryOnConflict } = require('../helpers/retry');
 const chiefProfile = require('../village/chief-profile');
+
+// --- Governance command definitions (#165) ---
+const GOVERNANCE_COMMANDS = {
+  set_profile: { requiredFields: ['profile'], description: 'Switch chief personality' },
+  set_budget: { requiredFields: ['limit'], description: 'Adjust cycle budget' },
+  pause_cycle: { requiredFields: [], description: 'Pause dispatching' },
+  resume_cycle: { requiredFields: [], description: 'Resume dispatching' },
+  override_priority: { requiredFields: ['taskId', 'priority'], description: 'Change task priority' },
+  force_human_gate: { requiredFields: [], description: 'Require approval for next dispatch' },
+  approve_plan: { requiredFields: [], description: 'Approve pending synthesis plan' },
+  skip_task: { requiredFields: ['taskId'], description: 'Mark task as skipped' },
+};
 
 // --- Default village block for board.json ---
 const DEFAULT_VILLAGE = {
   goals: [],
   departments: [],
   currentCycle: null,
+  pending_questions: [],
+  command_history: [],
 };
 
 /**
@@ -51,6 +71,8 @@ function ensureVillage(board) {
   }
   if (!Array.isArray(board.village.goals)) board.village.goals = [];
   if (!Array.isArray(board.village.departments)) board.village.departments = [];
+  if (!Array.isArray(board.village.pending_questions)) board.village.pending_questions = [];
+  if (!Array.isArray(board.village.command_history)) board.village.command_history = [];
   return board.village;
 }
 
@@ -625,9 +647,375 @@ module.exports = function villageRoutes(req, res, helpers, deps) {
     return;
   }
 
+  // ══════════════════════════════════════════════════════
+  // Governance Interaction Panel (#165)
+  // ══════════════════════════════════════════════════════
+
+  // ── GET /api/village/chief/brief — status card (pure data, no LLM) ──
+  if (req.method === 'GET' && pathname === '/api/village/chief/brief') {
+    const board = helpers.readBoard();
+    const village = ensureVillage(board);
+    const allTasks = board.taskPlan?.tasks || [];
+    const cycle = village.currentCycle;
+
+    // Budget: aggregate from village-level or controls
+    const controls = board.controls || {};
+    const budgetLimit = village.budget_limit || controls.budget_limit || null;
+    let budgetSpent = 0;
+    if (cycle) {
+      const execIds = cycle.executionTaskIds || [];
+      for (const id of execIds) {
+        const t = allTasks.find(tt => tt.id === id);
+        if (t?.budget?.used?.cost) budgetSpent += t.budget.used.cost;
+      }
+    }
+
+    // Task summary for current cycle
+    const cycleTasks = [];
+    if (cycle) {
+      const execIds = new Set(cycle.executionTaskIds || []);
+      const meetingIds = new Set(cycle.taskIds || []);
+      const relevantIds = new Set([...execIds, ...meetingIds]);
+      for (const t of allTasks) {
+        if (!relevantIds.has(t.id)) continue;
+        cycleTasks.push({
+          id: t.id,
+          title: t.title,
+          status: t.status,
+          department: t.department || null,
+          blocker: t.blocker ? t.blocker.reason || t.blocker.type : null,
+          pr_url: t.result?.pr_url || null,
+        });
+      }
+    }
+
+    // Count by status
+    const statusCounts = { completed: 0, in_progress: 0, blocked: 0, pending: 0 };
+    for (const t of cycleTasks) {
+      if (t.status === 'approved') statusCounts.completed++;
+      else if (t.status === 'in_progress' || t.status === 'running' || t.status === 'dispatched') statusCounts.in_progress++;
+      else if (t.status === 'blocked') statusCounts.blocked++;
+      else statusCounts.pending++;
+    }
+    const total = cycleTasks.length;
+    const summary = `${statusCounts.completed}/${total} tasks completed` +
+      (statusCounts.blocked > 0 ? `, ${statusCounts.blocked} blocked` : '') +
+      (statusCounts.in_progress > 0 ? `, ${statusCounts.in_progress} in progress` : '');
+
+    const pendingQuestions = village.pending_questions.filter(q => q.status === 'pending');
+
+    return json(res, 200, {
+      cycle: cycle?.cycleId || null,
+      phase: cycle?.phase || null,
+      summary,
+      tasks: cycleTasks,
+      decisions_needed: pendingQuestions.length,
+      budget: budgetLimit !== null
+        ? { spent: Math.round(budgetSpent * 100) / 100, limit: budgetLimit }
+        : null,
+    });
+  }
+
+  // ── GET /api/village/chief/ask — list pending questions ──
+  if (req.method === 'GET' && pathname === '/api/village/chief/ask') {
+    const board = helpers.readBoard();
+    const village = ensureVillage(board);
+    const statusFilter = url.searchParams.get('status') || 'pending';
+    const questions = statusFilter === 'all'
+      ? village.pending_questions
+      : village.pending_questions.filter(q => q.status === statusFilter);
+    return json(res, 200, { questions });
+  }
+
+  // ── POST /api/village/chief/ask — answer a question ──
+  if (req.method === 'POST' && pathname === '/api/village/chief/ask') {
+    if (requireRole(req, res, 'operator')) return;
+    helpers.parseBody(req).then(body => {
+      if (!body.question_id) {
+        return json(res, 400, { error: 'question_id is required' });
+      }
+      if (body.answer === undefined) {
+        return json(res, 400, { error: 'answer is required' });
+      }
+
+      const board = helpers.readBoard();
+      const village = ensureVillage(board);
+      const question = village.pending_questions.find(q => q.id === body.question_id);
+      if (!question) {
+        return json(res, 404, { error: `Question ${body.question_id} not found` });
+      }
+      if (question.status !== 'pending') {
+        return json(res, 409, { error: `Question ${body.question_id} is already ${question.status}` });
+      }
+
+      // Validate answer against options if present
+      if (Array.isArray(question.options) && question.options.length > 0) {
+        if (!question.options.includes(body.answer)) {
+          return json(res, 400, {
+            error: `Invalid answer. Must be one of: ${question.options.join(', ')}`,
+            options: question.options,
+          });
+        }
+      }
+
+      question.status = 'answered';
+      question.answer = body.answer;
+      question.answeredAt = helpers.nowIso();
+      question.answeredBy = body.answeredBy || 'human';
+
+      helpers.writeBoard(board);
+      helpers.appendLog({
+        ts: helpers.nowIso(),
+        event: 'governance_question_answered',
+        questionId: question.id,
+        answer: body.answer,
+        answeredBy: question.answeredBy,
+      });
+      helpers.broadcastSSE('governance_question_answered', {
+        questionId: question.id,
+        answer: body.answer,
+      });
+
+      return json(res, 200, { ok: true, question });
+    }).catch(e => json(res, 400, { error: e.message }));
+    return;
+  }
+
+  // ── POST /api/village/chief/command — execute governance command ──
+  if (req.method === 'POST' && pathname === '/api/village/chief/command') {
+    if (requireRole(req, res, 'operator')) return;
+    helpers.parseBody(req).then(async body => {
+      const commandType = body.command;
+      if (!commandType) {
+        return json(res, 400, { error: 'command is required' });
+      }
+      const cmdDef = GOVERNANCE_COMMANDS[commandType];
+      if (!cmdDef) {
+        return json(res, 400, {
+          error: `Unknown command "${commandType}"`,
+          available: Object.keys(GOVERNANCE_COMMANDS),
+        });
+      }
+
+      // Validate required fields
+      for (const field of cmdDef.requiredFields) {
+        if (body[field] === undefined) {
+          return json(res, 400, { error: `"${field}" is required for command "${commandType}"` });
+        }
+      }
+
+      try {
+        const result = await retryOnConflict(async () => {
+          const board = helpers.readBoard();
+          const village = ensureVillage(board);
+          const now = helpers.nowIso();
+          let commandResult = {};
+
+          switch (commandType) {
+            case 'set_profile': {
+              const profile = body.profile;
+              if (profile !== null) {
+                if (!chiefProfile.isValidProfileName(profile)) {
+                  const err = new Error('invalid profile name');
+                  err.statusCode = 400;
+                  throw err;
+                }
+                const loaded = chiefProfile.loadProfile(profile);
+                if (!loaded) {
+                  const err = new Error(`profile "${profile}" not found`);
+                  err.statusCode = 404;
+                  throw err;
+                }
+                village.chief_profile = profile;
+                commandResult = { profile, governance: loaded.governance };
+              } else {
+                delete village.chief_profile;
+                commandResult = { profile: null };
+              }
+              break;
+            }
+
+            case 'set_budget': {
+              const limit = Number(body.limit);
+              if (isNaN(limit) || limit < 0) {
+                const err = new Error('limit must be a non-negative number');
+                err.statusCode = 400;
+                throw err;
+              }
+              village.budget_limit = limit;
+              commandResult = { budget_limit: limit };
+              break;
+            }
+
+            case 'pause_cycle': {
+              if (!village.currentCycle) {
+                const err = new Error('no active cycle to pause');
+                err.statusCode = 409;
+                throw err;
+              }
+              village.currentCycle.paused = true;
+              commandResult = { cycleId: village.currentCycle.cycleId, paused: true };
+              break;
+            }
+
+            case 'resume_cycle': {
+              if (!village.currentCycle) {
+                const err = new Error('no active cycle to resume');
+                err.statusCode = 409;
+                throw err;
+              }
+              village.currentCycle.paused = false;
+              commandResult = { cycleId: village.currentCycle.cycleId, paused: false };
+              break;
+            }
+
+            case 'override_priority': {
+              const validPriorities = ['P0', 'P1', 'P2', 'P3'];
+              if (!validPriorities.includes(body.priority)) {
+                const err = new Error(`Invalid priority. Must be one of: ${validPriorities.join(', ')}`);
+                err.statusCode = 400;
+                throw err;
+              }
+              const allTasks = board.taskPlan?.tasks || [];
+              const task = allTasks.find(t => t.id === body.taskId);
+              if (!task) {
+                const err = new Error(`Task ${body.taskId} not found`);
+                err.statusCode = 404;
+                throw err;
+              }
+              const previous = task.priority;
+              task.priority = body.priority;
+              task.history = task.history || [];
+              task.history.push({ ts: now, event: 'priority_override', by: 'governance_command', from: previous, to: body.priority });
+              commandResult = { taskId: body.taskId, previous, priority: body.priority };
+              break;
+            }
+
+            case 'force_human_gate': {
+              village.force_human_gate = true;
+              commandResult = { force_human_gate: true };
+              break;
+            }
+
+            case 'approve_plan': {
+              if (!village.currentCycle || village.currentCycle.phase !== 'awaiting_approval') {
+                const err = new Error(`Current cycle phase is "${village.currentCycle?.phase || 'none'}", expected "awaiting_approval"`);
+                err.statusCode = 409;
+                throw err;
+              }
+              // Delegate to the existing approval logic by marking for external handling
+              village.currentCycle._approve_requested = true;
+              commandResult = { cycleId: village.currentCycle.cycleId, approved: true };
+              break;
+            }
+
+            case 'skip_task': {
+              const allTasks = board.taskPlan?.tasks || [];
+              const task = allTasks.find(t => t.id === body.taskId);
+              if (!task) {
+                const err = new Error(`Task ${body.taskId} not found`);
+                err.statusCode = 404;
+                throw err;
+              }
+              const previousStatus = task.status;
+              task.status = 'skipped';
+              task.history = task.history || [];
+              task.history.push({ ts: now, event: 'skipped', by: 'governance_command', previousStatus });
+              commandResult = { taskId: body.taskId, previousStatus, status: 'skipped' };
+              break;
+            }
+          }
+
+          // Record in command history
+          village.command_history.push({
+            id: uid('cmd'),
+            command: commandType,
+            params: body,
+            result: commandResult,
+            executedAt: now,
+            executedBy: body.executedBy || 'human',
+          });
+
+          // Trim command history to last 100 entries
+          if (village.command_history.length > 100) {
+            village.command_history = village.command_history.slice(-100);
+          }
+
+          helpers.writeBoard(board);
+          helpers.appendLog({
+            ts: now,
+            event: 'governance_command',
+            command: commandType,
+            result: commandResult,
+          });
+          helpers.broadcastSSE('governance_command', {
+            command: commandType,
+            result: commandResult,
+          });
+
+          return { ok: true, command: commandType, result: commandResult };
+        }, 3);
+
+        return json(res, 200, result);
+      } catch (error) {
+        if (error.code === 'VERSION_CONFLICT') {
+          return json(res, 503, {
+            error: 'Service temporarily unavailable',
+            code: 'VERSION_CONFLICT',
+            message: 'Board is under high contention, please retry later',
+          });
+        }
+        return json(res, error.statusCode || 500, { error: error.message });
+      }
+    }).catch(e => json(res, 400, { error: e.message }));
+    return;
+  }
+
   return false;
 };
 
 // Export for use in server.js startup (ensure village defaults on board)
 module.exports.ensureVillage = ensureVillage;
 module.exports.DEFAULT_VILLAGE = DEFAULT_VILLAGE;
+
+/**
+ * Create a governance question and add it to the board.
+ * Called by village-hooks.js and kernel.js when triggers occur.
+ *
+ * @param {object} board - Board object (mutated)
+ * @param {object} opts - { asked_by, context, question, options, default_answer, trigger, refs }
+ * @param {object} helpers - { nowIso, writeBoard, appendLog, broadcastSSE }
+ * @returns {object} The created question object
+ */
+function createGovernanceQuestion(board, opts, helpers) {
+  const village = ensureVillage(board);
+  const question = {
+    id: uid('q'),
+    asked_by: opts.asked_by || 'system',
+    context: opts.context || '',
+    question: opts.question,
+    options: Array.isArray(opts.options) ? opts.options : [],
+    default: opts.default_answer || null,
+    trigger: opts.trigger || null,
+    refs: Array.isArray(opts.refs) ? opts.refs : [],
+    status: 'pending',
+    createdAt: helpers.nowIso(),
+  };
+  village.pending_questions.push(question);
+
+  helpers.appendLog({
+    ts: helpers.nowIso(),
+    event: 'governance_question_created',
+    questionId: question.id,
+    trigger: question.trigger,
+  });
+  helpers.broadcastSSE('governance_question_created', {
+    questionId: question.id,
+    question: question.question,
+    options: question.options,
+  });
+
+  return question;
+}
+
+module.exports.createGovernanceQuestion = createGovernanceQuestion;

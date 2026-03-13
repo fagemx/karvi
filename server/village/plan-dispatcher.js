@@ -161,7 +161,7 @@ async function parsePlanAndDispatch(board, planData, helpers, deps, synthesisTas
         }],
       };
 
-      // Attach contract if kind is known; unknown kind → needs_input
+      // Attach contract if kind is known; unknown kind → needs_input + governance question (#165)
       if (pt.kind) {
         if (contract) {
           task.contract = contract;
@@ -169,6 +169,18 @@ async function parsePlanAndDispatch(board, planData, helpers, deps, synthesisTas
           task.status = 'blocked';
           task.blocker = { type: 'unknown_kind', reason: `Unknown deliverable kind: ${pt.kind}` };
           console.warn(`[village:plan-dispatcher] unknown kind "${pt.kind}" for task "${pt.title}", marking blocked`);
+
+          // Generate governance question for unknown kind
+          const { createGovernanceQuestion } = require('../routes/village');
+          createGovernanceQuestion(latestBoard, {
+            asked_by: 'chief',
+            context: `Task "${pt.title}" has unknown deliverable kind: "${pt.kind}"`,
+            question: `Unknown kind "${pt.kind}" for task "${pt.title}". How to proceed?`,
+            options: ['define_kind', 'skip_task', 'use_default'],
+            default_answer: 'use_default',
+            trigger: 'unknown_kind',
+            refs: [taskId],
+          }, helpers);
         }
       }
 
