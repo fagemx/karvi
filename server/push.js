@@ -158,6 +158,8 @@ function buildNotification(task, eventType, extra) {
       taskId: task.id,
       eventType,
       url: `karvi:///task/${task.id}`,
+      action: eventType === 'task.completed' ? 'gate' : undefined,
+      gateUrl: eventType === 'task.completed' ? `karvi:///gate/${task.id}` : undefined,
     },
   };
 }

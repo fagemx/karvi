@@ -49,6 +49,13 @@ const DEFAULT_CONTROLS = {
   hooks_before_run: '',               // shell command run before agent starts
   hooks_after_run: '',                // shell command run after agent completes
   budget_per_task: null,              // max cost per task in USD (null = unlimited)
+  tunnel_enabled: false,              // enable SSH reverse tunnel for remote access
+  tunnel_relay_host: null,            // SSH relay server hostname (e.g., "relay.example.com")
+  tunnel_remote_port: 0,              // remote port (0 = let server allocate)
+  tunnel_ssh_port: 22,                // SSH port on relay server
+  tunnel_ssh_user: null,              // SSH username (null = current user)
+  tunnel_identity_file: null,         // SSH private key path (null = default)
+  remote_auth_token: null,            // Bearer token for remote requests (local bypasses auth)
 };
 
 function getControls(board) {

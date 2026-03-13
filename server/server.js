@@ -154,8 +154,10 @@ const configRoutes = require('./routes/config');
 const reposRoutes = require('./routes/repos');
 const healthRoutes = require('./routes/health');
 const chiefRoutes = require('./routes/chief');
+const gateRoutes = require('./routes/gate');
 
 const postmortem = require('./postmortem');
+const tunnel = require('./tunnel');
 
 function postmortemRoute(req, res, helpers, deps) {
   return postmortem.handlePostmortem(req, res, helpers, deps);
@@ -188,6 +190,7 @@ const routes = [
   reposRoutes,
   healthRoutes,
   chiefRoutes,
+  gateRoutes,
 ];
 
 const { json } = bb;
@@ -484,6 +487,53 @@ serviceManager.register('village-scheduler', {
   },
   stop() { villageScheduler?.stop(); },
   healthCheck() { return villageScheduler !== null; },
+});
+
+// 6. SSH Reverse Tunnel (for mobile remote access)
+let tunnelInstance = null;
+serviceManager.register('ssh-tunnel', {
+  start() {
+    const board = readBoard();
+    const ctrl = mgmt.getControls(board);
+    if (!ctrl.tunnel_enabled || !ctrl.tunnel_relay_host) {
+      console.log('[tunnel] disabled (tunnel_enabled=false or no relay host)');
+      return;
+    }
+    tunnelInstance = tunnel.createTunnel({
+      relayHost: ctrl.tunnel_relay_host,
+      remotePort: ctrl.tunnel_remote_port || 0,
+      localPort: ctx.port,
+      sshPort: ctrl.tunnel_ssh_port || 22,
+      sshUser: ctrl.tunnel_ssh_user || null,
+      identityFile: ctrl.tunnel_identity_file || null,
+      onStatusChange: (status, info) => {
+        if (status === 'connected') {
+          console.log(`[tunnel] connected: ${info.relayHost}:${info.remotePort} -> localhost:${info.localPort}`);
+        } else if (status === 'error') {
+          console.error(`[tunnel] error: ${info.error}`);
+        }
+      },
+    });
+    const err = tunnelInstance.start();
+    if (err) {
+      console.error(`[tunnel] failed to start: ${err.message}`);
+      tunnelInstance = null;
+    }
+  },
+  stop() {
+    if (tunnelInstance) {
+      tunnelInstance.stop();
+      tunnelInstance = null;
+    }
+  },
+  healthCheck() {
+    if (!tunnelInstance) return false;
+    const status = tunnelInstance.getStatus();
+    return status.status === 'connected';
+  },
+  getStatus() {
+    return tunnelInstance ? tunnelInstance.getStatus() : { status: 'stopped' };
+  },
 });
 
 // --- Start all background services ---

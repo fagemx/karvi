@@ -136,6 +136,37 @@ module.exports = function controlsRoutes(req, res, helpers, deps) {
                 board.controls[key] = val;
               }
             }
+            else if (key === 'tunnel_enabled' && typeof val === 'boolean') {
+              board.controls[key] = val;
+            }
+            else if (key === 'tunnel_relay_host') {
+              if (val === null || (typeof val === 'string' && val.trim().length > 0)) {
+                board.controls[key] = val ? val.trim() : null;
+              }
+            }
+            else if (key === 'tunnel_remote_port' && Number.isFinite(val)) {
+              board.controls[key] = Math.max(0, Math.min(65535, Math.floor(val)));
+            }
+            else if (key === 'tunnel_ssh_port' && Number.isFinite(val)) {
+              board.controls[key] = Math.max(1, Math.min(65535, Math.floor(val)));
+            }
+            else if (key === 'tunnel_ssh_user') {
+              if (val === null || typeof val === 'string') {
+                board.controls[key] = val ? val.trim() : null;
+              }
+            }
+            else if (key === 'tunnel_identity_file') {
+              if (val === null || typeof val === 'string') {
+                board.controls[key] = val ? val.trim() : null;
+              }
+            }
+            else if (key === 'remote_auth_token') {
+              if (val === null || (typeof val === 'string' && val.length >= 16)) {
+                board.controls[key] = val || null;
+              } else if (typeof val === 'string') {
+                return json(res, 400, { error: 'remote_auth_token must be null or at least 16 characters' });
+              }
+            }
           }
         }
         // Deprecation warning: use_step_pipeline=false is no longer supported (GH-218)
