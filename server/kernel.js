@@ -14,6 +14,7 @@ const villageHooks = require('./village-hooks');
 const { verifyContract } = require('./village/deliverable-contracts');
 const worktreeHelper = require('./worktree');
 const { resolveRepoRoot } = require('./repo-resolver');
+const provisioner = require('./repo-provisioner');
 const { createSignal } = require('./signal');
 const { retryOnConflict } = require('./helpers/retry');
 const path = require('path');
@@ -32,21 +33,31 @@ function createKernel(deps) {
 
   function cleanupWorktree(task, taskId, board) {
     if (!task?.worktreeDir) return;
-    const repoRoot = resolveRepoRoot(task, board) || defaultRepoRoot;
 
     // Delay cleanup to let the runtime process fully exit and release file handles.
     // On Windows, opencode may still hold locks when the kernel receives step_completed.
     const CLEANUP_DELAY_MS = 5000;
     setTimeout(() => {
       try {
-        worktreeHelper.removeWorktree(repoRoot, taskId);
+        // Provisioned repos use bare-clone worktrees (different cleanup path)
+        if (task._provisioned?.barePath) {
+          provisioner.removeWorktreeFromBare(task._provisioned.barePath, task._provisioned.dataRoot, taskId);
+        } else {
+          const repoRoot = resolveRepoRoot(task, board) || defaultRepoRoot;
+          worktreeHelper.removeWorktree(repoRoot, taskId);
+        }
         console.log(`[kernel] worktree cleaned up for ${taskId}`);
       } catch (err) {
         console.error(`[kernel] worktree cleanup failed for ${taskId}:`, err.message);
         // Schedule one more retry after a longer delay
         setTimeout(() => {
           try {
-            worktreeHelper.removeWorktree(repoRoot, taskId);
+            if (task._provisioned?.barePath) {
+              provisioner.removeWorktreeFromBare(task._provisioned.barePath, task._provisioned.dataRoot, taskId);
+            } else {
+              const repoRoot = resolveRepoRoot(task, board) || defaultRepoRoot;
+              worktreeHelper.removeWorktree(repoRoot, taskId);
+            }
             console.log(`[kernel] worktree cleaned up for ${taskId} (retry)`);
           } catch (err2) {
             console.error(`[kernel] worktree cleanup retry failed for ${taskId}:`, err2.message);
@@ -407,6 +418,24 @@ function createKernel(deps) {
           // Step pipeline includes review as step[3] — all steps succeeded means approved
           latestTask.status = 'approved';
           latestTask.completedAt = helpers.nowIso();
+
+          // Auto-push for provisioned repos (SaaS): push branch to remote
+          if (latestTask._provisioned && latestTask.worktreeDir && vault?.isEnabled()) {
+            const prov = latestTask._provisioned;
+            const userId = mgmt.resolveOwnerId(latestBoard) || 'default';
+            const tokenBuf = vault.retrieve(userId, 'github_pat');
+            if (tokenBuf) {
+              const pat = tokenBuf.toString('utf8');
+              tokenBuf.fill(0);
+              try {
+                provisioner.pushBranch(latestTask.worktreeDir, latestTask.worktreeBranch, pat, prov.owner, prov.repo);
+                console.log(`[kernel] auto-pushed ${latestTask.worktreeBranch} for ${taskId}`);
+              } catch (pushErr) {
+                console.error(`[kernel] auto-push failed for ${taskId}: ${pushErr.message}`);
+              }
+            }
+          }
+
           // Worktree stays alive — branch is needed until PR is merged or closed.
           // Primary cleanup: routes/github.js on pr_merged / pr_closed webhook.
           // Fallback: if no webhook fires within 30 min (dogfood / no webhook configured),

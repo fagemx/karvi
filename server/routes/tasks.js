@@ -25,7 +25,8 @@ const { participantById, pushMessage, getUserIdForTask, requireRole, createSigna
 const routeEngine = require('../route-engine');
 const worktreeHelper = require('../worktree');
 const { runHook } = require('../hook-runner');
-const { resolveRepoRoot, validateRepoRoot } = require('../repo-resolver');
+const { resolveRepoRoot, validateRepoRoot, isProvisionable } = require('../repo-resolver');
+const provisioner = require('../repo-provisioner');
 const { BLOCKER_TYPES, shouldUnblockOnReset } = require('../blocker-types');
 
 // Sub-route modules
@@ -212,48 +213,96 @@ function dispatchTask(task, board, deps, helpers, opts = {}) {
     }
 
     if (!task.worktreeDir) {
-      const repoRoot = resolveRepoRoot(task, board) || path.resolve(__dirname, '..', '..');
+      // Determine the target repo source: task-level > board-level
+      const targetRepoVal = task.target_repo || ctrl.target_repo || null;
 
-      const validation = validateRepoRoot(repoRoot, task.source?.repo);
-      if (!validation.valid) {
-        _dispatchLocks.delete(taskId);
-        console.error(`[dispatchTask:${taskId}] repo validation failed: ${validation.error}`);
-        task.status = 'blocked';
-        task.blocker = {
-          type: BLOCKER_TYPES.REPO_ERROR,
-          reason: `Repo validation failed: ${validation.error}`,
-          askedAt: helpers.nowIso()
-        };
-        helpers.writeBoard(board);
-        helpers.appendLog({ ts: helpers.nowIso(), event: 'dispatch_blocked', taskId, source, error: validation.error });
-        helpers.broadcastSSE('board', board);
-        return { dispatched: false, reason: validation.error };
-      }
-
-      try {
-        const wt = worktreeHelper.createWorktree(repoRoot, taskId);
-        task.worktreeDir = wt.worktreePath;
-        task.worktreeBranch = wt.branch;
-        console.log(`[dispatchTask:${taskId}] worktree: ${wt.worktreePath}`);
-        if (ctrl.hooks_after_worktree_create) {
-          runHook('hooks_after_worktree_create', ctrl.hooks_after_worktree_create, wt.worktreePath, {
-            KARVI_TASK_ID: taskId,
-            KARVI_WORKTREE_DIR: wt.worktreePath,
-          }).catch(() => {});
+      // Auto-provision: if target is a GitHub URL/slug, use repo-provisioner
+      // for bare-clone + worktree (SaaS path)
+      if (targetRepoVal && isProvisionable(targetRepoVal)) {
+        try {
+          const dataRoot = process.env.DATA_DIR || path.resolve(__dirname, '..', '..', '.data');
+          const userId = deps.mgmt ? deps.mgmt.resolveOwnerId(board) : 'default';
+          const token = deps.vault?.isEnabled()
+            ? (() => { const b = deps.vault.retrieve(userId, 'github_pat'); if (!b) return null; const t = b.toString('utf8'); b.fill(0); return t; })()
+            : null;
+          const parsed = provisioner.parseGitHubRepo(targetRepoVal);
+          const wt = provisioner.provisionForTask({
+            dataRoot,
+            repoUrl: targetRepoVal,
+            taskId,
+            token,
+            branch: task.source?.branch || null,
+          });
+          task.worktreeDir = wt.worktreePath;
+          task.worktreeBranch = wt.branch;
+          task._provisioned = { owner: wt.owner, repo: wt.repo, barePath: wt.barePath, dataRoot };
+          console.log(`[dispatchTask:${taskId}] provisioned worktree: ${wt.worktreePath} (bare: ${wt.barePath})`);
+          helpers.appendLog({ ts: helpers.nowIso(), event: 'repo_provisioned', taskId, slug: `${wt.owner}/${wt.repo}`, worktreePath: wt.worktreePath });
+          if (ctrl.hooks_after_worktree_create) {
+            runHook('hooks_after_worktree_create', ctrl.hooks_after_worktree_create, wt.worktreePath, {
+              KARVI_TASK_ID: taskId,
+              KARVI_WORKTREE_DIR: wt.worktreePath,
+            }).catch(() => {});
+          }
+        } catch (err) {
+          _dispatchLocks.delete(taskId);
+          console.error(`[dispatchTask:${taskId}] repo provisioning failed: ${err.message}`);
+          task.status = 'blocked';
+          task.blocker = {
+            type: BLOCKER_TYPES.REPO_ERROR,
+            reason: `Repo provisioning failed: ${err.message}`,
+            askedAt: helpers.nowIso()
+          };
+          helpers.writeBoard(board);
+          helpers.appendLog({ ts: helpers.nowIso(), event: 'dispatch_blocked', taskId, source, error: err.message });
+          helpers.broadcastSSE('board', board);
+          return { dispatched: false, reason: err.message };
         }
-      } catch (err) {
-        _dispatchLocks.delete(taskId);
-        console.error(`[dispatchTask:${taskId}] worktree failed: ${err.message}`);
-        task.status = 'blocked';
-        task.blocker = {
-          type: BLOCKER_TYPES.WORKTREE_ERROR,
-          reason: `Worktree creation failed: ${err.message}`,
-          askedAt: helpers.nowIso()
-        };
-        helpers.writeBoard(board);
-        helpers.appendLog({ ts: helpers.nowIso(), event: 'dispatch_blocked', taskId, source, error: err.message });
-        helpers.broadcastSSE('board', board);
-        return { dispatched: false, reason: err.message };
+      } else {
+        // Standard path: local repo + git worktree
+        const repoRoot = resolveRepoRoot(task, board) || path.resolve(__dirname, '..', '..');
+
+        const validation = validateRepoRoot(repoRoot, task.source?.repo);
+        if (!validation.valid) {
+          _dispatchLocks.delete(taskId);
+          console.error(`[dispatchTask:${taskId}] repo validation failed: ${validation.error}`);
+          task.status = 'blocked';
+          task.blocker = {
+            type: BLOCKER_TYPES.REPO_ERROR,
+            reason: `Repo validation failed: ${validation.error}`,
+            askedAt: helpers.nowIso()
+          };
+          helpers.writeBoard(board);
+          helpers.appendLog({ ts: helpers.nowIso(), event: 'dispatch_blocked', taskId, source, error: validation.error });
+          helpers.broadcastSSE('board', board);
+          return { dispatched: false, reason: validation.error };
+        }
+
+        try {
+          const wt = worktreeHelper.createWorktree(repoRoot, taskId);
+          task.worktreeDir = wt.worktreePath;
+          task.worktreeBranch = wt.branch;
+          console.log(`[dispatchTask:${taskId}] worktree: ${wt.worktreePath}`);
+          if (ctrl.hooks_after_worktree_create) {
+            runHook('hooks_after_worktree_create', ctrl.hooks_after_worktree_create, wt.worktreePath, {
+              KARVI_TASK_ID: taskId,
+              KARVI_WORKTREE_DIR: wt.worktreePath,
+            }).catch(() => {});
+          }
+        } catch (err) {
+          _dispatchLocks.delete(taskId);
+          console.error(`[dispatchTask:${taskId}] worktree failed: ${err.message}`);
+          task.status = 'blocked';
+          task.blocker = {
+            type: BLOCKER_TYPES.WORKTREE_ERROR,
+            reason: `Worktree creation failed: ${err.message}`,
+            askedAt: helpers.nowIso()
+          };
+          helpers.writeBoard(board);
+          helpers.appendLog({ ts: helpers.nowIso(), event: 'dispatch_blocked', taskId, source, error: err.message });
+          helpers.broadcastSSE('board', board);
+          return { dispatched: false, reason: err.message };
+        }
       }
     }
   }
