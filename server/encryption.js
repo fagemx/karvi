@@ -46,10 +46,13 @@ function initialize(opts = {}) {
         return { ok: true, source: 'file', path: keyPath };
       }
     } catch (err) {
+      if (masterKey) { masterKey.fill(0); masterKey = null; }
+      enabled = false;
       return { ok: false, error: `Failed to read key file: ${err.message}` };
     }
   }
-  
+
+  if (masterKey) { masterKey.fill(0); masterKey = null; }
   enabled = false;
   return { ok: false, error: 'No valid encryption key configured' };
 }
@@ -181,9 +184,27 @@ function decryptTask(task) {
   return decrypted;
 }
 
+function isFieldEncrypted(value) {
+  return value && typeof value === 'object' && value._encrypted === true;
+}
+
+function boardAlreadyEncrypted(board) {
+  const tasks = board.taskPlan?.tasks || board.tasks || [];
+  for (const t of tasks) {
+    if (isFieldEncrypted(t.description) || isFieldEncrypted(t.title)) return true;
+    if (t.steps) {
+      for (const s of t.steps) {
+        if (isFieldEncrypted(s.progress)) return true;
+      }
+    }
+  }
+  return false;
+}
+
 function encryptBoard(board) {
   if (!isEnabled() || !board) return board;
-  
+  if (boardAlreadyEncrypted(board)) return board;
+
   const encrypted = { ...board };
   
   if (board.taskPlan && board.taskPlan.tasks) {
@@ -236,18 +257,17 @@ function rotateKey(newKeyHex, board) {
     const decrypted = oldEnabled && board?.meta?.encryption_enabled
       ? decryptBoard(board)
       : board;
-    
-    if (oldKey) oldKey.fill(0);
+
     masterKey = Buffer.from(newKeyHex, 'hex');
     enabled = true;
-    
+
     const reEncrypted = encryptBoard(decrypted);
-    
+
+    if (oldKey) oldKey.fill(0);
+
     return { ok: true, board: reEncrypted };
   } catch (err) {
-    if (oldKey && !oldKey.every(b => b === 0)) {
-      masterKey = oldKey;
-    }
+    masterKey = oldKey;
     enabled = oldEnabled;
     return { ok: false, error: `Key rotation failed: ${err.message}` };
   }
