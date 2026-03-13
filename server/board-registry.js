@@ -20,6 +20,7 @@ const fs = require('fs');
 const path = require('path');
 
 const DEFAULT_VILLAGE_ID = 'default';
+const VILLAGE_ID_RE = /^[a-z0-9][a-z0-9_-]*$/;
 
 /**
  * Create a board registry instance.
@@ -58,6 +59,7 @@ function createRegistry(opts) {
    */
   function villageDataDir(villageId) {
     if (villageId === DEFAULT_VILLAGE_ID) return dataDir;
+    if (!VILLAGE_ID_RE.test(villageId)) throw new Error('Invalid village ID');
     return path.join(villagesDir, villageId);
   }
 
@@ -88,7 +90,7 @@ function createRegistry(opts) {
    *
    * @param {string} villageId - Unique village identifier (e.g. 'v-strategy')
    * @param {object} meta - Village metadata { name, territoryId, ... }
-   * @returns {{ id: string, name: string, boardPath: string, status: string }}
+   * @returns {{ id: string, name: string, status: string }}
    */
   function registerVillage(villageId, meta = {}) {
     if (!villageId || typeof villageId !== 'string') {
@@ -188,7 +190,7 @@ function createRegistry(opts) {
   /**
    * List all registered villages.
    *
-   * @returns {object[]} Array of { id, name, boardPath, status, ... }
+   * @returns {object[]} Array of { id, name, status, ... }
    */
   function listVillages() {
     const result = [];
@@ -221,6 +223,7 @@ function createRegistry(opts) {
     for (const entry of entries) {
       if (!entry.isDirectory()) continue;
       const villageId = entry.name;
+      if (!VILLAGE_ID_RE.test(villageId)) continue;
       if (villages.has(villageId)) continue;
 
       const vDir = path.join(villagesDir, villageId);
@@ -252,7 +255,6 @@ function createRegistry(opts) {
     return {
       id: villageId,
       name: entry.meta.name,
-      boardPath: entry.ctx.boardPath,
       territoryId: entry.meta.territoryId || null,
       createdAt: entry.meta.createdAt,
       status: 'active',

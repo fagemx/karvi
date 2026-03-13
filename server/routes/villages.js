@@ -95,7 +95,7 @@ module.exports = function villagesRoutes(req, res, helpers, deps) {
   // ── POST /api/villages — create a new village ──
   if (req.method === 'POST' && pathname === '/api/villages') {
     if (requireRole(req, res, 'operator')) return;
-    helpers.parseBody(req).then(body => {
+    helpers.parseBody(req).then(async body => {
       if (!body.id) {
         return json(res, 400, { error: 'id is required (lowercase, no spaces, e.g. "v-strategy")' });
       }
@@ -112,26 +112,27 @@ module.exports = function villagesRoutes(req, res, helpers, deps) {
         // Also register in the nation-level board if it has board.nation
         const nationHelpers = registry.getHelpers('default');
         if (nationHelpers) {
-          const nationBoard = nationHelpers.readBoard();
-          if (!nationBoard.nation) {
-            nationBoard.nation = {
-              coordinator: null,
-              villages: [],
-              territories: [],
-              strategicGoals: [],
-            };
-          }
-          // Add village reference if not already present
-          if (!nationBoard.nation.villages.find(v => v.id === body.id)) {
-            nationBoard.nation.villages.push({
-              id: body.id,
-              name: body.name,
-              boardPath: info.boardPath,
-              territoryId: body.territoryId || null,
-              status: 'active',
-            });
-            nationHelpers.writeBoard(nationBoard);
-          }
+          await retryOnConflict(async () => {
+            const nationBoard = nationHelpers.readBoard();
+            if (!nationBoard.nation) {
+              nationBoard.nation = {
+                coordinator: null,
+                villages: [],
+                territories: [],
+                strategicGoals: [],
+              };
+            }
+            // Add village reference if not already present
+            if (!nationBoard.nation.villages.find(v => v.id === body.id)) {
+              nationBoard.nation.villages.push({
+                id: body.id,
+                name: body.name,
+                territoryId: body.territoryId || null,
+                status: 'active',
+              });
+              nationHelpers.writeBoard(nationBoard);
+            }
+          }, 3);
         }
 
         helpers.appendLog({
@@ -143,6 +144,9 @@ module.exports = function villagesRoutes(req, res, helpers, deps) {
 
         return json(res, 201, { ok: true, village: info });
       } catch (error) {
+        if (error.code === 'VERSION_CONFLICT') {
+          return json(res, 503, { error: 'Service temporarily unavailable', code: 'VERSION_CONFLICT' });
+        }
         return json(res, 400, { error: error.message });
       }
     }).catch(e => json(res, 400, { error: e.message }));
@@ -259,43 +263,58 @@ module.exports = function villagesRoutes(req, res, helpers, deps) {
   // ── POST /api/villages/:id/goals — add or update a goal ──
   if (req.method === 'POST' && subPath === 'goals') {
     if (requireRole(req, res, 'operator')) return;
-    helpers.parseBody(req).then(body => {
+    helpers.parseBody(req).then(async body => {
       try {
-        const board = vHelpers.readBoard();
-        const village = ensureVillage(board, villageId);
-        const now = vHelpers.nowIso();
+        const result = await retryOnConflict(async () => {
+          const board = vHelpers.readBoard();
+          const village = ensureVillage(board, villageId);
+          const now = vHelpers.nowIso();
 
-        if (body.id) {
-          const existing = village.goals.find(g => g.id === body.id);
-          if (!existing) return json(res, 404, { error: `Goal ${body.id} not found` });
-          if (body.text !== undefined) existing.text = body.text;
-          if (body.domain !== undefined) existing.domain = body.domain;
-          if (body.cadence !== undefined) existing.cadence = body.cadence;
-          if (body.metrics !== undefined) existing.metrics = body.metrics;
-          if (body.active !== undefined) existing.active = body.active;
-          existing.updatedAt = now;
+          if (body.id) {
+            const existing = village.goals.find(g => g.id === body.id);
+            if (!existing) {
+              const err = new Error(`Goal ${body.id} not found`);
+              err.statusCode = 404;
+              throw err;
+            }
+            if (body.text !== undefined) existing.text = body.text;
+            if (body.domain !== undefined) existing.domain = body.domain;
+            if (body.cadence !== undefined) existing.cadence = body.cadence;
+            if (body.metrics !== undefined) existing.metrics = body.metrics;
+            if (body.active !== undefined) existing.active = body.active;
+            existing.updatedAt = now;
+            vHelpers.writeBoard(board);
+            vHelpers.appendLog({ ts: now, event: 'village_goal_updated', villageId, goalId: existing.id });
+            return { status: 200, body: { ok: true, goal: existing } };
+          }
+
+          if (!body.text) {
+            const err = new Error('text is required for new goal');
+            err.statusCode = 400;
+            throw err;
+          }
+          const goal = {
+            id: nextGoalId(village.goals),
+            text: body.text,
+            domain: body.domain || 'general',
+            cadence: body.cadence || 'weekly',
+            metrics: Array.isArray(body.metrics) ? body.metrics : [],
+            active: body.active !== undefined ? body.active : true,
+            createdAt: now,
+            updatedAt: now,
+          };
+          village.goals.push(goal);
           vHelpers.writeBoard(board);
-          vHelpers.appendLog({ ts: now, event: 'village_goal_updated', villageId, goalId: existing.id });
-          return json(res, 200, { ok: true, goal: existing });
-        }
+          vHelpers.appendLog({ ts: now, event: 'village_goal_created', villageId, goalId: goal.id });
+          return { status: 201, body: { ok: true, goal } };
+        }, 3);
 
-        if (!body.text) return json(res, 400, { error: 'text is required for new goal' });
-        const goal = {
-          id: nextGoalId(village.goals),
-          text: body.text,
-          domain: body.domain || 'general',
-          cadence: body.cadence || 'weekly',
-          metrics: Array.isArray(body.metrics) ? body.metrics : [],
-          active: body.active !== undefined ? body.active : true,
-          createdAt: now,
-          updatedAt: now,
-        };
-        village.goals.push(goal);
-        vHelpers.writeBoard(board);
-        vHelpers.appendLog({ ts: now, event: 'village_goal_created', villageId, goalId: goal.id });
-        return json(res, 201, { ok: true, goal });
+        return json(res, result.status, result.body);
       } catch (e) {
-        return json(res, 500, { error: e.message });
+        if (e.code === 'VERSION_CONFLICT') {
+          return json(res, 503, { error: 'Service temporarily unavailable', code: 'VERSION_CONFLICT' });
+        }
+        return json(res, e.statusCode || 500, { error: e.message });
       }
     }).catch(e => json(res, 400, { error: e.message }));
     return;
@@ -317,43 +336,54 @@ module.exports = function villagesRoutes(req, res, helpers, deps) {
   // ── POST /api/villages/:id/departments — add or update a department ──
   if (req.method === 'POST' && subPath === 'departments') {
     if (requireRole(req, res, 'operator')) return;
-    helpers.parseBody(req).then(body => {
+    helpers.parseBody(req).then(async body => {
+      if (!body.id) return json(res, 400, { error: 'id is required' });
+
       try {
-        const board = vHelpers.readBoard();
-        const village = ensureVillage(board, villageId);
-        const now = vHelpers.nowIso();
+        const result = await retryOnConflict(async () => {
+          const board = vHelpers.readBoard();
+          const village = ensureVillage(board, villageId);
+          const now = vHelpers.nowIso();
 
-        if (!body.id) return json(res, 400, { error: 'id is required' });
+          const existing = village.departments.find(d => d.id === body.id);
+          if (existing) {
+            if (body.name !== undefined) existing.name = body.name;
+            if (body.assignee !== undefined) existing.assignee = body.assignee;
+            if (body.skills !== undefined) existing.skills = body.skills;
+            if (body.promptFile !== undefined) existing.promptFile = body.promptFile;
+            if (body.goalIds !== undefined) existing.goalIds = body.goalIds;
+            if (existing.assignee) ensureAgentParticipant(board, existing.assignee);
+            vHelpers.writeBoard(board);
+            vHelpers.appendLog({ ts: now, event: 'village_department_updated', villageId, deptId: existing.id });
+            return { status: 200, body: { ok: true, department: existing } };
+          }
 
-        const existing = village.departments.find(d => d.id === body.id);
-        if (existing) {
-          if (body.name !== undefined) existing.name = body.name;
-          if (body.assignee !== undefined) existing.assignee = body.assignee;
-          if (body.skills !== undefined) existing.skills = body.skills;
-          if (body.promptFile !== undefined) existing.promptFile = body.promptFile;
-          if (body.goalIds !== undefined) existing.goalIds = body.goalIds;
-          if (existing.assignee) ensureAgentParticipant(board, existing.assignee);
+          if (!body.name) {
+            const err = new Error('name is required for new department');
+            err.statusCode = 400;
+            throw err;
+          }
+          const dept = {
+            id: body.id,
+            name: body.name,
+            assignee: body.assignee || 'engineer_lite',
+            skills: Array.isArray(body.skills) ? body.skills : [],
+            promptFile: body.promptFile || `village/roles/${body.id}.md`,
+            goalIds: Array.isArray(body.goalIds) ? body.goalIds : [],
+          };
+          village.departments.push(dept);
+          ensureAgentParticipant(board, dept.assignee);
           vHelpers.writeBoard(board);
-          vHelpers.appendLog({ ts: now, event: 'village_department_updated', villageId, deptId: existing.id });
-          return json(res, 200, { ok: true, department: existing });
-        }
+          vHelpers.appendLog({ ts: now, event: 'village_department_created', villageId, deptId: dept.id });
+          return { status: 201, body: { ok: true, department: dept } };
+        }, 3);
 
-        if (!body.name) return json(res, 400, { error: 'name is required for new department' });
-        const dept = {
-          id: body.id,
-          name: body.name,
-          assignee: body.assignee || 'engineer_lite',
-          skills: Array.isArray(body.skills) ? body.skills : [],
-          promptFile: body.promptFile || `village/roles/${body.id}.md`,
-          goalIds: Array.isArray(body.goalIds) ? body.goalIds : [],
-        };
-        village.departments.push(dept);
-        ensureAgentParticipant(board, dept.assignee);
-        vHelpers.writeBoard(board);
-        vHelpers.appendLog({ ts: now, event: 'village_department_created', villageId, deptId: dept.id });
-        return json(res, 201, { ok: true, department: dept });
+        return json(res, result.status, result.body);
       } catch (e) {
-        return json(res, 500, { error: e.message });
+        if (e.code === 'VERSION_CONFLICT') {
+          return json(res, 503, { error: 'Service temporarily unavailable', code: 'VERSION_CONFLICT' });
+        }
+        return json(res, e.statusCode || 500, { error: e.message });
       }
     }).catch(e => json(res, 400, { error: e.message }));
     return;
