@@ -20,6 +20,7 @@ const {
   enqueueTurn,
   requeueRunningTurns,
   normalizeText,
+  requireRole,
 } = require('./_shared');
 
 // Local processing state — tracks which conversations are currently processing
@@ -232,6 +233,7 @@ async function processQueue(conversationId, deps, helpers) {
 module.exports = function chatRoutes(req, res, helpers, deps) {
 
   if (req.method === 'POST' && req.url === '/api/conversations') {
+    if (requireRole(req, res, 'operator')) return;
     helpers.parseBody(req).then(payload => {
       const id = String(payload.id || '').trim();
       const title = String(payload.title || '').trim();
@@ -270,6 +272,7 @@ module.exports = function chatRoutes(req, res, helpers, deps) {
   }
 
   if (req.method === 'POST' && req.url === '/api/participants') {
+    if (requireRole(req, res, 'operator')) return;
     helpers.parseBody(req).then(payload => {
       const id = String(payload.id || '').trim();
       const type = payload.type === 'human' ? 'human' : 'agent';
@@ -313,6 +316,7 @@ module.exports = function chatRoutes(req, res, helpers, deps) {
 
   const sendMatch = req.url.match(/^\/api\/conversations\/([^/]+)\/send$/);
   if (req.method === 'POST' && sendMatch) {
+    if (requireRole(req, res, 'operator')) return;
     const conversationId = decodeURIComponent(sendMatch[1]);
     helpers.parseBody(req).then(payload => {
       const from = String(payload.from || '').trim();
@@ -404,6 +408,7 @@ module.exports = function chatRoutes(req, res, helpers, deps) {
 
   const runMatch = req.url.match(/^\/api\/conversations\/([^/]+)\/run$/);
   if (req.method === 'POST' && runMatch) {
+    if (requireRole(req, res, 'operator')) return;
     const conversationId = decodeURIComponent(runMatch[1]);
     try {
       const board = helpers.readBoard();
@@ -433,6 +438,7 @@ module.exports = function chatRoutes(req, res, helpers, deps) {
 
   const stopMatch = req.url.match(/^\/api\/conversations\/([^/]+)\/stop$/);
   if (req.method === 'POST' && stopMatch) {
+    if (requireRole(req, res, 'operator')) return;
     const conversationId = decodeURIComponent(stopMatch[1]);
     try {
       const board = helpers.readBoard();
@@ -461,6 +467,7 @@ module.exports = function chatRoutes(req, res, helpers, deps) {
 
   const clearStopMatch = req.url.match(/^\/api\/conversations\/([^/]+)\/resume$/);
   if (req.method === 'POST' && clearStopMatch) {
+    if (requireRole(req, res, 'operator')) return;
     const conversationId = decodeURIComponent(clearStopMatch[1]);
     try {
       const board = helpers.readBoard();
