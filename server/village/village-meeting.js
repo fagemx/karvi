@@ -10,6 +10,7 @@
 const fs = require('fs');
 const path = require('path');
 const { resolvePolicy } = require('./tool-tiers');
+const { getActiveProfile, buildPersonalityPrompt, applyGovernanceOverrides } = require('./chief-profile');
 
 const ROLES_DIR = path.join(__dirname, 'roles');
 
@@ -232,9 +233,19 @@ function generateMeetingTasks(board, meetingType) {
   const departments = board.village?.departments || [];
   const goals = (board.village?.goals || []).filter(g => g.active);
 
-  const chiefPrompt = readRoleFile('village/roles/chief.md');
+  // Load chief role prompt + optional profile personality
+  const baseChiefPrompt = readRoleFile('village/roles/chief.md');
+  const profile = getActiveProfile(board);
+  const personalityPrompt = buildPersonalityPrompt(profile);
+  const chiefPrompt = personalityPrompt
+    ? personalityPrompt + '\n\n---\n\n' + baseChiefPrompt
+    : baseChiefPrompt;
 
-  const tierPolicy = resolvePolicy(board);
+  // Resolve tier policy, applying profile governance overrides
+  const basePolicy = resolvePolicy(board);
+  const tierPolicy = profile
+    ? applyGovernanceOverrides(basePolicy, profile.governance)
+    : basePolicy;
 
   // ── midweek_checkin: single task, no department proposals ──
   if (meetingType === 'midweek_checkin') {

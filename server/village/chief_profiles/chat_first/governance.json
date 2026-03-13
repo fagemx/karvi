@@ -1,0 +1,13 @@
+{
+  "interaction_style": "chat_first",
+  "max_tool_tier": "T2",
+  "autopilot_allowed": false,
+  "default_deliverable": "research",
+  "questions_budget": 4,
+  "risk_posture": "conservative",
+  "human_gate_triggers": ["sensitive_paths", "budget_exceeded", "tier_upgrade", "scope_change"],
+  "cost_policy": {
+    "max_tokens_per_task": 30000,
+    "max_cost_per_cycle": 5.0
+  }
+}

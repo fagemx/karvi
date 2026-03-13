@@ -1,0 +1,13 @@
+{
+  "interaction_style": "ship_first",
+  "max_tool_tier": "T4",
+  "autopilot_allowed": true,
+  "default_deliverable": "code_change",
+  "questions_budget": 1,
+  "risk_posture": "aggressive",
+  "human_gate_triggers": ["sensitive_paths", "budget_exceeded"],
+  "cost_policy": {
+    "max_tokens_per_task": 80000,
+    "max_cost_per_cycle": 15.0
+  }
+}
