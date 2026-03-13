@@ -38,7 +38,7 @@ function listProfiles() {
  * @returns {{ name, identity, soul, governance }|null}
  */
 function loadProfile(name) {
-  if (!name || typeof name !== 'string') return null;
+  if (!isValidProfileName(name)) return null;
 
   const profileDir = path.join(PROFILES_DIR, name);
   try {
@@ -153,7 +153,7 @@ const TIER_LEVELS = { T0: 0, T1: 1, T2: 2, T3: 3, T4: 4 };
 function capTier(tier, maxTier) {
   const a = TIER_LEVELS[tier];
   const b = TIER_LEVELS[maxTier];
-  if (a === undefined) return maxTier;
+  if (a === undefined) return tier;
   if (b === undefined) return tier;
   return a <= b ? tier : maxTier;
 }

@@ -574,40 +574,51 @@ module.exports = function villageRoutes(req, res, helpers, deps) {
   // ── PUT /api/village/profile — switch active chief profile ──
   if (req.method === 'PUT' && pathname === '/api/village/profile') {
     if (requireRole(req, res, 'operator')) return;
-    helpers.parseBody(req).then(body => {
+    helpers.parseBody(req).then(async body => {
       try {
         const { profile } = body;
 
-        // profile=null clears the active profile (revert to legacy behavior)
-        if (profile === null) {
+        // Validate before entering retry loop (no need to re-validate on each attempt)
+        if (profile !== null) {
+          if (!chiefProfile.isValidProfileName(profile)) {
+            return json(res, 400, { error: 'invalid profile name' });
+          }
+          const loaded = chiefProfile.loadProfile(profile);
+          if (!loaded) {
+            return json(res, 404, { error: `profile "${profile}" not found`, available: chiefProfile.listProfiles() });
+          }
+        }
+
+        const result = await retryOnConflict(async () => {
           const board = helpers.readBoard();
           const village = ensureVillage(board);
           const previous = village.chief_profile || null;
-          delete village.chief_profile;
+
+          if (profile === null) {
+            delete village.chief_profile;
+            helpers.writeBoard(board);
+            helpers.appendLog({ ts: helpers.nowIso(), event: 'village_profile_cleared', previous });
+            helpers.broadcastSSE('village_profile_changed', { profile: null, previous });
+            return { ok: true, profile: null, previous };
+          }
+
+          village.chief_profile = profile;
           helpers.writeBoard(board);
-          helpers.appendLog({ ts: helpers.nowIso(), event: 'village_profile_cleared', previous });
-          helpers.broadcastSSE('village_profile_changed', { profile: null, previous });
-          return json(res, 200, { ok: true, profile: null, previous });
-        }
+          const loaded = chiefProfile.loadProfile(profile);
+          helpers.appendLog({ ts: helpers.nowIso(), event: 'village_profile_changed', profile, previous });
+          helpers.broadcastSSE('village_profile_changed', { profile, previous });
+          return { ok: true, profile, governance: loaded.governance, previous };
+        }, 3);
 
-        if (!chiefProfile.isValidProfileName(profile)) {
-          return json(res, 400, { error: 'invalid profile name' });
-        }
-
-        const loaded = chiefProfile.loadProfile(profile);
-        if (!loaded) {
-          return json(res, 404, { error: `profile "${profile}" not found`, available: chiefProfile.listProfiles() });
-        }
-
-        const board = helpers.readBoard();
-        const village = ensureVillage(board);
-        const previous = village.chief_profile || null;
-        village.chief_profile = profile;
-        helpers.writeBoard(board);
-        helpers.appendLog({ ts: helpers.nowIso(), event: 'village_profile_changed', profile, previous });
-        helpers.broadcastSSE('village_profile_changed', { profile, previous });
-        return json(res, 200, { ok: true, profile, governance: loaded.governance, previous });
+        return json(res, 200, result);
       } catch (error) {
+        if (error.code === 'VERSION_CONFLICT') {
+          return json(res, 503, {
+            error: 'Service temporarily unavailable',
+            code: 'VERSION_CONFLICT',
+            message: 'Board is under high contention, please retry later'
+          });
+        }
         return json(res, 500, { error: error.message });
       }
     }).catch(e => json(res, 400, { error: e.message }));
