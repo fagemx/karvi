@@ -457,6 +457,47 @@ function test_backwardCompatibility() {
   console.log('✓ Backward compatibility works');
 }
 
+function test_lockfileCleanup() {
+  test('26. writeBoard lockfile is cleaned up after write', () => {
+    const bp = boardPath('lockfile-cleanup.json');
+    storageJson.writeBoard(bp, sampleBoard());
+    // lockfile 應該在 writeBoard 完成後被清除
+    assert.strictEqual(fs.existsSync(bp + '.lock'), false, 'lockfile should be cleaned up');
+  });
+}
+
+function test_lockfileCleanupOnError() {
+  test('27. writeBoard lockfile is cleaned up on version conflict', () => {
+    const bp = boardPath('lockfile-error.json');
+    storageJson.writeBoard(bp, sampleBoard());
+    const stale = { ...sampleBoard(), _version: 999 };
+    try {
+      storageJson.writeBoard(bp, stale);
+    } catch (err) {
+      assert.strictEqual(err.code, 'VERSION_CONFLICT');
+    }
+    // lockfile 應該在 error path 也被清除
+    assert.strictEqual(fs.existsSync(bp + '.lock'), false, 'lockfile should be cleaned up after error');
+  });
+}
+
+function test_staleLockRecovery() {
+  test('28. writeBoard recovers from stale lockfile', () => {
+    const bp = boardPath('stale-lock.json');
+    // 建立 stale lockfile（修改時間設為過去）
+    const lockPath = bp + '.lock';
+    fs.writeFileSync(lockPath, '99999\t0\n');
+    // 手動設定 mtime 為 30 秒前，確保超過 STALE_LOCK_MS
+    const past = new Date(Date.now() - 30_000);
+    fs.utimesSync(lockPath, past, past);
+    // writeBoard 應該能清除 stale lock 並成功寫入
+    storageJson.writeBoard(bp, sampleBoard());
+    const loaded = storageJson.readBoard(bp);
+    assert.strictEqual(loaded._version, 1);
+    assert.strictEqual(fs.existsSync(lockPath), false, 'stale lockfile should be cleaned up');
+  });
+}
+
 // =============================================================================
 // readLogEntries tests
 // =============================================================================
@@ -565,6 +606,9 @@ async function main() {
     test_versionIncrement();
     test_conflictDetection();
     test_backwardCompatibility();
+    test_lockfileCleanup();
+    test_lockfileCleanupOnError();
+    test_staleLockRecovery();
 
     // readLogEntries / readArchiveEntries tests
     console.log('\n--- readLogEntries / readArchiveEntries ---\n');
