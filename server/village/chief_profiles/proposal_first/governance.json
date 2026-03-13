@@ -1,0 +1,13 @@
+{
+  "interaction_style": "proposal_first",
+  "max_tool_tier": "T3",
+  "autopilot_allowed": false,
+  "default_deliverable": "doc",
+  "questions_budget": 0,
+  "risk_posture": "balanced",
+  "human_gate_triggers": ["sensitive_paths", "budget_exceeded", "tier_upgrade", "irreversible_action"],
+  "cost_policy": {
+    "max_tokens_per_task": 50000,
+    "max_cost_per_cycle": 10.0
+  }
+}

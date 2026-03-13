@@ -16,6 +16,7 @@ const mgmt = require('../management');
 const { retryOnConflict } = require('../helpers/retry');
 const { buildContract } = require('./deliverable-contracts');
 const { resolvePolicy, resolveTaskTier } = require('./tool-tiers');
+const { getActiveProfile, applyGovernanceOverrides } = require('./chief-profile');
 const { createSignal } = require('../signal');
 
 /**
@@ -126,8 +127,12 @@ async function parsePlanAndDispatch(board, planData, helpers, deps, synthesisTas
       // Build deliverable contract from kind (if chief provided it)
       const contract = buildContract(pt.kind, pt.acceptance);
 
-      // Resolve tool tier based on kind/role/assignee
-      const tierPolicy = resolvePolicy(latestBoard);
+      // Resolve tool tier based on kind/role/assignee, with profile governance overrides
+      const basePolicy = resolvePolicy(latestBoard);
+      const activeProfile = getActiveProfile(latestBoard);
+      const tierPolicy = activeProfile
+        ? applyGovernanceOverrides(basePolicy, activeProfile.governance)
+        : basePolicy;
       const maxTier = pt.max_tier || resolveTaskTier(
         { kind: pt.kind, assignee: pt.assignee, role: null },
         tierPolicy

@@ -8,11 +8,14 @@
  * POST /api/village/trigger      — trigger a meeting (Phase 1)
  * POST /api/village/config       — update village config (e.g. auto_approve)
  * POST /api/village/approve      — approve pending plan and dispatch execution tasks
+ * GET  /api/village/profile      — get active chief profile + list available profiles
+ * PUT  /api/village/profile      — switch active chief profile
  */
 const bb = require('../blackboard-server');
 const { json } = bb;
 const { requireRole } = require('./_shared');
 const { retryOnConflict } = require('../helpers/retry');
+const chiefProfile = require('../village/chief-profile');
 
 // --- Default village block for board.json ---
 const DEFAULT_VILLAGE = {
@@ -544,6 +547,78 @@ module.exports = function villageRoutes(req, res, helpers, deps) {
           taskIds: result.taskIds,
         });
       } catch (error) {
+        return json(res, 500, { error: error.message });
+      }
+    }).catch(e => json(res, 400, { error: e.message }));
+    return;
+  }
+
+  // ── GET /api/village/profile — get active profile + list available ──
+  if (req.method === 'GET' && pathname === '/api/village/profile') {
+    try {
+      const board = helpers.readBoard();
+      const activeName = chiefProfile.getActiveProfileName(board);
+      const available = chiefProfile.listProfiles();
+      const active = activeName ? chiefProfile.loadProfile(activeName) : null;
+
+      return json(res, 200, {
+        active: activeName,
+        governance: active ? active.governance : null,
+        available,
+      });
+    } catch (error) {
+      return json(res, 500, { error: error.message });
+    }
+  }
+
+  // ── PUT /api/village/profile — switch active chief profile ──
+  if (req.method === 'PUT' && pathname === '/api/village/profile') {
+    if (requireRole(req, res, 'operator')) return;
+    helpers.parseBody(req).then(async body => {
+      try {
+        const { profile } = body;
+
+        // Validate before entering retry loop (no need to re-validate on each attempt)
+        if (profile !== null) {
+          if (!chiefProfile.isValidProfileName(profile)) {
+            return json(res, 400, { error: 'invalid profile name' });
+          }
+          const loaded = chiefProfile.loadProfile(profile);
+          if (!loaded) {
+            return json(res, 404, { error: `profile "${profile}" not found`, available: chiefProfile.listProfiles() });
+          }
+        }
+
+        const result = await retryOnConflict(async () => {
+          const board = helpers.readBoard();
+          const village = ensureVillage(board);
+          const previous = village.chief_profile || null;
+
+          if (profile === null) {
+            delete village.chief_profile;
+            helpers.writeBoard(board);
+            helpers.appendLog({ ts: helpers.nowIso(), event: 'village_profile_cleared', previous });
+            helpers.broadcastSSE('village_profile_changed', { profile: null, previous });
+            return { ok: true, profile: null, previous };
+          }
+
+          village.chief_profile = profile;
+          helpers.writeBoard(board);
+          const loaded = chiefProfile.loadProfile(profile);
+          helpers.appendLog({ ts: helpers.nowIso(), event: 'village_profile_changed', profile, previous });
+          helpers.broadcastSSE('village_profile_changed', { profile, previous });
+          return { ok: true, profile, governance: loaded.governance, previous };
+        }, 3);
+
+        return json(res, 200, result);
+      } catch (error) {
+        if (error.code === 'VERSION_CONFLICT') {
+          return json(res, 503, {
+            error: 'Service temporarily unavailable',
+            code: 'VERSION_CONFLICT',
+            message: 'Board is under high contention, please retry later'
+          });
+        }
         return json(res, 500, { error: error.message });
       }
     }).catch(e => json(res, 400, { error: e.message }));
