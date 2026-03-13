@@ -49,6 +49,9 @@ const DEFAULT_CONTROLS = {
   hooks_before_run: '',               // shell command run before agent starts
   hooks_after_run: '',                // shell command run after agent completes
   budget_per_task: null,              // max cost per task in USD (null = unlimited)
+  sandbox_enabled: false,             // enable Docker container sandbox for agent execution
+  sandbox_image: 'karvi-sandbox:latest', // Docker image for sandbox containers
+  sandbox_limits: null,               // override sandbox resource limits { memory, cpus, pids_limit, network, ... }
 };
 
 function getControls(board) {
