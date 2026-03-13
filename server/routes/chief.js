@@ -7,39 +7,34 @@
  *
  * All endpoints require operator role.
  */
-const { spawn } = require('child_process');
+const { execFileSync } = require('child_process');
 const bb = require('../blackboard-server');
 const { json } = bb;
 const { requireRole, createSignal } = require('./_shared');
 
 /**
- * Execute gh CLI command with proper Windows handling.
+ * Execute gh CLI command safely (no shell interpretation).
+ * Uses execFileSync to avoid command injection via cmd.exe.
  * @param {string[]} args - gh CLI arguments
- * @param {object} opts - spawn options
- * @returns {Promise<{stdout: string, stderr: string, code: number}>}
+ * @param {object} opts - execFileSync options
+ * @returns {{stdout: string, stderr: string, code: number}}
  */
 function execGh(args, opts = {}) {
-  return new Promise((resolve, reject) => {
-    const spawnCmd = process.platform === 'win32' ? 'cmd.exe' : 'gh';
-    const spawnArgs = process.platform === 'win32'
-      ? ['/d', '/s', '/c', 'gh', ...args]
-      : args;
-
-    const child = spawn(spawnCmd, spawnArgs, {
+  try {
+    const stdout = execFileSync('gh', args, {
       ...opts,
-      stdio: ['pipe', 'pipe', 'pipe'],
+      encoding: 'utf8',
       windowsHide: true,
+      stdio: ['pipe', 'pipe', 'pipe'],
     });
-
-    let stdout = '';
-    let stderr = '';
-
-    child.stdout.on('data', c => stdout += c);
-    child.stderr.on('data', c => stderr += c);
-
-    child.on('error', err => reject(err));
-    child.on('close', code => resolve({ stdout, stderr, code }));
-  });
+    return { stdout, stderr: '', code: 0 };
+  } catch (err) {
+    return {
+      stdout: err.stdout || '',
+      stderr: err.stderr || err.message,
+      code: err.status ?? 1,
+    };
+  }
 }
 
 /**
@@ -65,13 +60,13 @@ function parseGhIssueCreate(stdout) {
  */
 function nextSubtaskId(parentId, existingSubtasks) {
   const prefix = parentId + '-';
+  // 只 match 直接子 task（prefix + 數字），不 match sub-subtask（prefix + 數字 + dash + ...）
+  const directChildRe = new RegExp(`^${prefix.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(\\d+)$`);
   const nums = existingSubtasks
     .map(t => {
-      if (t.id && t.id.startsWith(prefix)) {
-        const m = t.id.match(/-(\d+)$/);
-        return m ? parseInt(m[1], 10) : 0;
-      }
-      return 0;
+      if (!t.id) return 0;
+      const m = t.id.match(directChildRe);
+      return m ? parseInt(m[1], 10) : 0;
     })
     .filter(n => n > 0);
   const max = nums.length > 0 ? Math.max(...nums) : 0;
@@ -234,6 +229,7 @@ module.exports = function chiefRoutes(req, res, helpers, deps) {
           return json(res, 404, { error: `Task ${body.taskId} not found` });
         }
 
+        task.depends = task.depends || [];
         const changes = {};
 
         // Update priority
@@ -279,21 +275,6 @@ module.exports = function chiefRoutes(req, res, helpers, deps) {
 
         // Validate DAG after changes (no cycles)
         if (task.depends.length > 0) {
-          const visited = new Set();
-          const hasCycle = (taskId, path = new Set()) => {
-            if (path.has(taskId)) return true;
-            if (visited.has(taskId)) return false;
-            visited.add(taskId);
-            path.add(taskId);
-            const t = tasks.find(x => x.id === taskId);
-            if (t && t.depends) {
-              for (const dep of t.depends) {
-                if (hasCycle(dep, new Set(path))) return true;
-              }
-            }
-            return false;
-          };
-          // Check for cycles starting from this task
           const cycleCheck = (startId, visitedPath = new Set()) => {
             if (visitedPath.has(startId)) return true;
             visitedPath.add(startId);
@@ -434,8 +415,9 @@ module.exports = function chiefRoutes(req, res, helpers, deps) {
           }
         }
 
-        // Update parent task to reference subtasks
+        // Update parent task to reference subtasks and mark as split
         parentTask.subtaskIds = createdSubtasks.map(s => s.id);
+        parentTask.status = 'split';
         parentTask.history = parentTask.history || [];
         parentTask.history.push({
           ts: now,

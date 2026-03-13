@@ -127,6 +127,20 @@ test('8. nextSubtaskId — works with VT prefix', async () => {
 });
 
 // ---------------------------------------------------------------------------
+// Test 8b: nextSubtaskId — ignores sub-subtasks (only matches direct children)
+// ---------------------------------------------------------------------------
+test('8b. nextSubtaskId — ignores sub-subtasks', async () => {
+  const existing = [
+    { id: 'GH-100-1' },
+    { id: 'GH-100-1-1' },
+    { id: 'GH-100-1-2' },
+    { id: 'GH-100-2' },
+  ];
+  const result = nextSubtaskId('GH-100', existing);
+  assert.strictEqual(result, 'GH-100-3');
+});
+
+// ---------------------------------------------------------------------------
 // Test 9: RBAC requireRole — null role (RBAC disabled) allows access
 // ---------------------------------------------------------------------------
 test('9. RBAC requireRole — null role allows access', async () => {
