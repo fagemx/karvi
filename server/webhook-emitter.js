@@ -1,10 +1,13 @@
 /**
- * webhook-emitter.js — Webhook event emission (#333/#443/#444)
+ * webhook-emitter.js — Webhook event emission (#333/#443/#444/#447)
  *
  * Thyra-aligned envelope format + exponential backoff retry.
  * Extracted from step-worker.js (issue #473) for SRP compliance.
+ * Retry logic added per issue #447: 3 attempts, 1s/5s backoff, dead-letter log.
  */
 const crypto = require('crypto');
+const fs = require('fs');
+const path = require('path');
 const mgmt = require('./management');
 const { createSignal } = require('./signal');
 
@@ -29,7 +32,7 @@ function computeStepIndex(board, taskId, stepId) {
 }
 
 const WEBHOOK_MAX_RETRIES = 3;
-const WEBHOOK_BACKOFF_MS = [1000, 2000, 4000]; // 1s, 2s, 4s exponential backoff
+const WEBHOOK_BACKOFF_MS = [1000, 5000]; // 首次失敗等 1s，二次失敗等 5s (#447)
 
 function emitWebhookEvent(board, eventType, payload, helpers = null) {
   const url = mgmt.getControls(board).event_webhook_url;
@@ -78,7 +81,11 @@ function emitWebhookEvent(board, eventType, payload, helpers = null) {
         const result = await new Promise((resolve, reject) => {
           const req = mod.request(parsed, {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body) },
+            headers: {
+              'Content-Type': 'application/json',
+              'Content-Length': Buffer.byteLength(body),
+              'X-Event-Id': envelope.event_id, // 冪等性 key，讓 Thyra 端可以 dedup (#447)
+            },
             timeout: 5000,
           }, (res) => {
             res.resume(); // drain response body to free socket
@@ -113,6 +120,25 @@ function emitWebhookEvent(board, eventType, payload, helpers = null) {
 
     // Total failure after all retries
     console.error(`[webhook] ${eventType} POST failed after ${WEBHOOK_MAX_RETRIES} retries:`, lastError?.message || 'unknown error');
+
+    // Dead letter log — append-only JSONL 記錄，不會丟失 (#447)
+    const deadLetterEntry = {
+      ts: new Date().toISOString(),
+      event_id: envelope.event_id,
+      event_type: eventType,
+      url,
+      error: lastError?.message || 'unknown error',
+      attempts: WEBHOOK_MAX_RETRIES,
+      payload: nestedPayload,
+    };
+    try {
+      const dlPath = helpers?.dataDir
+        ? path.join(helpers.dataDir, 'webhook-dead-letter.jsonl')
+        : path.join(__dirname, '..', 'data', 'webhook-dead-letter.jsonl');
+      fs.appendFileSync(dlPath, JSON.stringify(deadLetterEntry) + '\n');
+    } catch (dlErr) {
+      console.error(`[webhook] failed to write dead letter:`, dlErr.message);
+    }
 
     // Write signal to board if helpers available
     if (helpers && helpers.readBoard && helpers.writeBoard) {

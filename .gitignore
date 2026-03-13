@@ -29,3 +29,4 @@ brief-panel/output/
 # Runtime state
 board.json
 server/usage/
+data/webhook-dead-letter.jsonl
