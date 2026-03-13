@@ -10,37 +10,35 @@
  *
  * Issue #168: feat(saas): container sandbox for user code execution
  */
-const { execFileSync, execSync, spawn } = require('child_process');
+const { execFileSync } = require('child_process');
 const path = require('path');
 const os = require('os');
 
 // --- Docker availability detection ---
 
 let _dockerAvailable = null;
+let _dockerCheckedAt = 0;
+const DOCKER_CACHE_TTL_MS = 60000; // 60s TTL
 
 /**
- * 檢查 Docker 是否可用（結果快取）。
+ * 檢查 Docker 是否可用（結果快取，60s TTL）。
  * @returns {boolean}
  */
 function isDockerAvailable() {
-  if (_dockerAvailable !== null) return _dockerAvailable;
+  const now = Date.now();
+  if (_dockerAvailable !== null && (now - _dockerCheckedAt) < DOCKER_CACHE_TTL_MS) {
+    return _dockerAvailable;
+  }
   try {
-    if (process.platform === 'win32') {
-      execFileSync('cmd.exe', ['/d', '/s', '/c', 'docker', 'info'], {
-        timeout: 10000,
-        stdio: 'ignore',
-        windowsHide: true,
-      });
-    } else {
-      execFileSync('docker', ['info'], {
-        timeout: 10000,
-        stdio: 'ignore',
-      });
-    }
+    execFileSync('docker', ['info'], {
+      timeout: 10000,
+      stdio: 'ignore',
+    });
     _dockerAvailable = true;
   } catch {
     _dockerAvailable = false;
   }
+  _dockerCheckedAt = now;
   console.log(`[sandbox] Docker available: ${_dockerAvailable}`);
   return _dockerAvailable;
 }
@@ -50,6 +48,7 @@ function isDockerAvailable() {
  */
 function resetDockerCache() {
   _dockerAvailable = null;
+  _dockerCheckedAt = 0;
 }
 
 // --- Default sandbox limits ---
@@ -62,6 +61,44 @@ const DEFAULT_LIMITS = {
   read_only: true,      // read-only root filesystem
   network: 'none',      // network mode: 'none' (isolated) or 'bridge'
 };
+
+// --- Image name validation ---
+
+const IMAGE_NAME_RE = /^[a-zA-Z0-9._\/-]+(:[a-zA-Z0-9._-]+)?$/;
+
+/**
+ * 驗證 Docker image 名稱，防止 CLI injection。
+ * @param {string} name
+ * @returns {boolean}
+ */
+function isValidImageName(name) {
+  return typeof name === 'string' && name.length > 0 && name.length <= 256 && IMAGE_NAME_RE.test(name);
+}
+
+// --- Sandbox limits validation ---
+
+const ALLOWED_LIMIT_KEYS = new Set(['memory', 'cpus', 'pids_limit', 'tmpfs_size', 'read_only', 'network']);
+
+/**
+ * 過濾並驗證 sandbox_limits，只允許白名單 keys。
+ * network 只能是 'none'。
+ * @param {object} raw — 來自 controls.sandbox_limits
+ * @returns {object} 過濾後的 limits
+ */
+function sanitizeLimits(raw) {
+  if (!raw || typeof raw !== 'object') return {};
+  const out = {};
+  for (const [key, val] of Object.entries(raw)) {
+    if (!ALLOWED_LIMIT_KEYS.has(key)) continue;
+    out[key] = val;
+  }
+  // network 只允許 'none'（安全約束）
+  if ('network' in out && out.network !== 'none') {
+    console.warn(`[sandbox] sandbox_limits.network="${out.network}" rejected — forcing 'none'`);
+    out.network = 'none';
+  }
+  return out;
+}
 
 // --- Sandbox configuration resolution ---
 
@@ -78,8 +115,16 @@ const DEFAULT_LIMITS = {
  */
 function resolveSandboxConfig(controls) {
   const enabled = controls.sandbox_enabled === true;
-  const image = controls.sandbox_image || 'karvi-sandbox:latest';
-  const limits = { ...DEFAULT_LIMITS, ...(controls.sandbox_limits || {}) };
+
+  // 驗證 image 名稱
+  const rawImage = controls.sandbox_image || 'karvi-sandbox:latest';
+  const image = isValidImageName(rawImage) ? rawImage : 'karvi-sandbox:latest';
+  if (rawImage !== image) {
+    console.warn(`[sandbox] invalid sandbox_image "${rawImage}" — using default`);
+  }
+
+  // 過濾 limits（whitelist keys + network 鎖 'none'）
+  const limits = { ...DEFAULT_LIMITS, ...sanitizeLimits(controls.sandbox_limits) };
   return { enabled, image, limits };
 }
 
@@ -89,30 +134,34 @@ function resolveSandboxConfig(controls) {
  * 建構 docker run 命令的參數陣列。
  *
  * 安全措施：
+ * - --cap-drop ALL: 移除所有 Linux capabilities
  * - --read-only: root filesystem 唯讀
  * - --tmpfs /tmp: 可寫暫存空間（受限大小）
+ * - --tmpfs /output: agent 寫 artifacts 的空間
  * - --network none: 預設無網路
  * - --memory / --cpus / --pids-limit: 資源限制
  * - --security-opt no-new-privileges: 阻止 privilege escalation
- * - -v workingDir:workingDir:rw: 只掛載工作目錄
+ * - -v workingDir:/workspace:ro: 工作目錄唯讀掛載（防 .git/hooks 逃逸）
  *
  * @param {object} opts
  * @param {string} opts.image — Docker image
  * @param {object} opts.limits — 資源限制
- * @param {string} opts.workingDir — 工作目錄（host path，會 bind mount）
+ * @param {string} opts.workingDir — 工作目錄（host path，會 bind mount 為 :ro）
  * @param {string} opts.command — 要在 container 內執行的 shell 命令
  * @param {object} [opts.env] — 額外環境變數 { KEY: VALUE }
  * @param {number} [opts.timeoutSec] — container 執行超時（秒）
  * @returns {string[]} docker run 的參數陣列
  */
 function buildDockerRunArgs(opts) {
-  const { image, limits, workingDir, command, env, timeoutSec } = opts;
+  const { image, limits, workingDir, command, env } = opts;
 
   // Container 內的工作路徑 — 統一用 /workspace
   const containerWorkDir = '/workspace';
 
   const args = [
     'run', '--rm',
+    // 安全 — 移除所有 capabilities
+    '--cap-drop', 'ALL',
     // 資源限制
     '--memory', limits.memory,
     '--cpus', limits.cpus,
@@ -129,10 +178,12 @@ function buildDockerRunArgs(opts) {
     args.push('--tmpfs', `/tmp:size=${limits.tmpfs_size},exec`);
   }
 
-  // Bind mount 工作目錄
+  // Agent 寫 artifacts 的 tmpfs（不依賴 host mount :rw）
+  args.push('--tmpfs', '/output:size=200m,exec');
+
+  // Bind mount 工作目錄（唯讀 — 防止 .git/hooks 逃逸）
   if (workingDir) {
-    // Windows paths need conversion for Docker (C:\foo → /c/foo or use as-is with Docker Desktop)
-    args.push('-v', `${workingDir}:${containerWorkDir}:rw`);
+    args.push('-v', `${workingDir}:${containerWorkDir}:ro`);
     args.push('-w', containerWorkDir);
   }
 
@@ -145,10 +196,6 @@ function buildDockerRunArgs(opts) {
       }
     }
   }
-
-  // 超時 — 用 timeout 命令包裝（如果 image 內有的話）
-  // Docker 本身的 --stop-timeout 只處理 docker stop，不處理 run timeout
-  // 所以用 container 外的機制（step-worker 的 AbortController）
 
   args.push(image);
 
@@ -175,79 +222,10 @@ function execInContainer(opts) {
   const { image, limits, workingDir, command, timeoutMs = 30000, env } = opts;
   const dockerArgs = buildDockerRunArgs({ image, limits, workingDir, command, env });
 
-  if (process.platform === 'win32') {
-    return execFileSync('cmd.exe', ['/d', '/s', '/c', 'docker', ...dockerArgs], {
-      encoding: 'utf8',
-      timeout: timeoutMs,
-      maxBuffer: 1024 * 1024,
-      windowsHide: true,
-    });
-  }
-
   return execFileSync('docker', dockerArgs, {
     encoding: 'utf8',
     timeout: timeoutMs,
     maxBuffer: 1024 * 1024,
-  });
-}
-
-/**
- * 在 Docker container 內非同步 spawn 長時間 agent 程序。
- * 用於包裝 opencode / codex 等 CLI runtime。
- *
- * @param {object} opts
- * @param {string} opts.image — Docker image
- * @param {object} opts.limits — 資源限制
- * @param {string} opts.workingDir — Host 工作目錄
- * @param {string[]} opts.args — container 內的命令 + 參數
- * @param {object} [opts.env] — 額外環境變數
- * @returns {import('child_process').ChildProcess} 子程序
- */
-function spawnInContainer(opts) {
-  const { image, limits, workingDir, args: innerArgs, env } = opts;
-  const containerWorkDir = '/workspace';
-
-  const dockerArgs = [
-    'run', '--rm', '-i',
-    '--memory', limits.memory,
-    '--cpus', limits.cpus,
-    '--pids-limit', String(limits.pids_limit),
-    '--security-opt', 'no-new-privileges',
-    '--network', limits.network || 'none',
-  ];
-
-  if (limits.read_only) {
-    dockerArgs.push('--read-only');
-    dockerArgs.push('--tmpfs', `/tmp:size=${limits.tmpfs_size},exec`);
-  }
-
-  if (workingDir) {
-    dockerArgs.push('-v', `${workingDir}:${containerWorkDir}:rw`);
-    dockerArgs.push('-w', containerWorkDir);
-  }
-
-  const safeEnvKeys = ['NODE_ENV', 'PATH', 'HOME', 'USER', 'LANG', 'LC_ALL'];
-  if (env) {
-    for (const [key, val] of Object.entries(env)) {
-      if (safeEnvKeys.includes(key) || key.startsWith('SANDBOX_')) {
-        dockerArgs.push('-e', `${key}=${val}`);
-      }
-    }
-  }
-
-  dockerArgs.push(image, ...innerArgs);
-
-  if (process.platform === 'win32') {
-    return spawn('cmd.exe', ['/d', '/s', '/c', 'docker', ...dockerArgs], {
-      windowsHide: true,
-      shell: false,
-      stdio: ['ignore', 'pipe', 'pipe'],
-    });
-  }
-
-  return spawn('docker', dockerArgs, {
-    shell: false,
-    stdio: ['ignore', 'pipe', 'pipe'],
   });
 }
 
@@ -322,14 +300,17 @@ function generateDockerfile(opts = {}) {
  */
 function ensureSandboxImage(imageName, opts = {}) {
   if (!isDockerAvailable()) return false;
+  if (!isValidImageName(imageName)) {
+    console.error(`[sandbox] invalid image name: ${imageName}`);
+    return false;
+  }
 
   // 檢查 image 是否已存在
   try {
-    const checkArgs = process.platform === 'win32'
-      ? ['/d', '/s', '/c', 'docker', 'image', 'inspect', imageName]
-      : ['image', 'inspect', imageName];
-    const checkCmd = process.platform === 'win32' ? 'cmd.exe' : 'docker';
-    execFileSync(checkCmd, checkArgs, { stdio: 'ignore', timeout: 10000, windowsHide: true });
+    execFileSync('docker', ['image', 'inspect', imageName], {
+      stdio: 'ignore',
+      timeout: 10000,
+    });
     console.log(`[sandbox] image ${imageName} already exists`);
     return true;
   } catch {
@@ -344,14 +325,9 @@ function ensureSandboxImage(imageName, opts = {}) {
   fs.writeFileSync(path.join(tmpDir, 'Dockerfile'), dockerfile, 'utf8');
 
   try {
-    const buildArgs = process.platform === 'win32'
-      ? ['/d', '/s', '/c', 'docker', 'build', '-t', imageName, tmpDir]
-      : ['build', '-t', imageName, tmpDir];
-    const buildCmd = process.platform === 'win32' ? 'cmd.exe' : 'docker';
-    execFileSync(buildCmd, buildArgs, {
+    execFileSync('docker', ['build', '-t', imageName, tmpDir], {
       stdio: 'inherit',
       timeout: 120000,
-      windowsHide: true,
     });
     console.log(`[sandbox] image ${imageName} built successfully`);
     return true;
@@ -373,8 +349,10 @@ module.exports = {
   resolveExecutionMode,
   buildDockerRunArgs,
   execInContainer,
-  spawnInContainer,
   ensureSandboxImage,
   generateDockerfile,
+  isValidImageName,
+  sanitizeLimits,
   DEFAULT_LIMITS,
+  DOCKER_CACHE_TTL_MS,
 };
