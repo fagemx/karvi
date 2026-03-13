@@ -55,47 +55,104 @@ function readBoard(boardPath) {
   return board;
 }
 
+/**
+ * 取得 lockfile 以序列化 writeBoard。
+ * 使用 fs.openSync(path, 'wx') 做 atomic create — 跨 process 安全。
+ * 回傳 release function；呼叫者必須在 finally 中 release。
+ *
+ * 若 lockfile 存在超過 STALE_LOCK_MS，視為 stale（持有者 crash），自動清除重試。
+ */
+const STALE_LOCK_MS = 10_000;
+const LOCK_RETRY_MS = 5;
+const LOCK_TIMEOUT_MS = 5_000;
+
+function acquireLock(boardPath) {
+  const lockPath = boardPath + '.lock';
+  const deadline = Date.now() + LOCK_TIMEOUT_MS;
+
+  while (true) {
+    try {
+      // 'wx' = O_CREAT | O_EXCL — 只在檔案不存在時建立，atomic
+      const fd = fs.openSync(lockPath, 'wx');
+      // 寫入 PID + timestamp 供 stale detection
+      fs.writeSync(fd, `${process.pid}\t${Date.now()}\n`);
+      fs.closeSync(fd);
+      return () => {
+        try { fs.unlinkSync(lockPath); } catch { /* 已被清除 */ }
+      };
+    } catch (err) {
+      if (err.code !== 'EEXIST') throw err;
+
+      // lockfile 存在 — 檢查是否 stale
+      try {
+        const stat = fs.statSync(lockPath);
+        if (Date.now() - stat.mtimeMs > STALE_LOCK_MS) {
+          // stale lock — 清除後重試
+          try { fs.unlinkSync(lockPath); } catch { /* 另一個 process 先清了 */ }
+          continue;
+        }
+      } catch {
+        // lockfile 在 stat 前被正常 release，直接重試
+        continue;
+      }
+
+      if (Date.now() >= deadline) {
+        throw new Error(`[storage] lock timeout: could not acquire ${lockPath} within ${LOCK_TIMEOUT_MS}ms`);
+      }
+
+      // busy-wait（同步 API 限制）
+      const waitUntil = Date.now() + LOCK_RETRY_MS;
+      while (Date.now() < waitUntil) { /* spin */ }
+    }
+  }
+}
+
 function writeBoard(boardPath, board) {
   const { OptimisticLockError } = require('./errors');
-  
+
   if (typeof board._version !== 'number') {
     board._version = 0;
   }
-  
-  let currentVersion = 0;
-  let currentBoard = null;
+
+  // 取得 file lock — 確保 read-check-write 是 atomic
+  const releaseLock = acquireLock(boardPath);
   try {
-    currentBoard = JSON.parse(fs.readFileSync(boardPath, 'utf8'));
-    currentVersion = currentBoard._version || 0;
-  } catch (err) {
-    if (err.code !== 'ENOENT') {
-      console.warn('[storage] warning: could not read board for version check:', err.message);
+    let currentVersion = 0;
+    try {
+      const currentBoard = JSON.parse(fs.readFileSync(boardPath, 'utf8'));
+      currentVersion = currentBoard._version || 0;
+    } catch (err) {
+      if (err.code !== 'ENOENT') {
+        console.warn('[storage] warning: could not read board for version check:', err.message);
+      }
+      currentVersion = 0;
     }
-    currentVersion = 0;
+
+    if (board._version !== currentVersion) {
+      throw new OptimisticLockError(
+        `Version conflict: expected ${currentVersion}, got ${board._version}`,
+        currentVersion,
+        board._version
+      );
+    }
+
+    board._version++;
+
+    ensureEncryptionInitialized(boardPath, board);
+
+    let dataToWrite = board;
+    if (board.meta?.encryption_enabled && enc.isEnabled() && !board.meta.encrypted_at) {
+      dataToWrite = enc.encryptBoard(board);
+    }
+
+    const dir = path.dirname(boardPath);
+    const tmpPath = path.join(dir, `.board-${process.pid}-${Date.now()}.tmp`);
+    const data = JSON.stringify(dataToWrite, null, 2);
+    fs.writeFileSync(tmpPath, data, 'utf8');
+    fs.renameSync(tmpPath, boardPath);
+  } finally {
+    releaseLock();
   }
-  
-  if (board._version !== currentVersion) {
-    throw new OptimisticLockError(
-      `Version conflict: expected ${currentVersion}, got ${board._version}`,
-      currentVersion,
-      board._version
-    );
-  }
-  
-  board._version++;
-  
-  ensureEncryptionInitialized(boardPath, board);
-  
-  let dataToWrite = board;
-  if (board.meta?.encryption_enabled && enc.isEnabled() && !board.meta.encrypted_at) {
-    dataToWrite = enc.encryptBoard(board);
-  }
-  
-  const dir = path.dirname(boardPath);
-  const tmpPath = path.join(dir, `.board-${process.pid}-${Date.now()}.tmp`);
-  const data = JSON.stringify(dataToWrite, null, 2);
-  fs.writeFileSync(tmpPath, data, 'utf8');
-  fs.renameSync(tmpPath, boardPath);
 }
 
 function appendLog(logPath, entry) {
