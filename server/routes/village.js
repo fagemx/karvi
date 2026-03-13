@@ -446,6 +446,9 @@ module.exports = function villageRoutes(req, res, helpers, deps) {
             }
           }
           if (policy.tier_upgrade_requires !== undefined) {
+            if (typeof policy.tier_upgrade_requires !== 'string') {
+              return json(res, 400, { error: 'tier_upgrade_requires must be a string' });
+            }
             merged.tier_upgrade_requires = policy.tier_upgrade_requires;
           }
           village.tool_tier_policy = merged;

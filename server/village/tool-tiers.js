@@ -70,8 +70,16 @@ function defaultPolicy() {
  * @returns {object} merged policy
  */
 function resolvePolicy(board) {
+  const defaults = defaultPolicy();
   const boardPolicy = board.village?.tool_tier_policy || {};
-  return { ...defaultPolicy(), ...boardPolicy };
+  const merged = { ...defaults, ...boardPolicy };
+  // Validate tier values — replace invalid with defaults
+  for (const key of ['chief_max_tier', 'proposal_max_tier', 'default_worker_tier']) {
+    if (TIER_LEVELS[merged[key]] === undefined) {
+      merged[key] = defaults[key];
+    }
+  }
+  return merged;
 }
 
 /**
@@ -123,11 +131,8 @@ function checkTierAccess(maxTier, requiredTier) {
   const maxLevel = TIER_LEVELS[maxTier];
   const reqLevel = TIER_LEVELS[requiredTier];
 
-  if (maxLevel === undefined) {
-    return { allowed: true, reason: `unknown max_tier "${maxTier}", allowing` };
-  }
-  if (reqLevel === undefined) {
-    return { allowed: true, reason: `unknown required tier "${requiredTier}", allowing` };
+  if (maxLevel === undefined || reqLevel === undefined) {
+    return { allowed: false, reason: `Unknown tier: ${maxLevel === undefined ? maxTier : requiredTier}` };
   }
 
   if (maxLevel >= reqLevel) {

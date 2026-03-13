@@ -633,6 +633,26 @@ const testRunId = `smoke-${Date.now()}`;
     assert.ok(result.reason.includes('T2'));
   });
 
+  await test('checkTierAccess rejects unknown max_tier (fail-closed)', () => {
+    const result = toolTiers.checkTierAccess('T99', 'T3');
+    assert.strictEqual(result.allowed, false, 'unknown max_tier must be denied');
+    assert.ok(result.reason.includes('T99'), 'reason should mention the unknown tier');
+  });
+
+  await test('checkTierAccess rejects unknown requiredTier (fail-closed)', () => {
+    const result = toolTiers.checkTierAccess('T3', 'T99');
+    assert.strictEqual(result.allowed, false, 'unknown requiredTier must be denied');
+    assert.ok(result.reason.includes('T99'), 'reason should mention the unknown tier');
+  });
+
+  await test('resolvePolicy replaces invalid board tier with default', () => {
+    const board = createVillageBoard();
+    board.village.tool_tier_policy = { chief_max_tier: 'T99', default_worker_tier: 'BOGUS' };
+    const policy = toolTiers.resolvePolicy(board);
+    assert.strictEqual(policy.chief_max_tier, 'T2', 'invalid tier should fall back to default T2');
+    assert.strictEqual(policy.default_worker_tier, 'T3', 'invalid tier should fall back to default T3');
+  });
+
   await test('requiredTierForStep maps step types correctly', () => {
     assert.strictEqual(toolTiers.requiredTierForStep('plan'), 'T0');
     assert.strictEqual(toolTiers.requiredTierForStep('propose'), 'T1');
