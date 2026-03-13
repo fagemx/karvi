@@ -31,13 +31,24 @@ function createKernel(deps) {
   const { artifactStore, stepSchema, mgmt, push, PUSH_TOKENS_PATH, vault, githubApi } = deps;
   const defaultRepoRoot = path.resolve(__dirname, '..');
 
+  // 追蹤所有 pending timers，shutdown 時統一清除避免寫入已停止的 board
+  const _pendingTimers = new Set();
+  function _track(timer) { _pendingTimers.add(timer); return timer; }
+  function _untrack(timer) { _pendingTimers.delete(timer); }
+
+  function shutdown() {
+    for (const t of _pendingTimers) clearTimeout(t);
+    _pendingTimers.clear();
+  }
+
   function cleanupWorktree(task, taskId, board) {
     if (!task?.worktreeDir) return;
 
     // Delay cleanup to let the runtime process fully exit and release file handles.
     // On Windows, opencode may still hold locks when the kernel receives step_completed.
     const CLEANUP_DELAY_MS = 5000;
-    setTimeout(() => {
+    const t1 = _track(setTimeout(() => {
+      _untrack(t1);
       try {
         // Provisioned repos use bare-clone worktrees (different cleanup path)
         if (task._provisioned?.barePath) {
@@ -50,7 +61,8 @@ function createKernel(deps) {
       } catch (err) {
         console.error(`[kernel] worktree cleanup failed for ${taskId}:`, err.message);
         // Schedule one more retry after a longer delay
-        setTimeout(() => {
+        const t2 = _track(setTimeout(() => {
+          _untrack(t2);
           try {
             if (task._provisioned?.barePath) {
               provisioner.removeWorktreeFromBare(task._provisioned.barePath, task._provisioned.dataRoot, taskId);
@@ -62,9 +74,9 @@ function createKernel(deps) {
           } catch (err2) {
             console.error(`[kernel] worktree cleanup retry failed for ${taskId}:`, err2.message);
           }
-        }, 15000);
+        }, 15000));
       }
-    }, CLEANUP_DELAY_MS);
+    }, CLEANUP_DELAY_MS));
   }
 
   /**
@@ -212,7 +224,8 @@ function createKernel(deps) {
               if (sibRunning >= sibLimit) {
                 console.log(`[kernel] ${sibling.step_type} concurrency limit reached for parallel sibling ${sibling.step_id}, scheduling retry`);
                 // Re-check after 30s so the sibling doesn't stay queued forever
-                const retryTimer = setTimeout(() => {
+                const retryTimer = _track(setTimeout(() => {
+                  _untrack(retryTimer);
                   try {
                     const retryBoard = helpers.readBoard();
                     const retryTask = (retryBoard.taskPlan?.tasks || []).find(t => t.id === taskId);
@@ -224,7 +237,7 @@ function createKernel(deps) {
                   } catch (err) {
                     console.error(`[kernel] parallel sibling retry failed for ${sibling.step_id}:`, err.message);
                   }
-                }, 30000);
+                }, 30000));
                 retryTimer.unref();
                 continue;
               }
@@ -442,9 +455,8 @@ function createKernel(deps) {
           // clean up anyway. Remote branch + PR still exist; only local worktree removed.
           if (latestTask.worktreeDir) {
             const fallbackTaskId = taskId;
-            const fallbackTask = latestTask;
-            const fallbackBoard = latestBoard;
-            setTimeout(() => {
+            const fallbackTimer = _track(setTimeout(() => {
+              _untrack(fallbackTimer);
               // Re-read board to check if webhook already cleaned up
               try {
                 const freshBoard = helpers.readBoard();
@@ -458,7 +470,7 @@ function createKernel(deps) {
               } catch (err) {
                 console.error(`[kernel] fallback worktree cleanup failed for ${fallbackTaskId}:`, err.message);
               }
-            }, 30 * 60 * 1000); // 30 minutes
+            }, 30 * 60 * 1000)); // 30 minutes
           }
           // Preserve payload from last step's artifact for downstream access
           const lastStepOutput = artifactStore.readArtifact(step.run_id, stepId, 'output');
@@ -591,7 +603,7 @@ function createKernel(deps) {
     helpers.writeBoard(latestBoard);
   }
 
-  return { onStepEvent };
+  return { onStepEvent, shutdown };
 }
 
 /**

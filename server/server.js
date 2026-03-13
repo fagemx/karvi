@@ -439,7 +439,7 @@ function cleanupPollerTick() {
           setTimeout(() => {
             try { worktreeHelper.removeWorktree(repoRoot, cleanId); }
             catch (e) { console.error(`[cleanup] worktree cleanup failed for ${cleanId}: ${e.message}`); }
-          }, 3000);
+          }, 3000).unref();
         }
         appendLog({ ts: new Date().toISOString(), event: 'task_removed', taskId: t.id, finalStatus: t.status, worktreeDir: t.worktreeDir || null });
         tasks.splice(i, 1);
@@ -460,6 +460,12 @@ serviceManager.register('cleanup-poller', {
   start() { cleanupPollerTimer = setInterval(cleanupPollerTick, CLEANUP_POLL_MS); },
   stop() { clearInterval(cleanupPollerTimer); cleanupPollerTimer = null; },
   healthCheck() { return cleanupPollerTimer !== null; },
+});
+
+// Kernel timer cleanup (GH-474): clear pending setTimeout on shutdown
+serviceManager.register('kernel-timers', {
+  start() {},
+  stop() { deps.kernel.shutdown(); },
 });
 
 // 3. Telemetry
