@@ -151,6 +151,7 @@ const eddaRoutes = require('./routes/edda');
 const executionsRoutes = require('./routes/executions');
 const marketplaceRoutes = require('./routes/marketplace');
 const configRoutes = require('./routes/config');
+const reposRoutes = require('./routes/repos');
 
 const postmortem = require('./postmortem');
 
@@ -182,6 +183,7 @@ const routes = [
   eddaRoutes,
   executionsRoutes,
   configRoutes,
+  reposRoutes,
 ];
 
 const { json } = bb;

@@ -340,11 +340,11 @@ async function runConversationLoop(opts) {
   return { response: lastResponse, usage: totalUsage, turns };
 }
 
-// --- Phase 2/3 Deferred Features ---
+// --- Phase 2 Deferred Features ---
 // TODO(Phase 2): Streaming — use Claude SSE streaming endpoint for real-time
 //   progress updates via server SSE broadcast. Requires chunked httpsPost variant.
-// TODO(Phase 3): Repo ops — integrate git clone/checkout for task isolation,
-//   working directory provisioning, and PR creation after task completion.
+// Phase 3 (Repo ops) implemented: see repo-provisioner.js + routes/repos.js
+// Working directory provisioning happens in routes/tasks.js dispatchTask().
 
 // --- Factory ---
 

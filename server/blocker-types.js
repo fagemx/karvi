@@ -16,7 +16,7 @@ function inferBlockerType(reason) {
   if (!reason) return BLOCKER_TYPES.UNKNOWN;
   const r = reason.toLowerCase();
   if (r.includes('dead letter')) return BLOCKER_TYPES.DEAD_LETTER;
-  if (r.includes('repo validation')) return BLOCKER_TYPES.REPO_ERROR;
+  if (r.includes('repo validation') || r.includes('repo provisioning')) return BLOCKER_TYPES.REPO_ERROR;
   if (r.includes('worktree')) return BLOCKER_TYPES.WORKTREE_ERROR;
   if (r.includes('budget exceeded')) return BLOCKER_TYPES.BUDGET_EXCEEDED;
   return BLOCKER_TYPES.MANUAL;

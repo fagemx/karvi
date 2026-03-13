@@ -7,7 +7,10 @@
  *   3. null (caller decides fallback — typically karvi root for dogfood mode)
  *
  * Values can be absolute paths or GitHub slugs (owner/repo).
- * Slugs are resolved via board.controls.repo_map.
+ * Slugs are resolved via board.controls.repo_map, then repo-provisioner registry.
+ *
+ * GitHub URLs (https://github.com/owner/repo) are also supported and resolved
+ * the same way as slugs.
  */
 
 'use strict';
@@ -15,6 +18,7 @@
 const path = require('path');
 const fs = require('fs');
 const { execFileSync } = require('child_process');
+const provisioner = require('./repo-provisioner');
 
 const SLUG_RE = /^[a-zA-Z0-9._-]+\/[a-zA-Z0-9._-]+$/;
 
@@ -24,16 +28,41 @@ function looksLikeSlug(str) {
 
 /**
  * Resolve a single target_repo value to an absolute path.
- * If the value is a GitHub slug, look it up in repo_map.
- * @returns {string|null} Absolute path, or null if slug not in map
+ * If the value is a GitHub slug, look it up in repo_map first,
+ * then fall back to repo-provisioner registry (for SaaS bare clones).
+ * Also handles full GitHub URLs (https://github.com/owner/repo).
+ * @returns {string|null} Absolute path, or null if not found
  */
 function resolveValue(val, repoMap) {
   if (!val) return null;
   if (path.isAbsolute(val)) return val;
-  if (looksLikeSlug(val)) {
-    const mapped = repoMap[val];
-    return mapped ? path.resolve(mapped) : null;
+
+  // Try GitHub URL first
+  const parsed = provisioner.parseGitHubRepo(val);
+  if (parsed) {
+    const slug = `${parsed.owner}/${parsed.repo}`;
+    // 1. repo_map (explicit local path mapping)
+    const mapped = repoMap[slug];
+    if (mapped) return path.resolve(mapped);
+    // 2. Provisioner registry (SaaS bare clones)
+    const dataRoot = process.env.DATA_DIR || path.join(__dirname, '..', '.data');
+    const entry = provisioner.getRepo(dataRoot, parsed.owner, parsed.repo);
+    if (entry?.barePath && fs.existsSync(entry.barePath)) return entry.barePath;
+    return null;
   }
+
+  if (looksLikeSlug(val)) {
+    // 1. repo_map
+    const mapped = repoMap[val];
+    if (mapped) return path.resolve(mapped);
+    // 2. Provisioner registry
+    const parts = val.split('/');
+    const dataRoot = process.env.DATA_DIR || path.join(__dirname, '..', '.data');
+    const entry = provisioner.getRepo(dataRoot, parts[0], parts[1]);
+    if (entry?.barePath && fs.existsSync(entry.barePath)) return entry.barePath;
+    return null;
+  }
+
   // Reject ambiguous values (not absolute, not slug).
   // Common cause: unescaped Windows backslashes → "C:\ai_agent\edda" becomes "C:ai_agentedda"
   console.warn('[repo-resolver] rejecting ambiguous target_repo: %s (use absolute path or owner/repo slug)', val);
@@ -95,4 +124,15 @@ function validateRepoRoot(resolvedPath, expectedRepo) {
   return { valid: true };
 }
 
-module.exports = { resolveRepoRoot, validateRepoRoot, looksLikeSlug, resolveValue };
+/**
+ * Check if a target_repo value looks like a GitHub URL or slug
+ * that could be auto-provisioned (as opposed to a local path).
+ * @param {string} val
+ * @returns {boolean}
+ */
+function isProvisionable(val) {
+  if (!val) return false;
+  return !!provisioner.parseGitHubRepo(val);
+}
+
+module.exports = { resolveRepoRoot, validateRepoRoot, looksLikeSlug, resolveValue, isProvisionable };
