@@ -14,9 +14,21 @@ const { execFileSync } = require('child_process');
 const fs = require('fs');
 const path = require('path');
 
+// --- Error sanitization ---
+
+/**
+ * Strip PAT tokens from git error messages to prevent leaking credentials.
+ * @param {string} msg
+ * @returns {string}
+ */
+function sanitizeGitMessage(msg) {
+  if (!msg) return msg;
+  return msg.replace(/x-access-token:[^@]+@/g, 'x-access-token:***@');
+}
+
 // --- URL parsing ---
 
-const GITHUB_URL_RE = /^(?:https?:\/\/)?github\.com\/([^/]+)\/([^/]+?)(?:\.git)?$/;
+const GITHUB_URL_RE = /^(?:https?:\/\/)?github\.com\/([a-zA-Z0-9._-]+)\/([a-zA-Z0-9._-]+?)(?:\.git)?$/;
 const GITHUB_SLUG_RE = /^([a-zA-Z0-9._-]+)\/([a-zA-Z0-9._-]+)$/;
 
 /**
@@ -105,7 +117,7 @@ function ensureBareClone(opts) {
       });
       console.log(`[repo-provisioner] fetched updates for ${owner}/${repo}`);
     } catch (err) {
-      console.warn(`[repo-provisioner] fetch failed for ${owner}/${repo}: ${err.message}`);
+      console.warn(`[repo-provisioner] fetch failed for ${owner}/${repo}: ${sanitizeGitMessage(err.message)}`);
     }
     return { barePath, created: false };
   }
@@ -283,22 +295,45 @@ function worktreeStatus(worktreePath) {
 function readRegistry(dataRoot) {
   const regPath = path.join(dataRoot, 'repo-registry.json');
   try {
-    return JSON.parse(fs.readFileSync(regPath, 'utf8'));
+    const raw = fs.readFileSync(regPath, 'utf8');
+    const reg = JSON.parse(raw);
+    // 記錄 mtime 用於 optimistic lock
+    reg._mtime = fs.statSync(regPath).mtimeMs;
+    return reg;
   } catch {
     return { repos: {} };
   }
 }
 
 /**
- * Write the repo registry.
+ * Write the repo registry with optimistic lock.
+ * 如果 registry._mtime 存在，寫入前重新檢查檔案 mtime，
+ * 不一致表示被其他 process 修改過，拋錯避免覆蓋。
  * @param {string} dataRoot
  * @param {object} registry
  */
 function writeRegistry(dataRoot, registry) {
   const regPath = path.join(dataRoot, 'repo-registry.json');
+
+  // Optimistic lock: 檢查 mtime 是否被其他 process 改過
+  if (registry._mtime) {
+    try {
+      const currentMtime = fs.statSync(regPath).mtimeMs;
+      if (currentMtime !== registry._mtime) {
+        throw new Error('Registry was modified by another process (optimistic lock conflict)');
+      }
+    } catch (err) {
+      if (err.code !== 'ENOENT') throw err;
+      // 檔案被刪了 — 繼續寫入
+    }
+  }
+
+  const toWrite = { ...registry };
+  delete toWrite._mtime;
+
   const tmpPath = regPath + '.tmp';
   fs.mkdirSync(path.dirname(regPath), { recursive: true });
-  fs.writeFileSync(tmpPath, JSON.stringify(registry, null, 2));
+  fs.writeFileSync(tmpPath, JSON.stringify(toWrite, null, 2));
   fs.renameSync(tmpPath, regPath);
 }
 
@@ -440,7 +475,7 @@ function cleanupTask(opts) {
       try {
         pushBranch(worktreePath, branch, token, parsed.owner, parsed.repo);
       } catch (err) {
-        console.error(`[repo-provisioner] push before cleanup failed for ${taskId}: ${err.message}`);
+        console.error(`[repo-provisioner] push before cleanup failed for ${taskId}: ${sanitizeGitMessage(err.message)}`);
       }
     }
   }
@@ -449,6 +484,7 @@ function cleanupTask(opts) {
 }
 
 module.exports = {
+  sanitizeGitMessage,
   parseGitHubRepo,
   buildCloneUrl,
   bareRepoPath,

@@ -15,6 +15,9 @@ const bb = require('../blackboard-server');
 const { json } = bb;
 const provisioner = require('../repo-provisioner');
 
+// 安全字元白名單 — 防止 path traversal（例如 ../../）
+const SAFE_SLUG = /^[a-zA-Z0-9._-]+$/;
+
 /**
  * Resolve the data root for the current request.
  * SaaS mode: DATA_DIR env points to per-user data directory.
@@ -81,8 +84,9 @@ module.exports = function reposRoute(req, res, helpers, deps) {
           repo: entry,
         });
       } catch (err) {
-        console.error(`[repos] clone failed for ${parsed.owner}/${parsed.repo}: ${err.message}`);
-        return json(res, 500, { error: `Clone failed: ${err.message}` });
+        const safeMsg = provisioner.sanitizeGitMessage(err.message);
+        console.error(`[repos] clone failed for ${parsed.owner}/${parsed.repo}: ${safeMsg}`);
+        return json(res, 500, { error: `Clone failed: ${safeMsg}` });
       }
     }).catch(err => json(res, 400, { error: `Bad request: ${err.message}` }));
     return;
@@ -98,6 +102,9 @@ module.exports = function reposRoute(req, res, helpers, deps) {
   // GET /api/repos/:owner/:repo — get single
   const getMatch = req.method === 'GET' && req.url.match(/^\/api\/repos\/([^/]+)\/([^/]+)$/);
   if (getMatch) {
+    if (!SAFE_SLUG.test(getMatch[1]) || !SAFE_SLUG.test(getMatch[2])) {
+      return json(res, 400, { error: 'invalid_params', message: 'owner/repo must be alphanumeric' });
+    }
     const dataRoot = resolveDataRoot();
     const entry = provisioner.getRepo(dataRoot, getMatch[1], getMatch[2]);
     if (!entry) return json(res, 404, { error: 'Repo not registered' });
@@ -107,6 +114,9 @@ module.exports = function reposRoute(req, res, helpers, deps) {
   // DELETE /api/repos/:owner/:repo — unregister
   const delMatch = req.method === 'DELETE' && req.url.match(/^\/api\/repos\/([^/]+)\/([^/]+)$/);
   if (delMatch) {
+    if (!SAFE_SLUG.test(delMatch[1]) || !SAFE_SLUG.test(delMatch[2])) {
+      return json(res, 400, { error: 'invalid_params', message: 'owner/repo must be alphanumeric' });
+    }
     const dataRoot = resolveDataRoot();
     const owner = delMatch[1];
     const repo = delMatch[2];
@@ -122,6 +132,9 @@ module.exports = function reposRoute(req, res, helpers, deps) {
   // POST /api/repos/:owner/:repo/fetch — force fetch
   const fetchMatch = req.method === 'POST' && req.url.match(/^\/api\/repos\/([^/]+)\/([^/]+)\/fetch$/);
   if (fetchMatch) {
+    if (!SAFE_SLUG.test(fetchMatch[1]) || !SAFE_SLUG.test(fetchMatch[2])) {
+      return json(res, 400, { error: 'invalid_params', message: 'owner/repo must be alphanumeric' });
+    }
     const dataRoot = resolveDataRoot();
     const owner = fetchMatch[1];
     const repo = fetchMatch[2];
@@ -140,7 +153,7 @@ module.exports = function reposRoute(req, res, helpers, deps) {
       });
       return json(res, 200, { ok: true, fetched: `${owner}/${repo}` });
     } catch (err) {
-      return json(res, 500, { error: `Fetch failed: ${err.message}` });
+      return json(res, 500, { error: `Fetch failed: ${provisioner.sanitizeGitMessage(err.message)}` });
     }
   }
 
