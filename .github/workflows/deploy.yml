@@ -10,7 +10,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Deploy to VPS
-        uses: appleboy/ssh-action@v1.0.3
+        uses: appleboy/ssh-action@029f5b4aeeeb58fdfe1410a5d17f967dacf36262 # v1.0.3
         with:
           host: ${{ secrets.SSH_HOST }}
           username: ${{ secrets.SSH_USER }}
@@ -24,9 +24,9 @@ jobs:
             
             cd "$PROJECT_DIR"
             
-            # Store current commit for rollback
+            # Store current commit on VPS for rollback (GITHUB_ENV is runner-local, not accessible via SSH)
             PREV_COMMIT=$(git rev-parse HEAD)
-            echo "PREV_COMMIT=$PREV_COMMIT" >> $GITHUB_ENV
+            echo "$PREV_COMMIT" > "$PROJECT_DIR/.prev_commit"
             
             # Pull latest changes
             git fetch origin main
@@ -51,7 +51,7 @@ jobs:
 
       - name: Health check
         id: health_check
-        uses: appleboy/ssh-action@v1.0.3
+        uses: appleboy/ssh-action@029f5b4aeeeb58fdfe1410a5d17f967dacf36262 # v1.0.3
         with:
           host: ${{ secrets.SSH_HOST }}
           username: ${{ secrets.SSH_USER }}
@@ -79,7 +79,7 @@ jobs:
 
       - name: Rollback on failure
         if: failure()
-        uses: appleboy/ssh-action@v1.0.3
+        uses: appleboy/ssh-action@029f5b4aeeeb58fdfe1410a5d17f967dacf36262 # v1.0.3
         with:
           host: ${{ secrets.SSH_HOST }}
           username: ${{ secrets.SSH_USER }}
@@ -88,12 +88,18 @@ jobs:
             set -e
             
             PROJECT_DIR="${{ secrets.DEPLOY_DIR || '/var/www/karvi' }}"
-            PREV_COMMIT="${{ env.PREV_COMMIT }}"
-            
-            echo "Rolling back to commit: $PREV_COMMIT"
-            
+
             cd "$PROJECT_DIR"
-            
+
+            # Read previous commit stored by deploy step
+            PREV_COMMIT=$(cat "$PROJECT_DIR/.prev_commit" 2>/dev/null)
+            if [ -z "$PREV_COMMIT" ]; then
+              echo "ERROR: .prev_commit file missing or empty, cannot rollback"
+              exit 1
+            fi
+
+            echo "Rolling back to commit: $PREV_COMMIT"
+
             # Reset to previous commit
             git reset --hard "$PREV_COMMIT"
             
